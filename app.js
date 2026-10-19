@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.1';
+  const VERSION = 'v0.5.2';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -12,7 +12,6 @@
   const $ = function (id) { return document.getElementById(id); };
   const els = {
     gl: $('gl'), hud: $('hud'), controls: $('controls'),
-    throttle: $('throttle'), throttleFill: $('throttleFill'), throttleKnob: $('throttleKnob'),
     stickZone: $('stickZone'), stick: $('stick'), stickKnob: $('stickKnob'),
     btnFire: $('btnFire'), btnBoost: $('btnBoost'), btnMissile: $('btnMissile'), missileCount: $('missileCount'),
     btnTarget: $('btnTarget'),
@@ -1091,8 +1090,8 @@
 
   // ------------------------------------------------------------ 入力
 
-  const input = { stickX: 0, stickY: 0, throttle: 0.5, fire: false, boost: false, missile: false, select: false };
-  const touch = { stickId: null, stickOrigin: null, throttleId: null, fireIds: new Set(), boostIds: new Set(), trackIds: new Set() };
+  const input = { stickX: 0, stickY: 0, fire: false, boost: false, missile: false, select: false };
+  const touch = { stickId: null, stickOrigin: null, fireIds: new Set(), boostIds: new Set(), trackIds: new Set() };
   const STICK_R = 54;
 
   function setStickVisual(x, y, on) {
@@ -1134,20 +1133,6 @@
   els.stickZone.addEventListener('pointermove', moveStick);
   els.stickZone.addEventListener('pointerup', endStick);
   els.stickZone.addEventListener('pointercancel', endStick);
-
-  function setThrottleFrom(e) {
-    const r = els.throttle.querySelector('.track').getBoundingClientRect();
-    input.throttle = C.clamp(1 - (e.clientY - r.top) / r.height, 0, 1);
-  }
-  els.throttle.addEventListener('pointerdown', function (e) {
-    e.preventDefault();
-    touch.throttleId = e.pointerId;
-    els.throttle.setPointerCapture(e.pointerId);
-    setThrottleFrom(e);
-  });
-  els.throttle.addEventListener('pointermove', function (e) { if (e.pointerId === touch.throttleId) setThrottleFrom(e); });
-  els.throttle.addEventListener('pointerup', function (e) { if (e.pointerId === touch.throttleId) touch.throttleId = null; });
-  els.throttle.addEventListener('pointercancel', function (e) { if (e.pointerId === touch.throttleId) touch.throttleId = null; });
 
   function holdButton(el, set, onDown) {
     el.addEventListener('pointerdown', function (e) {
@@ -1201,8 +1186,6 @@
   function readKeys(dt) {
     const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
     const ky = (keys.ArrowUp || keys.KeyW ? 1 : 0) - (keys.ArrowDown || keys.KeyS ? 1 : 0);
-    if (keys.KeyR) input.throttle = Math.min(1, input.throttle + dt * 0.6);
-    if (keys.KeyF) input.throttle = Math.max(0, input.throttle - dt * 0.6);
     return {
       kx: kx, ky: ky * (settings.invert ? -1 : 1), fire: !!(keys.Space || keys.KeyJ),
       boost: !!(keys.ShiftLeft || keys.ShiftRight || keys.KeyK), track: !!(keys.KeyQ || keys.KeyT)
@@ -1248,7 +1231,7 @@
     game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start });
     shipObj = makePlayerShip();
     scene.add(shipObj);
-    input.throttle = 0.5; input.stickX = 0; input.stickY = 0; input.missile = false;
+    input.stickX = 0; input.stickY = 0; input.missile = false;
     touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear();
     els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on');
     setStickVisual(0, 0, false);
@@ -1785,7 +1768,7 @@
           let dx = _v.x, dy = -_v.y;
           if (Math.abs(dx) + Math.abs(dy) < 1e-3) dy = 1;     // 真後ろ: 下を指す
           const ang = Math.atan2(dy, dx);
-          // ボタンやスロットルに隠れない楕円に並べる (右下のボタン群・左のスロットルの内側)
+          // ボタンに隠れない楕円に並べる (右下のボタン群の内側)
           const rx = W / 2 - 200, ry = H / 2 - 58;
           const ex = W / 2 + Math.cos(ang) * rx, ey = H / 2 + Math.sin(ang) * ry;
           hudInfo.arrows.push({ id: t.id, x: ex, y: ey, target: isTarget });
@@ -1921,7 +1904,12 @@
     c.textAlign = 'left';
     c.font = '700 12px -apple-system, sans-serif';
     c.fillStyle = 'rgba(200,225,255,.9)';
-    c.fillText(Math.round(pl.speed) + ' m/s', sal + 4 + 64, H - 14);
+    c.fillText(Math.round(pl.speed) + ' m/s', sal + 8, H - 14);
+    // 速さは自動。急旋回で減速しているときは、そう出す
+    if ((pl.autoSlow || 0) > 0.3) {
+      c.fillStyle = 'rgba(255,214,106,' + Math.min(1, pl.autoSlow * 1.4).toFixed(2) + ')';
+      c.fillText('減速  小回り', sal + 64, H - 14);
+    }
 
     // 右上: スコア
     c.textAlign = 'right';
@@ -2011,14 +1999,9 @@
   }
 
   // 操作部品の表示 (変わったときだけ書き換える)
-  const shown = { throttle: -1, missiles: -1, locked: null, boostEmpty: null };
+  const shown = { missiles: -1, locked: null, boostEmpty: null };
   function updateControlsView() {
     const pl = game.player;
-    if (Math.abs(shown.throttle - input.throttle) > 0.002) {
-      shown.throttle = input.throttle;
-      els.throttleFill.style.height = (input.throttle * 100).toFixed(1) + '%';
-      els.throttleKnob.style.top = (10 + (1 - input.throttle) * 200).toFixed(1) + 'px';
-    }
     if (shown.missiles !== pl.missiles) {
       shown.missiles = pl.missiles;
       els.missileCount.textContent = String(pl.missiles);
@@ -2077,7 +2060,6 @@
       const stepInput = {
         stickX: C.clamp(input.stickX + kb.kx, -1, 1),
         stickY: C.clamp(input.stickY + kb.ky, -1, 1),
-        throttle: input.throttle,
         fire: touch.fireIds.size > 0 || kb.fire,
         boost: touch.boostIds.size > 0 || kb.boost,
         missile: input.missile,

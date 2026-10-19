@@ -137,6 +137,26 @@ test('スロットルで速さが変わり、ブーストで 140m/s まで出る
   assert.ok(g.player.boost > used + 30, '離すと戻る');
 });
 
+test('自動の速さ: スティックを大きく倒すと減速して小回りが利き、まっすぐなら戻る', () => {
+  const g = quietGame();
+  run(g, 1, {});
+  assert.ok(Math.abs(g.player.speed - T.speedNormal) < 0.5, `ふだんは ${T.speedNormal}m/s (${g.player.speed.toFixed(1)})`);
+  // 中くらいに倒すだけなら速さは変わらない (狙うときに勝手に遅くならない)
+  run(g, 1, { stickX: 0.5 });
+  assert.ok(g.player.speed > T.speedNormal - 1, `半分くらいでは減速しない (${g.player.speed.toFixed(1)})`);
+  // いっぱいに倒すと減速し、小回りが利く
+  run(g, 1.2, { stickX: 1 });
+  const slow = g.player.speed, rate = Math.abs(g.player.yawRate) / DEG;
+  assert.ok(slow < T.autoSlowSpeed + 3, `いっぱいで ${T.autoSlowSpeed}m/s 近くまで落ちる (${slow.toFixed(1)})`);
+  assert.ok(rate > C.turnLimit(T.speedNormal, false) / DEG + 8, `ふだんより速く曲がる (${rate.toFixed(0)}°/秒)`);
+  // 離すと戻る
+  run(g, 1.5, {});
+  assert.ok(g.player.speed > T.speedNormal - 1, `離すとふだんの速さへ戻る (${g.player.speed.toFixed(1)})`);
+  // ブーストはそのまま効く
+  run(g, 1.2, { stickX: 1, boost: true });
+  assert.ok(g.player.speed > 130, `ブースト中は減速しない (${g.player.speed.toFixed(1)})`);
+});
+
 test('戦域の外へまっすぐ飛び続けても、自動で戻ってくる', () => {
   const g = quietGame();
   let far = 0;

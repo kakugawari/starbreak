@@ -57,54 +57,13 @@ body {
 #controls { position: absolute; inset: 0; pointer-events: none; }
 #controls > * { pointer-events: auto; touch-action: none; }
 
-#throttle {
-  position: absolute;
-  left: calc(var(--sa-l) + 8px);
-  bottom: calc(var(--sa-b) + 16px);
-  width: 56px;
-  height: 236px;
-}
-#throttle .track {
-  position: absolute;
-  left: 21px; top: 10px; bottom: 26px;
-  width: 14px;
-  border-radius: 7px;
-  background: rgba(10, 20, 40, .55);
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-#throttle .fill {
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  height: 50%;
-  background: linear-gradient(to top, rgba(58, 141, 255, .35), rgba(111, 216, 255, .9));
-}
-#throttle .knob {
-  position: absolute;
-  left: 8px;
-  width: 40px;
-  height: 14px;
-  margin-top: -7px;
-  border-radius: 7px;
-  background: rgba(220, 240, 255, .9);
-  box-shadow: 0 0 10px rgba(111, 216, 255, .8);
-  top: 50%;
-}
-#throttle .cap {
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  text-align: center;
-  font-size: 10px;
-  letter-spacing: .15em;
-  color: var(--muted);
-}
-
+/* 左手はスティックだけ (速さは自動)。左端からスティックの場所にする */
 #stickZone {
   position: absolute;
-  left: calc(var(--sa-l) + 70px);
+  left: calc(var(--sa-l) + 8px);
   top: 64px;
   bottom: 0;
-  width: 40%;
+  width: 44%;
 }
 .stick {
   position: absolute;
@@ -114,7 +73,7 @@ body {
   border-radius: 50%;
   border: 1.5px solid rgba(150, 200, 255, .35);
   background: radial-gradient(circle, rgba(60, 120, 220, .10), rgba(60, 120, 220, .02) 70%);
-  left: 150px;
+  left: 170px;
   top: calc(100% - 110px);
   opacity: .55;
   transition: opacity .15s;

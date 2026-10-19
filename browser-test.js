@@ -182,7 +182,7 @@ async function run() {
 
     // 操作の部品: 安全域の内側に収まり、重ならず、指で押せる大きさ
     const layout = await page.evaluate(() => {
-      const ids = ['throttle', 'btnFire', 'btnBoost', 'btnMissile', 'btnPause'];
+      const ids = ['btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnPause'];
       const rs = ids.map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; });
       const inside = rs.every((r) => r.l >= 59 - 0.5 && r.r <= innerWidth - 59 + 0.5 && r.t >= 0 && r.b <= innerHeight - 21 + 0.5);
       let overlap = [];
@@ -207,7 +207,7 @@ async function run() {
     await page.evaluate(() => {
       window.__downs = [];
       document.addEventListener('pointerdown', (e) => {
-        window.__downs.push({ id: e.pointerId, x: Math.round(e.clientX), y: Math.round(e.clientY), el: e.currentTarget === document ? e.target.closest('#btnFire,#btnBoost,#btnMissile,#stickZone,#throttle') : e.target });
+        window.__downs.push({ id: e.pointerId, x: Math.round(e.clientX), y: Math.round(e.clientY), el: e.currentTarget === document ? e.target.closest('#btnFire,#btnBoost,#btnMissile,#btnTarget,#stickZone') : e.target });
       }, true);
     });
 
@@ -271,16 +271,20 @@ async function run() {
     ok(shotsB === shotsA, '離すと撃ち止む');
     await f.upAll();
 
-    // ------------------------------------------------ スロットル・ブースト・ミサイル
-    section('スロットル・ブースト・ミサイル');
-    const thr = await rectOf(page, '#throttle .track');
-    await f.down(3, thr.x + thr.width / 2, thr.y + thr.height / 2);
-    await f.move(3, thr.x + thr.width / 2, thr.y + 2);
+    // ------------------------------------------------ 速さ (自動)・ブースト・ミサイル
+    section('速さ (自動)・ブースト・ミサイル');
+    ok(await page.evaluate(() => !document.getElementById('throttle')), 'スロットルは無い (左手はスティックだけ)');
+    // スティックをいっぱいに倒すと減速して小回り、離すと戻る
+    await f.down(3, sx, sy);
+    await f.move(3, sx + 30, sy);
+    await f.move(3, sx + 70, sy);
+    await waitGameTime(page, 1.2);
+    const slowed = await page.evaluate(() => window.__app.game().player.speed);
     await f.up(3);
-    await waitGameTime(page, 1.5);
-    const fast = await page.evaluate(() => ({ thr: window.__app.input.throttle, speed: window.__app.game().player.speed }));
-    ok(fast.thr > 0.95, `スロットルを上へ (${fast.thr.toFixed(2)})`);
-    ok(fast.speed > 90, `速くなる (${fast.speed.toFixed(0)} m/s)`);
+    ok(slowed < 35, `スティックをいっぱいに倒すと減速する (${slowed.toFixed(0)} m/s)`);
+    await waitGameTime(page, 1.6);
+    const back = await page.evaluate(() => window.__app.game().player.speed);
+    ok(back > 58, `離すと元の速さに戻る (${back.toFixed(0)} m/s)`);
 
     const boost = center(await rectOf(page, '#btnBoost'));
     await f.down(4, boost.x, boost.y);
@@ -336,7 +340,7 @@ async function run() {
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       const res = await page.evaluate(() => {
         const g = window.__app.game(), h = window.__app.hudInfo;
-        const rects = ['throttle', 'btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnPause'].map((id) => document.getElementById(id).getBoundingClientRect());
+        const rects = ['btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnPause'].map((id) => document.getElementById(id).getBoundingClientRect());
         return g.fighters.map((f) => {
           const b = h.brackets.find((x) => x.id === f.id), a = h.arrows.find((x) => x.id === f.id);
           const under = a && rects.some((r) => a.x > r.left - 10 && a.x < r.right + 10 && a.y > r.top - 10 && a.y < r.bottom + 10);
@@ -350,7 +354,7 @@ async function run() {
       });
     }
     ok(missing === 0, `どの向きの敵にも、枠か三角が出る (${checked} 方向中 出ない ${missing})`);
-    ok(hidden === 0, `三角がボタンやスロットルに隠れない (${checked} 方向中 隠れた ${hidden}${hiddenAt.length ? ' ' + hiddenAt.join(' ') : ''})`);
+    ok(hidden === 0, `三角がボタンに隠れない (${checked} 方向中 隠れた ${hidden}${hiddenAt.length ? ' ' + hiddenAt.join(' ') : ''})`);
 
     // ------------------------------------------------ ロックオンボタン
     section('ロックオンボタン');

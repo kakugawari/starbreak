@@ -190,6 +190,8 @@
     // 飛行 (企画書の初期値)
     speedMin: 20, speedMax: 100, speedNormal: 60, speedBoost: 140,
     accel: 55, boostAccel: 140,
+    // 自動の速さ: スティックをこれより大きく倒すと減速を始め、いっぱいで autoSlowSpeed まで落とす
+    autoSlowFrom: 0.6, autoSlowSpeed: 28,
     turnSlow: 90 * DEG,         // 低速時の最大旋回
     turnFast: 52 * DEG,         // 最高速時
     turnBoost: 40 * DEG,
@@ -596,7 +598,9 @@
     const pl = g.player;
     const sx = clamp(input.stickX || 0, -1, 1);
     const sy = clamp(input.stickY || 0, -1, 1);
-    pl.throttle = clamp(input.throttle === undefined ? pl.throttle : input.throttle, 0, 1);
+    const stickMag = Math.sqrt(sx * sx + sy * sy);
+    // ロックオンボタンを押しっぱなし: 狙う相手 (いれば)
+    const sel = input.track && pl.targetId ? findById(g, pl.targetId) : null;
 
     // ブースト: 押している間だけ、エネルギーがある限り
     const wantBoost = !!input.boost && pl.boost > 0;
@@ -610,7 +614,24 @@
       if (pl.boostIdle > T.boostRegenDelay) pl.boost = Math.min(100, pl.boost + T.boostRegen * dt);
     }
 
-    const target = pl.boosting ? T.speedBoost : lerp(T.speedMin, T.speedMax, pl.throttle);
+    // 速さ: 指定があればその速さ (テスト・自動操縦用)。無ければ自動:
+    // スティックを大きく倒して急旋回すると減速して小回りが利き、まっすぐならふだんの速さに戻る
+    let target;
+    if (pl.boosting) {
+      target = T.speedBoost;
+      pl.autoSlow = 0;
+    } else if (input.throttle !== undefined) {
+      pl.throttle = clamp(input.throttle, 0, 1);
+      target = lerp(T.speedMin, T.speedMax, pl.throttle);
+      pl.autoSlow = 0;
+    } else {
+      let k = clamp((stickMag - T.autoSlowFrom) / (1 - T.autoSlowFrom), 0, 1);
+      // 狙う相手へ大きく回り込むときも減速する
+      if (sel && stickMag < 0.6) k = Math.max(k, clamp((angleBetween(pl.dir, sub(sel.pos, pl.pos)) - 40 * DEG) / (50 * DEG), 0, 1));
+      pl.autoSlow = approach(pl.autoSlow || 0, k, 8, dt);
+      target = lerp(T.speedNormal, T.autoSlowSpeed, pl.autoSlow);
+      pl.throttle = (target - T.speedMin) / (T.speedMax - T.speedMin);   // 炎の大きさなど見た目用
+    }
     const acc = pl.boosting ? T.boostAccel : T.accel;
     if (pl.speed < target) pl.speed = Math.min(target, pl.speed + acc * dt);
     else pl.speed = Math.max(target, pl.speed - acc * 1.2 * dt);
@@ -623,7 +644,6 @@
     let tPitch = shape(sy) * lim * 0.85;
 
     // 照準補助 (吸いつき): スティックが小さいときだけ、ごく弱く
-    const stickMag = Math.sqrt(sx * sx + sy * sy);
     if (pl.focus && pl.focus.ang <= T.magnetCone && stickMag < 0.5) {
       const want = yawPitchOf(sub(pl.focus.lead, pl.pos));
       const k = 1 - stickMag / 0.5;
@@ -632,7 +652,6 @@
     }
 
     // ロックオンボタンを押しっぱなし: 狙う相手へ機首を向ける。スティックを大きく倒せばそちらが勝つ
-    const sel = input.track && pl.targetId ? findById(g, pl.targetId) : null;
     pl.tracking = !!sel && stickMag < 0.6;
     if (pl.tracking) {
       const want = yawPitchOf(sub(sel.pos, pl.pos));
@@ -1248,7 +1267,8 @@
   function autopilot(g, skill) {
     skill = skill === undefined ? 1 : skill;
     const pl = g.player;
-    const input = { stickX: 0, stickY: 0, throttle: 0.45, fire: false, boost: false, missile: false };
+    // 速さは人と同じく自動 (throttle を渡さない)
+    const input = { stickX: 0, stickY: 0, fire: false, boost: false, missile: false };
     if (!pl.alive || g.state !== 'play') return input;
     // 狙う相手: いちばん近い的 (戦艦の部位を含む)
     const ts = targets(g);
