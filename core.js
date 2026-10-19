@@ -231,44 +231,65 @@
   //
   // 当たり判定と見た目を同じ表から作る。見た目と判定が食い違いようがない。
   // 1 つ 1 つの立体は「上から見た凸の多角形 (x, z) を、高さ y0〜y1 で押し出したもの」。
-  // 三角の船体も、段々の上部構造も、箱も、これで表せる。
+  // 円い胴も、斜めに落とした船首も、段々の艦橋も、箱も、これで表せる。
   // 戦艦は回さない (向きは常に艦首が -X)。
-  // 形と比率は、送ってもらった絵 (上から・横から) を測って決めた:
-  // 全長 640m、幅は艦尾の近くで長さの約半分、艦橋のてっぺんまで長さの約 25%。
+  // 形と比率は、送ってもらった三面図を測って決めた (絵の 705px = 640m、1px ≒ 0.91m)。
+  // 真ん中に赤く光る輪のある円い胴、左右に前後へ延びる 2 本の船体、前の真ん中に長い主砲、
+  // 後ろの真ん中に段々の艦橋。全長 640m・幅 228m。
 
   function box(x0, x1, z) { return [[x0, -z], [x1, -z], [x1, z], [x0, z]]; }
+  function ring(n, r, cx, cz) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i + 0.5) / n * Math.PI * 2;
+      out.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]);
+    }
+    return out;
+  }
+  /** 左右の船体の前半。前のはしを斜めに落とす (z の符号 sz で左右を作る)。 */
+  function podFront(sz) {
+    return [[-332, sz * 60], [-300, sz * 114], [-50, sz * 114], [-50, sz * 36], [-310, sz * 36]];
+  }
 
   const BOSS_SOLIDS = [
-    // 船体 (上と下の 2 枚。下を少し小さくして、ふちを段にする)
-    { name: 'hullTop', poly: [[-320, 0], [300, -150], [320, -140], [320, 140], [300, 150]], y0: 0, y1: 14 },
-    { name: 'hullLow', poly: [[-300, 0], [300, -130], [320, -120], [320, 120], [300, 130]], y0: -22, y1: 0 },
-    { name: 'keel', poly: [[-180, 0], [310, -36], [310, 36]], y0: -34, y1: -22 },
-    // 上部構造 (艦尾へ寄せて段々に積む)
-    { name: 'tier1', poly: [[-140, 0], [290, -95], [290, 95]], y0: 14, y1: 30 },
-    { name: 'tier2', poly: [[10, -25], [285, -70], [285, 70], [10, 25]], y0: 30, y1: 46 },
-    { name: 'tier3', poly: [[110, -20], [280, -45], [280, 45], [110, 20]], y0: 46, y1: 62 },
-    { name: 'tier4', poly: [[180, -15], [275, -30], [275, 30], [180, 15]], y0: 62, y1: 76 },
-    // 艦橋の塔と、その上の横長の艦橋
-    { name: 'neck', poly: box(235, 268, 10), y0: 76, y1: 112 },
-    { name: 'bridge', poly: box(238, 270, 55), y0: 112, y1: 124 },
-    // コアの蓋。エンジンをこわすと外れる。コア (中心 68・半径 15) をすっぽり覆う
-    { name: 'armor', poly: box(120, 160, 18), y0: 62, y1: 86, armor: true }
+    // 真ん中の円い胴 (上に赤く光る輪)
+    { name: 'hub', poly: ring(16, 72, 0, 0), y0: -32, y1: 32 },
+    // 左右の大きな円盤 (横向き)。船体の前半と後半のあいだに挟まる
+    { name: 'wheelL', axis: 'z', poly: ring(14, 55, 0, 0), z0: -116, z1: -40 },
+    { name: 'wheelR', axis: 'z', poly: ring(14, 55, 0, 0), z0: 40, z1: 116 },
+    // 左右の船体 (前半・後半)
+    { name: 'podFrontL', poly: podFront(-1), y0: -26, y1: 26 },
+    { name: 'podFrontR', poly: podFront(1), y0: -26, y1: 26 },
+    { name: 'podAftL', poly: [[50, -114], [282, -114], [282, -36], [50, -36]], y0: -26, y1: 26 },
+    { name: 'podAftR', poly: [[50, 36], [282, 36], [282, 114], [50, 114]], y0: -26, y1: 26 },
+    // 前の真ん中: 主砲の台
+    { name: 'spine', poly: box(-291, -60, 23), y0: -18, y1: 18 },
+    // 後ろの真ん中と、その上の段々の艦橋
+    { name: 'aft', poly: box(60, 246, 36), y0: -26, y1: 34 },
+    { name: 'tower1', poly: box(110, 200, 30), y0: 34, y1: 50 },
+    { name: 'tower2', poly: box(125, 190, 22), y0: 50, y1: 66 },
+    { name: 'bridge', poly: box(135, 185, 26), y0: 66, y1: 78 },
+    // コアの蓋 (輪の真ん中をふさぐ)。エンジンをこわすと外れる。コア (中心 36・半径 15) をすっぽり覆う
+    { name: 'armor', poly: ring(8, 40, 0, 0), y0: 32, y1: 54, armor: true }
   ];
 
   const BOSS_PARTS = [
-    // 砲台: 船体の上に 2 つ、一段目の上に 2 つ、船体の下に 2 つ (下にも死角を作らない)
-    { kind: 'turret', at: vec(-170, 20, -25), face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-170, 20, 25),  face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-20, 36, -18),  face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-20, 36, 18),   face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-60, -28, -45), face: vec(0, -1, 0) },
-    { kind: 'turret', at: vec(-60, -28, 45),  face: vec(0, -1, 0) },
-    { kind: 'engine', at: vec(334, -4, -60),  face: vec(1, 0, 0) },
-    { kind: 'engine', at: vec(334, -4, 60),   face: vec(1, 0, 0) },
-    { kind: 'core',   at: vec(140, 68, 0),    face: vec(0, 1, 0) }
+    // 砲台: 左右の船体の上に前後 2 つずつ、下に 1 つずつ (下を死角にしない)
+    { kind: 'turret', at: vec(-150, 32, -75), face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(-150, 32, 75),  face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(140, 32, -75),  face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(140, 32, 75),   face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(-200, -32, -75), face: vec(0, -1, 0) },
+    { kind: 'turret', at: vec(-200, -32, 75),  face: vec(0, -1, 0) },
+    // エンジン: 左右の船体の後ろ
+    { kind: 'engine', at: vec(296, 0, -75),   face: vec(1, 0, 0) },
+    { kind: 'engine', at: vec(296, 0, 75),    face: vec(1, 0, 0) },
+    // コア: 真ん中の輪の中
+    { kind: 'core',   at: vec(0, 36, 0),      face: vec(0, 1, 0) }
   ];
 
-  const BOSS_CANNON = vec(-330, 7, 0);
+  // 主砲の砲身の先
+  const BOSS_CANNON = vec(-352, 0, 0);
   // 自機 (高さ 0) より 300m 下に来る。真横からだと平たい船体が細い線にしか見えないので、
   // 甲板と段々の上部構造を見下ろせる高さにする
   const BOSS_FROM = vec(2300, -300, -1150);
@@ -276,34 +297,49 @@
   const BOSS_ARRIVE = 13;
 
   /**
+   * 立体を押し出す向き。ふつうは上下 (y)。axis: 'z' の立体は、横から見た多角形 (x, y) を
+   * 左右 (z0〜z1) に押し出したもの (横向きの円盤など)。
+   * 計算は「多角形が (x, z)・高さが y」の形でして、最後に y と z を入れ替える。
+   */
+  function solidRange(solid) {
+    return solid.axis === 'z' ? [solid.z0, solid.z1] : [solid.y0, solid.y1];
+  }
+  function axisMap(solid, v) {
+    return solid.axis === 'z' ? vec(v.x, v.z, v.y) : v;
+  }
+
+  /**
    * 立体を、外向きの面 (n・p <= d が内側) の並びにする。off は戦艦の位置。
    * 多角形の向き (時計回りか) によらず、重心から外を向く法線を選ぶ。
    */
   function solidPlanes(solid, off) {
     const P = solid.poly;
+    const r = solidRange(solid);
     let cx = 0, cz = 0;
     for (let i = 0; i < P.length; i++) { cx += P[i][0]; cz += P[i][1]; }
     cx /= P.length; cz /= P.length;
-    const planes = [];
+    const canon = [];
     for (let i = 0; i < P.length; i++) {
       const a = P[i], b = P[(i + 1) % P.length];
       let n = norm(vec(b[1] - a[1], 0, -(b[0] - a[0])));
       const mid = vec((a[0] + b[0]) / 2 - cx, 0, (a[1] + b[1]) / 2 - cz);
       if (dot(n, mid) < 0) n = scale(n, -1);
-      planes.push({ n: n, d: dot(n, vec(a[0] + off.x, 0, a[1] + off.z)) });
+      canon.push({ n: n, d: dot(n, vec(a[0], 0, a[1])) });
     }
-    planes.push({ n: vec(0, 1, 0), d: solid.y1 + off.y });
-    planes.push({ n: vec(0, -1, 0), d: -(solid.y0 + off.y) });
+    canon.push({ n: vec(0, 1, 0), d: r[1] });
+    canon.push({ n: vec(0, -1, 0), d: -r[0] });
+    // 押し出す向きに直して、戦艦の位置へずらす
+    const planes = canon.map(function (pl) {
+      const n = axisMap(solid, pl.n);
+      return { n: n, d: pl.d + dot(n, off) };
+    });
     let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
     for (let i = 0; i < P.length; i++) {
       x0 = Math.min(x0, P[i][0]); x1 = Math.max(x1, P[i][0]);
       z0 = Math.min(z0, P[i][1]); z1 = Math.max(z1, P[i][1]);
     }
-    return {
-      name: solid.name, planes: planes,
-      min: vec(x0 + off.x, solid.y0 + off.y, z0 + off.z),
-      max: vec(x1 + off.x, solid.y1 + off.y, z1 + off.z)
-    };
+    const lo = axisMap(solid, vec(x0, r[0], z0)), hi = axisMap(solid, vec(x1, r[1], z1));
+    return { name: solid.name, planes: planes, min: add(lo, off), max: add(hi, off) };
   }
 
   /** 線分 p0→p1 が凸の立体に入る最初の位置 (0〜1)。入らなければ -1。 */
@@ -1236,7 +1272,7 @@
     clamp: clamp, lerp: lerp, approach: approach, angleBetween: angleBetween, rotateToward: rotateToward,
     forwardFrom: forwardFrom, yawPitchOf: yawPitchOf, wrapAngle: wrapAngle,
     intercept: intercept, segmentSphere: segmentSphere, segmentBox: segmentBox, sphereBoxPush: sphereBoxPush,
-    solidPlanes: solidPlanes, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
+    solidPlanes: solidPlanes, solidRange: solidRange, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
     createGame: createGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
     autopilot: autopilot, makeFighter: makeFighter, makeBoss: makeBoss

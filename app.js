@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.4.0';
+  const VERSION = 'v0.5.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -584,12 +584,17 @@
    * 絵の座標は、上下の面は (x, z)、横の面は (ふちに沿った長さ, y) を HULL_TILE で割ったもの。
    */
   function prismGeo(solid, shade, out) {
-    const P = solid.poly, y0 = solid.y0, y1 = solid.y1;
+    const P = solid.poly;
+    const rng0 = C.solidRange(solid), y0 = rng0[0], y1 = rng0[1];
+    // 横向きの立体 (axis: 'z') は、計算した形の y と z を入れ替えて置く
+    const swap = solid.axis === 'z';
+    const mapv = function (v) { return swap ? [v[0], v[2], v[1]] : v; };
     let cx = 0, cz = 0;
     P.forEach(function (q) { cx += q[0]; cz += q[1]; });
     cx /= P.length; cz /= P.length;
     const tri = function (a, b, c, n, ua, ub, uc) {
-      // 表向き (頂点の並び) を法線にそろえる
+      a = mapv(a); b = mapv(b); c = mapv(c); n = mapv(n);
+      // 表向き (頂点の並び) を法線にそろえる (入れ替えは鏡と同じなので、入れ替えた後で見る)
       const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
       const cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
       if (cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0) { const t = b; b = c; c = t; const tu = ub; ub = uc; uc = tu; }
@@ -656,6 +661,7 @@
     C.BOSS_SOLIDS.forEach(function (sd) {
       if (sd.armor) return;
       prismGeo(sd, shadeOf(rng()), hull);
+      if (sd.axis === 'z') return;      // 横向きの円盤には凸凹と明かりを足さない
       const P = sd.poly;
       let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
       P.forEach(function (q) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); });
@@ -690,23 +696,44 @@
         }
       }
     });
-    // 艦首の主砲の筒
-    const cn = C.BOSS_CANNON;
-    prismGeo({ poly: [[cn.x - 4, -5], [cn.x + 30, -5], [cn.x + 30, 5], [cn.x - 4, 5]], y0: cn.y - 5, y1: cn.y + 5 }, [0.45, 0.45, 0.5], hull);
-
     const hullMesh = new THREE.Mesh(geoFrom(hull), hullMat);
     const lightMesh = new THREE.Mesh(geoFrom(lights), new THREE.MeshBasicMaterial({ vertexColors: true }));
     group.add(hullMesh, lightMesh);
 
-    // 艦橋の上: 丸いドーム 2 つとアンテナ (絵のとおり。判定には入れない)
-    const br = C.BOSS_SOLIDS.find(function (sd) { return sd.name === 'bridge'; });
-    const domeMat = new THREE.MeshPhongMaterial({ color: 0x5a5e66, shininess: 50, flatShading: true });
-    [-44, 44].forEach(function (z) {
-      const d = mesh(new THREE.SphereGeometry(6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), domeMat, 254, br.y1, z);
-      group.add(d);
+    // 飾り (判定には入れない): 光る輪、主砲の砲身、アンテナ
+    const glowRed = new THREE.MeshBasicMaterial({ color: 0xff2a3a });
+    const darkMat = new THREE.MeshPhongMaterial({ color: 0x3a3d44, shininess: 50, flatShading: true });
+    const hub = C.BOSS_SOLIDS.find(function (sd) { return sd.name === 'hub'; });
+    // 真ん中の胴の上の、赤く光る輪 (脈打たせる)
+    const topRing = mesh(new THREE.TorusGeometry(56, 6, 8, 48), glowRed, 0, hub.y1 + 1, 0);
+    topRing.rotation.x = Math.PI / 2;
+    const topGlow = glowSprite(0xff2030, 190, 0.55);
+    topGlow.position.set(0, hub.y1 + 6, 0);
+    group.add(topRing, topGlow);
+    // 左右の船体の外側の、赤い輪の円盤
+    const sideRings = [];
+    [-1, 1].forEach(function (sz) {
+      // 横向きの円盤 (wheelL / wheelR) の外の面に、赤く光る輪
+      const wheel = C.BOSS_SOLIDS.find(function (sd) { return sd.name === (sz < 0 ? 'wheelL' : 'wheelR'); });
+      const face = sz < 0 ? wheel.z0 : wheel.z1;
+      const r = mesh(new THREE.TorusGeometry(36, 4, 8, 40), glowRed, 0, 0, face + sz * 0.8);
+      const inner = mesh(new THREE.TorusGeometry(18, 2.5, 6, 28), glowRed, 0, 0, face + sz * 0.8);
+      const gl = glowSprite(0xff2030, 120, 0.45); gl.position.set(0, 0, face + sz * 6);
+      group.add(r, inner, gl);
+      sideRings.push(gl);
     });
-    const mast = new THREE.CylinderGeometry(0.5, 0.7, 18, 5);
-    group.add(mesh(mast, domeMat, 250, br.y1 + 9, 0), mesh(mast, domeMat, 262, br.y1 + 6, 8));
+    // 主砲の砲身 (前の真ん中の台から突き出す) と、付け根の光る輪
+    const cn = C.BOSS_CANNON;
+    const barrel = new THREE.CylinderGeometry(4.2, 5.2, 64, 12); barrel.rotateZ(Math.PI / 2);
+    group.add(mesh(barrel, darkMat, cn.x + 32, cn.y, cn.z));
+    const muzzle = new THREE.TorusGeometry(5.6, 1.6, 6, 16); muzzle.rotateY(Math.PI / 2);
+    group.add(mesh(muzzle, darkMat, cn.x + 1, cn.y, cn.z));
+    const baseRing = new THREE.TorusGeometry(15, 2.4, 8, 24); baseRing.rotateY(Math.PI / 2);
+    group.add(mesh(baseRing, glowRed, -292, 0, 0));
+    // 艦橋の上のアンテナ
+    const br = C.BOSS_SOLIDS.find(function (sd) { return sd.name === 'bridge'; });
+    const mast = new THREE.CylinderGeometry(0.6, 0.9, 22, 5);
+    group.add(mesh(mast, darkMat, 150, br.y1 + 11, -10), mesh(mast, darkMat, 162, br.y1 + 8, 12), mesh(mast, darkMat, 172, br.y1 + 6, -2));
 
     // 装甲 (コアの蓋)。外れたら消す
     const ab = C.BOSS_SOLIDS.filter(function (sd) { return sd.armor; })[0];
@@ -767,19 +794,17 @@
     const guide = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
     [beamOuter, beamCore, guide].forEach(function (m) { m.frustumCulled = false; scene.add(m); m.visible = false; });
 
-    // 艦尾の噴射 (赤)。真ん中の大きいものと、外側の 2 つ (弱点のエンジン 2 基とは別)
+    // 左右の船体の後ろの噴射 (赤)。上下 2 段ずつ。弱点のエンジン (部位) とは別の飾り
     const thrusters = [];
-    [[0, 1.4], [-105, 0.9], [105, 0.9]].forEach(function (q) {
-      const t = glowSprite(0xff3a30, 60 * q[1], 0.6);
-      t.position.set(330, -4, q[0]);
-      group.add(t);
-      thrusters.push(t);
-      const disc = mesh(new THREE.CircleGeometry(10 * q[1], 20), new THREE.MeshBasicMaterial({ color: 0xff6048 }), 320.6, -4, q[0]);
-      disc.rotation.y = Math.PI / 2;
-      group.add(disc);
+    [-75, 75].forEach(function (z) {
+      [-15, 15].forEach(function (y) {
+        const t = glowSprite(0xff3a30, 42, 0.6);
+        t.position.set(300, y, z);
+        group.add(t);
+        thrusters.push(t);
+      });
     });
-
-    group.userData = { parts: parts, armor: armor, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: thrusters, hull: hullMesh };
+    group.userData = { topRing: topRing, topGlow: topGlow, sideRings: sideRings, parts: parts, armor: armor, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: thrusters, hull: hullMesh };
     return group;
   }
 
@@ -1483,9 +1508,15 @@
       });
       // 噴射: 来るときは強く
       u.thrusters.forEach(function (t) {
-        const s = (b.phase === 'arrive' ? 90 : 55) * (0.9 + Math.random() * 0.2) * (aliveEngines(b) / 2 * 0.7 + 0.3);
+        const s = (b.phase === 'arrive' ? 70 : 42) * (0.9 + Math.random() * 0.2) * (aliveEngines(b) / 2 * 0.7 + 0.3);
         t.scale.setScalar(s);
       });
+      // 真ん中の輪: ゆっくり脈打つ。コアがむき出しになったら強く速く
+      const exposed = !b.armor;
+      const beat = 0.75 + 0.25 * Math.sin(game.t * (exposed ? 9 : 2.5));
+      u.topGlow.material.opacity = (exposed ? 0.85 : 0.5) * beat;
+      u.topGlow.scale.setScalar((exposed ? 230 : 190) * (0.95 + 0.05 * beat));
+      u.sideRings.forEach(function (gl) { gl.material.opacity = 0.45 * beat; });
       // 主砲
       const c = b.cannon;
       const from = new THREE.Vector3(c.from.x, c.from.y, c.from.z);

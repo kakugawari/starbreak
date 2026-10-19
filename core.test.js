@@ -339,18 +339,28 @@ test('主砲: 射線に乗ったままだと当たる。固定されてから横
   assert.strictEqual(hitDodge, 0, '動いていればよけられる');
 });
 
-test('三角の船体: 箱で近似せず、三角の外の弾は素通りし、中の弾は当たる', () => {
-  // 艦首 (-320) から艦尾へ広がる三角。艦首寄りの x = -200 では、半幅は約 29m しかない
-  const hull = C.solidPlanes(C.BOSS_SOLIDS.find((sd) => sd.name === 'hullTop'), C.vec(0, 0, 0));
-  const down = (x, z) => C.segmentSolid(C.vec(x, 100, z), C.vec(x, -100, z), hull.planes);
-  assert.ok(down(-200, 0) >= 0, '真ん中は当たる');
-  assert.ok(down(-200, 25) >= 0, 'ふちの内側は当たる');
-  assert.strictEqual(down(-200, 40), -1, 'ふちの外は素通り (箱で近似していたら当たってしまう所)');
-  assert.ok(down(-200, 40) === -1 && hull.max.z > 40, '外接する箱の中ではある');
-  assert.strictEqual(down(-330, 0), -1, '艦首の先より前は素通り');
+test('円い胴・横向きの円盤・斜めの船首: 箱で近似せず、形の外の弾は素通りし、中の弾は当たる', () => {
+  // 真ん中の円い胴 (半径 72m の 16 角形)。それを囲む箱の角 (70, 70) は胴の外
+  const hub = C.solidPlanes(C.BOSS_SOLIDS.find((sd) => sd.name === 'hub'), C.vec(0, 0, 0));
+  const down = (planes, x, z) => C.segmentSolid(C.vec(x, 200, z), C.vec(x, -200, z), planes);
+  assert.ok(down(hub.planes, 0, 0) >= 0, '真ん中は当たる');
+  assert.ok(down(hub.planes, 0, 70) >= 0, 'ふちの内側は当たる');
+  assert.strictEqual(down(hub.planes, 70, 70), -1, '囲む箱の角は素通り (箱で近似していたら当たってしまう所)');
+  assert.ok(hub.max.x > 70 && hub.max.z > 70, '外接する箱の中ではある');
+  // 左右の船体の、斜めに落とした船首
+  const pod = C.solidPlanes(C.BOSS_SOLIDS.find((sd) => sd.name === 'podFrontR'), C.vec(0, 0, 0));
+  assert.ok(down(pod.planes, -200, 75) >= 0, '船体の真ん中は当たる');
+  assert.strictEqual(down(pod.planes, -325, 110), -1, '斜めに落とした角の外は素通り');
   // 横から撃っても同じ
-  const side = (x, y) => C.segmentSolid(C.vec(x, y, 500), C.vec(x, y, -500), hull.planes);
-  assert.ok(side(0, 7) >= 0 && side(0, 20) === -1 && side(0, -5) === -1, '高さの範囲 (0〜14m) の中だけ当たる');
+  const side = (x, y) => C.segmentSolid(C.vec(x, y, 500), C.vec(x, y, -500), hub.planes);
+  assert.ok(side(0, 0) >= 0 && side(0, 35) === -1 && side(0, -35) === -1, '高さの範囲 (-32〜32m) の中だけ当たる');
+  // 横向きの円盤 (半径 55m・z 40〜116m)。横から撃つと円の中だけ当たる
+  const wheel = C.solidPlanes(C.BOSS_SOLIDS.find((sd) => sd.name === 'wheelR'), C.vec(0, 0, 0));
+  const fromSide = (x, y) => C.segmentSolid(C.vec(x, y, 400), C.vec(x, y, 0), wheel.planes);
+  assert.ok(fromSide(0, 50) >= 0, '円盤の上のふちの内側は当たる');
+  assert.strictEqual(fromSide(45, 45), -1, '円盤を囲む箱の角は素通り');
+  assert.ok(Math.abs(wheel.max.z - 116) < 1e-9 && Math.abs(wheel.min.z - 40) < 1e-9 && Math.abs(wheel.max.y - 55) < 0.01, `横向きの外接する箱 (z 40〜116・y ±55)`);
+  assert.strictEqual(C.segmentSolid(C.vec(0, 0, 30), C.vec(0, 0, 38), wheel.planes), -1, '円盤の厚みの手前 (z 40 より内) は素通り');
 });
 
 test('船体にぶつかっても、中に入り込まない', () => {
