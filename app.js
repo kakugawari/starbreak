@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.1.1';
+  const VERSION = 'v0.2.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -115,70 +115,55 @@
     return s;
   }
 
-  // 値ノイズ (背景の絵をその場で作る)
-  function makeNoise(seed) {
-    const rng = C.mulberry32(seed);
-    const N = 256, perm = new Uint8Array(N * 2), vals = new Float32Array(N);
-    for (let i = 0; i < N; i++) { perm[i] = i; vals[i] = rng(); }
-    for (let i = N - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
-    for (let i = 0; i < N; i++) perm[N + i] = perm[i];
-    const sm = function (t) { return t * t * (3 - 2 * t); };
-    function n2(x, y) {
-      const xi = Math.floor(x), yi = Math.floor(y);
-      const xf = x - xi, yf = y - yi;
-      const X = xi & 255, Y = yi & 255;
-      const a = vals[perm[X + perm[Y]]], b = vals[perm[X + 1 + perm[Y]]];
-      const c = vals[perm[X + perm[Y + 1]]], d = vals[perm[X + 1 + perm[Y + 1]]];
-      const u = sm(xf), v = sm(yf);
-      return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
-    }
-    return function fbm(x, y, oct) {
-      let s = 0, amp = 0.5, f = 1;
-      for (let i = 0; i < (oct || 5); i++) { s += amp * n2(x * f, y * f); f *= 2.03; amp *= 0.5; }
-      return s;
-    };
+  /**
+   * 絵のファイル。1 枚にまとめた版 (bundle.js) では埋め込んだ data URI を使う。
+   * 読めなくても遊べるよう、失敗したら呼ばない (暗い空のまま)。
+   */
+  const texLoader = new THREE.TextureLoader();
+  function loadTex(name, done) {
+    const src = (window.__ASSETS && window.__ASSETS[name]) || './' + name;
+    texLoader.load(src, function (t) {
+      t.colorSpace = THREE.SRGBColorSpace;
+      done(t);
+      assetsLoaded[name] = true;
+    }, undefined, function () { assetsLoaded[name] = false; });
   }
+  const assetsLoaded = {};
 
   // ------------------------------------------------------------ 宇宙: 星雲・星・惑星・太陽
+
+  // 背景の明るさ。1 だと絵のまま。遊んでいる間は、敵や赤い印が明るい星雲に埋もれないよう沈める
+  // (星雲のいちばん明るい所 上位10% の輝度: 1.0 で 69 → 0.55 で 51)。タイトルでは絵を見せる
+  const SKY_DIM = { play: 0.55, title: 0.9 };
+  let skyDim = SKY_DIM.title;
+  function setSkyDim(v) {
+    skyDim = v;
+    if (sky.userData.mat && sky.userData.mat.map) sky.userData.mat.color.setScalar(v);
+  }
 
   const sky = new THREE.Group();
   scene.add(sky);
 
   (function buildSky() {
-    const fbm = makeNoise(7);
-    const tex = canvasTex(1024, 512, function (c, w, h) {
-      const img = c.createImageData(w, h);
-      const d = img.data;
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const u = x / w, v = y / h;
-          // 横につながるよう、両端を混ぜる
-          const n1 = fbm(u * 6, v * 3, 5), n1b = fbm((u + 1) * 6 - 6 + 37, v * 3, 5);
-          const blend = u > 0.85 ? (u - 0.85) / 0.15 : 0;
-          const n = n1 * (1 - blend) + n1b * blend;
-          const m = fbm(u * 3 + 11, v * 2 + 5, 4);
-          const band = Math.exp(-Math.pow((v - 0.45 - 0.12 * Math.sin(u * 6.283)) / 0.16, 2));
-          const neb = Math.max(0, n - 0.42) * 2.4 * (0.35 + band);
-          const purple = Math.max(0, m - 0.5) * 2;
-          let r = 3 + neb * 40 + purple * neb * 120;
-          let gg = 5 + neb * 70 + neb * neb * 50;
-          let b = 12 + neb * 150 + purple * 40;
-          const i = (y * w + x) * 4;
-          d[i] = Math.min(255, r); d[i + 1] = Math.min(255, gg); d[i + 2] = Math.min(255, b); d[i + 3] = 255;
-        }
-      }
-      c.putImageData(img, 0, 0);
-    });
-    const m = new THREE.Mesh(
-      new THREE.SphereGeometry(20000, 48, 24),
-      new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, depthWrite: false, fog: false })
-    );
+    // 空全体に巻く 2:1 のパノラマ (space.jpg)。読めるまでは暗い紺
+    const mat = new THREE.MeshBasicMaterial({ color: 0x03050c, side: THREE.BackSide, depthWrite: false, fog: false });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(20000, 64, 32), mat);
     m.renderOrder = -10;
     sky.add(m);
+    loadTex('space.jpg', function (t) {
+      // 内側から見ると左右が反転するので戻す
+      t.wrapS = THREE.RepeatWrapping;
+      t.repeat.x = -1;
+      t.anisotropy = 4;
+      mat.map = t;
+      mat.color.setScalar(skyDim);
+      mat.needsUpdate = true;
+    });
+    sky.userData.mat = mat;
 
-    // 星: 画面に対して一定の大きさの点
+    // 星: 画面に対して一定の大きさの点 (絵の星より手前でくっきり光る)
     const rng = C.mulberry32(99);
-    const n = 3200;
+    const n = 1400;
     const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
       const u = rng() * 2 - 1, th = rng() * Math.PI * 2, r = Math.sqrt(1 - u * u);
@@ -206,62 +191,33 @@
     sky.add(sunHalo);
   })();
 
-  // 惑星: 遠くに置き、カメラと一緒に少しだけ動かす (近づけない背景)
+  // 地球: 遠くに置いた 1 枚の絵 (earth.jpg)。いつもカメラの方を向く。
+  // 黒い背景はシェーダーで抜く: 円の内側は不透明 (夜の側も後ろの星を隠す)、外は光のにじみだけ残す
+  const EARTH_DISK = 0.4464;      // 絵の幅に対する地球の半径 (earth.jpg を切り出したときに測った値)
   const planet = new THREE.Group();
   scene.add(planet);
   (function buildPlanet() {
-    const fbm = makeNoise(21);
-    const tex = canvasTex(1024, 512, function (c, w, h) {
-      const img = c.createImageData(w, h);
-      const d = img.data;
-      for (let y = 0; y < h; y++) {
-        const lat = (y / h - 0.5) * Math.PI;
-        for (let x = 0; x < w; x++) {
-          const lon = (x / w) * Math.PI * 2;
-          const px = Math.cos(lat) * Math.cos(lon), py = Math.sin(lat), pz = Math.cos(lat) * Math.sin(lon);
-          const land = fbm(px * 1.6 + 3 + pz * 0.7, py * 1.6 + pz * 1.3 + 7, 6);
-          const cloud = fbm(px * 3 + pz * 2 + 40, py * 5 + 13, 5);
-          let r, g, b;
-          if (land > 0.53) {
-            const k = Math.min(1, (land - 0.53) * 6);
-            r = 70 + k * 60; g = 92 + k * 40; b = 60 + k * 20;
-            if (Math.abs(py) > 0.85) { r = g = b = 230; }
-          } else {
-            const k = Math.max(0, land - 0.3) * 2;
-            r = 10 + k * 25; g = 40 + k * 70; b = 105 + k * 90;
-          }
-          const cl = Math.max(0, cloud - 0.5) * 3.2;
-          r = r + (245 - r) * Math.min(1, cl); g = g + (250 - g) * Math.min(1, cl); b = b + (255 - b) * Math.min(1, cl);
-          const i = (y * w + x) * 4;
-          d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
-        }
-      }
-      c.putImageData(img, 0, 0);
-    });
     const R = 4200;
-    const mat = new THREE.MeshLambertMaterial({ map: tex });
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48), mat);
-    ball.rotation.z = 0.35;
-    planet.add(ball);
-    // 大気のふち (見る向きに対して横を向いた所ほど光る)
-    const atm = new THREE.Mesh(
-      new THREE.SphereGeometry(R * 1.035, 64, 48),
-      new THREE.ShaderMaterial({
-        uniforms: { sunDir: { value: SUN_DIR } },
-        vertexShader: 'varying vec3 vN; varying vec3 vV; varying vec3 vW;' +
-          'void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vW = normalize(mat3(modelMatrix)*normal);' +
-          'vN = normalize(normalMatrix*normal); vV = normalize(-(modelViewMatrix*vec4(position,1.0)).xyz);' +
-          'gl_Position = projectionMatrix*viewMatrix*wp; }',
-        fragmentShader: 'uniform vec3 sunDir; varying vec3 vN; varying vec3 vV; varying vec3 vW;' +
-          'void main(){ float f = 1.0 - max(dot(vN, vV), 0.0); f = pow(f, 2.6);' +
-          'float lit = smoothstep(-0.35, 0.5, dot(vW, sunDir));' +
-          'gl_FragColor = vec4(vec3(0.35,0.65,1.0)*f*1.6*lit, f*lit); }',
-        transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false
-      })
-    );
-    planet.add(atm);
+    const size = R / EARTH_DISK;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { map: { value: null }, disk: { value: EARTH_DISK } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: 'uniform sampler2D map; uniform float disk; varying vec2 vUv;' +
+        'void main(){ vec4 c = texture2D(map, vUv); float d = distance(vUv, vec2(0.5));' +
+        'float inside = 1.0 - smoothstep(disk - 0.002, disk + 0.002, d);' +
+        'float glow = clamp(max(c.r, max(c.g, c.b)) * 2.2, 0.0, 1.0);' +
+        'float a = max(inside, glow); if (a < 0.004) discard;' +
+        'gl_FragColor = vec4(c.rgb / max(a, 0.001), a);' +
+        '\n#include <colorspace_fragment>\n}',
+      transparent: true, depthWrite: false, fog: false
+    });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    m.renderOrder = -8;
+    m.visible = false;
+    planet.add(m);
+    loadTex('earth.jpg', function (t) { mat.uniforms.map.value = t; m.visible = true; });
     planet.userData.offset = new THREE.Vector3(-3400, -5200, -9000);
-    planet.userData.ball = ball;
+    planet.userData.ball = m;
   })();
 
   // 宇宙のちり: 自分の動きが分かるよう、通り過ぎる細い筋を描く
@@ -981,6 +937,7 @@
     cam.dir.set(0, 0, -1);
     fx.timeScale = 1; fx.slowT = 0; fx.bossCam = 0;
     resultShown = false;
+    setSkyDim(SKY_DIM.play);
     screen = 'play';
     paused = false;
     els.title.hidden = true; els.result.hidden = true; els.pause.hidden = true;
@@ -992,6 +949,7 @@
   function toTitle() {
     clearWorld();
     game = null;
+    setSkyDim(SKY_DIM.title);
     screen = 'title';
     paused = false;
     els.title.hidden = false; els.result.hidden = true; els.pause.hidden = true; els.controls.hidden = true;
@@ -1339,6 +1297,7 @@
     }
     sky.position.copy(camera.position);
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
+    planet.quaternion.copy(camera.quaternion);
   }
 
   function updateTitleCamera(dt) {
@@ -1354,6 +1313,7 @@
     camera.lookAt(-6, 1.5, -6);
     sky.position.copy(camera.position);
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
+    planet.quaternion.copy(camera.quaternion);
     updateDust(camera.position, new THREE.Vector3(0, 0, -40));
   }
 
@@ -1827,6 +1787,9 @@
       toTitle: toTitle,
       audioLevel: function () { return audio.level(); },
       settings: settings,
+      assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
+      setSkyDim: setSkyDim,
+      skyDim: function () { return skyDim; },
       renderInfo: function () { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }; }
     };
   }

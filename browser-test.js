@@ -146,6 +146,9 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
+    await page.waitForFunction(() => window.__app.assetsLoaded()['space.jpg'] !== undefined && window.__app.assetsLoaded()['earth.jpg'] !== undefined, null, { timeout: 20000 });
+    const assets = await page.evaluate(() => window.__app.assetsLoaded());
+    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true, '宇宙の背景と地球の絵が読み込まれる');
 
     // 安全域を差し込んで、ボタンが画面に収まるか (chromium の安全域は 0 なので、まねる)
     await page.evaluate(() => {
@@ -170,6 +173,7 @@ async function run() {
     }));
     ok(playing.controls && playing.title, '操作の部品が出て、タイトルが消える');
     ok(playing.fighters === 3, `第1波は 3 機 (${playing.fighters})`);
+    ok(await page.evaluate(() => window.__app.skyDim() < 0.7), '遊んでいる間は背景を沈める (敵や印が埋もれないように)');
 
     // 操作の部品: 安全域の内側に収まり、重ならず、指で押せる大きさ
     const layout = await page.evaluate(() => {
@@ -362,6 +366,23 @@ async function run() {
     await page.touchscreen.tap(again.x, again.y);
     await page.waitForFunction(() => window.__app.screen() === 'play');
     ok(await page.evaluate(() => window.__app.game().stage === 'bossIn' || window.__app.game().stage === 'boss'), '「もう一度」で同じところから始まる');
+
+    // ------------------------------------------------ 1 枚にまとめた版 (テストプレイ用)
+    section('1 枚にまとめた版');
+    const os = require('node:os');
+    const fs = require('node:fs');
+    const single = path.join(os.tmpdir(), 'starbreak-single-test.html');
+    require('node:child_process').execFileSync(process.execPath, [path.join(ROOT, 'bundle.js'), single]);
+    const sctx = await browser.newContext(phoneDevice(devices, false));
+    await sctx.route(/^https?:/, (r) => r.abort());     // ネットには出ない
+    const sp = await sctx.newPage();
+    watch(sp, '1枚版');
+    await sp.goto('file://' + single);
+    await sp.waitForFunction(() => window.__app && window.__app.assetsLoaded()['space.jpg'] !== undefined && window.__app.assetsLoaded()['earth.jpg'] !== undefined, null, { timeout: 20000 });
+    const sa = await sp.evaluate(() => window.__app.assetsLoaded());
+    ok(sa['space.jpg'] === true && sa['earth.jpg'] === true, 'ほかのファイルなしで、絵まで出る');
+    ok(fs.statSync(single).size < 4 * 1024 * 1024, `大きさ ${(fs.statSync(single).size / 1024 / 1024).toFixed(1)}MB`);
+    await sctx.close();
 
     // ------------------------------------------------ 縦向き
     section('縦向き');
