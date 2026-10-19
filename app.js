@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.3.2';
+  const VERSION = 'v0.3.3';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -465,9 +465,9 @@
   }
 
   const ENEMY_MAT = {
-    // 明るい灰と派手な赤 (使う人の指定)。暗い灰だと星雲の上で見分けられなかった
-    hull: new THREE.MeshPhongMaterial({ color: 0xb4b8c0, shininess: 50, specular: 0x5a5d64, flatShading: true }),
-    red: new THREE.MeshPhongMaterial({ color: 0xe0182a, shininess: 70, specular: 0x7a3a40, flatShading: true }),
+    // 暗い灰 (見本より少しだけ明るく)。明るい灰と赤の塗りも試したが、暗い灰の方がよいと決まった。
+    // 見つけやすさは、赤いライトと大きめのエンジンの光でまかなう
+    hull: new THREE.MeshPhongMaterial({ color: 0x62666f, shininess: 45, specular: 0x4a4d55, flatShading: true }),
     dark: new THREE.MeshPhongMaterial({ color: 0x23252b, shininess: 30, flatShading: true }),
     canopy: new THREE.MeshPhongMaterial({ color: 0x5a0a12, emissive: 0x2a0306, shininess: 140, specular: 0xff9090 }),
     glow: new THREE.MeshBasicMaterial({ color: 0xff2a3a })
@@ -476,7 +476,7 @@
   /**
    * 敵戦闘機。前は -Z。全長 10m・全幅 9m・全高 3.2m (送ってもらった三面図から測った寸法)。
    * 角ばった機体、小さな赤いキャノピー、機首の横の前翼、後ろの大きなエンジン 1 基が赤く光る。
-   * 色は明るい灰が地で、機首の先・前翼・背中の尾翼・主翼の先・エンジンの輪が派手な赤。
+   * 色は暗い灰。赤いのは光る所 (キャノピー・ライト・吸気口・エンジン) だけ。
    */
   function makeEnemyShip() {
     const g = new THREE.Group();
@@ -484,17 +484,11 @@
     g.add(body);
     // 当たったときに白く光らせるので、機体ごとに材質を分ける
     const hull = ENEMY_MAT.hull.clone();
-    const red = ENEMY_MAT.red.clone();
 
-    // 機首の先 (赤)。胴体と同じ断面でつなぐ
-    const noseSections = [
-      { z: -5.0, w: 0.02, h: 0.02, y: -0.08 },
-      { z: -4.2, w: 0.34, h: 0.2, y: -0.06 }
-    ];
-    body.add(mesh(loftGeo(noseSections, 8, function () { return 0xffffff; }), red));
     // 胴体: 断面を 8 角にして、面で角ばった形に
     const fus = loftGeo([
-      noseSections[1],
+      { z: -5.0, w: 0.02, h: 0.02, y: -0.08 },
+      { z: -4.2, w: 0.34, h: 0.2, y: -0.06 },
       { z: -3.0, w: 0.58, h: 0.44, y: -0.02 },
       { z: -1.6, w: 0.82, h: 0.6, y: 0.02 },
       { z: 0.4, w: 1.05, h: 0.68, y: 0 },
@@ -521,7 +515,7 @@
 
     // 機首の横の前翼。先に丸い筒と赤いライト
     [1, -1].forEach(function (sx) {
-      body.add(mesh(wingGeoMirrored([[0.3, -4.0], [2.0, -3.6], [2.0, -3.1], [0.4, -3.1]], 0.1, sx), red, 0, -0.05, 0));
+      body.add(mesh(wingGeoMirrored([[0.3, -4.0], [2.0, -3.6], [2.0, -3.1], [0.4, -3.1]], 0.1, sx), hull, 0, -0.05, 0));
       const podGeo = new THREE.CylinderGeometry(0.15, 0.15, 1.0, 8); podGeo.rotateX(Math.PI / 2);
       body.add(mesh(podGeo, ENEMY_MAT.dark, sx * 2.05, -0.05, -3.45));
       body.add(mesh(new THREE.SphereGeometry(0.08, 6, 4), ENEMY_MAT.glow, sx * 2.05, -0.05, -3.97));
@@ -533,8 +527,6 @@
     [1, -1].forEach(function (sx) {
       const w = new THREE.Group();
       w.add(mesh(wingGeoMirrored([[1.0, -0.9], [4.5, 2.3], [4.35, 2.65], [2.3, 2.0], [1.0, 2.6]], 0.14, sx), hull));
-      // 主翼の先は赤 (少し厚くして、灰の面と重ならないように)
-      w.add(mesh(wingGeoMirrored([[3.4, 1.29], [4.5, 2.3], [4.35, 2.65], [3.4, 2.35]], 0.16, sx), red));
       w.add(mesh(new THREE.SphereGeometry(0.09, 6, 4), ENEMY_MAT.glow, sx * 4.42, 0, 2.45));
       // 翼の先の赤いライト。遠くからでも敵だと分かる光の玉
       const b2 = glowSprite(0xff3040, 3.6, 0.95); b2.position.set(sx * 4.45, 0, 2.5);
@@ -550,7 +542,7 @@
     const topFin = finGeo([[0.8, 0], [3.1, 0], [4.0, 2.0], [3.35, 2.05]], 0.1);
     const lowFin = finGeo([[3.2, 0], [4.6, 0], [5.0, -0.9], [4.5, -0.95]], 0.08);
     [1, -1].forEach(function (sx) {
-      const t = mesh(topFin, red, sx * 0.55, 0.55, 0); t.rotation.z = sx * -0.38;
+      const t = mesh(topFin, hull, sx * 0.55, 0.55, 0); t.rotation.z = sx * -0.38;
       const b = mesh(lowFin, hull, sx * 0.6, -0.55, 0); b.rotation.z = sx * 0.35;
       body.add(t, b);
     });
@@ -558,15 +550,17 @@
     // 後ろの大きなエンジン 1 基 (八角形)。奥が赤く光る
     const eng = new THREE.CylinderGeometry(0.95, 1.0, 1.4, 8); eng.rotateX(Math.PI / 2); eng.rotateZ(Math.PI / 8);
     body.add(mesh(eng, ENEMY_MAT.dark, 0, 0.05, 4.7));
-    const engRing = new THREE.TorusGeometry(1.0, 0.1, 6, 8); engRing.rotateZ(Math.PI / 8);
-    body.add(mesh(engRing, red, 0, 0.05, 4.05));
     const noz = new THREE.CircleGeometry(0.72, 8); noz.rotateZ(Math.PI / 8);
     body.add(mesh(noz, ENEMY_MAT.glow, 0, 0.05, 5.41));
-    const e1 = glowSprite(0xff4050, 4.2, 0.95); e1.position.set(0, 0.05, 5.7);
-    const e2 = glowSprite(0xff1a2a, 7, 0.5); e2.position.set(0, 0.05, 6.8);
+    // エンジンの光は大きめに (遠くからでも、横からでも「敵がいる」と分かるように)。
+    // 外の輪は足さずに重ねて塗る: 足すと紫や青の星雲と混ざって桃色に見える
+    const e1 = glowSprite(0xff5a50, 6, 1); e1.position.set(0, 0.05, 5.9);
+    const e2 = glowSprite(0xff1424, 12, 0.75); e2.position.set(0, 0.05, 7.2);
+    e2.material.blending = THREE.NormalBlending;
+    e2.renderOrder = 1;
     body.add(e1, e2);
 
-    g.userData = { body: body, mats: [hull, red] };
+    g.userData = { body: body, mats: [hull] };
     return g;
   }
 
