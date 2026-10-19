@@ -161,6 +161,11 @@ async function run() {
     }));
     ok(titleFit, '安全域を入れても、タイトルのボタンが画面に収まる');
 
+    // 機体の面: 鏡にした翼が片側だけ黒く見えた不具合の見張り
+    const faces = await page.evaluate(() => window.__app.flippedFaces());
+    ok(faces.player.bad === 0 && faces.enemy.bad === 0,
+      `機体の面の表向きと光の向きがそろっている (自機 ${faces.player.bad}/${faces.player.total}・敵機 ${faces.enemy.bad}/${faces.enemy.total} 枚が逆)`);
+
     // ------------------------------------------------ 出撃
     section('出撃 (ボタンを指で押す)');
     const startBtn = await rectOf(page, '#btnStart');

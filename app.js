@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.2.1';
+  const VERSION = 'v0.3.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -272,6 +272,14 @@
     engine: new THREE.MeshBasicMaterial({ color: 0x9fd8ff })
   };
 
+  /**
+   * 左右反対の板。geometry.scale(-1) で鏡にすると面の裏表が逆になり、光の当たり方が
+   * 逆になって黒く見える。点の x を反転してから形を作れば、向きは Shape が直してくれる。
+   */
+  function wingGeoMirrored(pts, thick, sx) {
+    return wingGeo(pts.map(function (p) { return [p[0] * sx, p[1]]; }), thick);
+  }
+
   function wingGeo(pts, thick) {
     const s = new THREE.Shape();
     s.moveTo(pts[0][0], pts[0][1]);
@@ -289,44 +297,169 @@
     return m;
   }
 
-  /** 自機 RZ-1。前は -Z。全長 12m ほど。 */
+  /**
+   * 断面をつないだ胴体。sections は機首から順に { z, w (半幅), h (半高), y (中心の高さ) }。
+   * 角の丸い四角 (超楕円) の断面にして、ずんぐりしすぎない形にする。color(z) で部分ごとの色。
+   */
+  function loftGeo(sections, n, color) {
+    const pos = [], col = [], idx = [];
+    const p = 2.6;
+    sections.forEach(function (sc) {
+      const c = new THREE.Color(color(sc.z));
+      for (let i = 0; i < n; i++) {
+        const t = (i / n) * Math.PI * 2;
+        const ct = Math.cos(t), st = Math.sin(t);
+        const x = sc.w * Math.sign(ct) * Math.pow(Math.abs(ct), 2 / p);
+        const y = sc.h * Math.sign(st) * Math.pow(Math.abs(st), 2 / p);
+        pos.push(x, (sc.y || 0) + y, sc.z);
+        col.push(c.r, c.g, c.b);
+      }
+    });
+    for (let r = 0; r < sections.length - 1; r++) {
+      for (let i = 0; i < n; i++) {
+        const a = r * n + i, b = r * n + (i + 1) % n, c = a + n, d = b + n;
+        idx.push(a, c, b, b, c, d);
+      }
+    }
+    // 後ろの端はふさぐ
+    const last = (sections.length - 1) * n;
+    for (let i = 1; i < n - 1; i++) idx.push(last, last + i, last + i + 1);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }
+
+  /** 縦の板 (尾翼など)。pts は (z, y) の点。厚みは x 方向。 */
+  function finGeo(pts, thick) {
+    const s = new THREE.Shape();
+    s.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
+    s.closePath();
+    const g = new THREE.ExtrudeGeometry(s, { depth: thick, bevelEnabled: false });
+    g.translate(0, 0, -thick / 2);
+    g.rotateY(-Math.PI / 2);    // 形の x → 世界の z
+    return g;
+  }
+
+  const SHIP = {
+    white: 0xe9e5da, yellow: 0xf2c21c, dark: 0x30333b, navy: 0x1d2740
+  };
+  const SHIP_MAT = {
+    body: new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 60, specular: 0x555555 }),
+    white: new THREE.MeshPhongMaterial({ color: SHIP.white, shininess: 60, specular: 0x555555 }),
+    yellow: new THREE.MeshPhongMaterial({ color: SHIP.yellow, shininess: 70, specular: 0x666644 }),
+    dark: new THREE.MeshPhongMaterial({ color: SHIP.dark, shininess: 40 }),
+    navy: new THREE.MeshPhongMaterial({ color: SHIP.navy, shininess: 80, specular: 0x6688aa }),
+    glass: new THREE.MeshPhongMaterial({ color: 0x173a78, emissive: 0x06142e, shininess: 140, specular: 0xbfd8ff }),
+    fan: new THREE.MeshBasicMaterial({ color: 0x5fb8ff }),
+    nozzle: new THREE.MeshBasicMaterial({ color: 0xbfe6ff })
+  };
+
+  /** 機首の横の「01」。透明な地に字だけ。 */
+  const markTex = canvasTex(128, 64, function (c) {
+    c.font = '900 52px -apple-system, "Helvetica Neue", sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillStyle = '#2a2c33';
+    c.fillText('01', 64, 34);
+  });
+
+  /**
+   * 自機 RZ-1。前は -Z。全長 12m・全幅 10m・全高 3.5m (送ってもらった三面図から測った寸法)。
+   * 白地に黄色の差し色、大きなキャノピー、太いエンジン 2 基、後ろへ流れる主翼、外へ開く尾翼 2 枚。
+   */
   function makePlayerShip() {
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
-    const nose = mesh(new THREE.ConeGeometry(0.95, 5.2, 6), MAT.hull, 0, 0, -5.4);
-    nose.rotation.x = -Math.PI / 2;
-    body.add(nose);
-    body.add(mesh(new THREE.BoxGeometry(2.0, 1.2, 6.2), MAT.hull, 0, 0, -0.2));
-    body.add(mesh(new THREE.BoxGeometry(1.2, 0.5, 4), MAT.dark, 0, -0.75, 0));
-    const canopy = mesh(new THREE.SphereGeometry(0.72, 16, 10), MAT.glass, 0, 0.62, -2.1);
-    canopy.scale.set(1, 0.65, 2.1);
+
+    // 胴体: 機首の先 (黄) → キャノピーの下 → エンジンの間 → 尾
+    const fus = loftGeo([
+      { z: -6.0, w: 0.02, h: 0.02, y: -0.1 },
+      { z: -5.4, w: 0.22, h: 0.16, y: -0.08 },
+      { z: -4.4, w: 0.45, h: 0.4, y: -0.04 },
+      { z: -4.2, w: 0.5, h: 0.44, y: -0.03 },
+      { z: -3.0, w: 0.72, h: 0.64, y: 0 },
+      { z: -1.4, w: 0.88, h: 0.78, y: 0.02 },
+      { z: 0.5, w: 0.98, h: 0.74, y: 0 },
+      { z: 2.6, w: 0.92, h: 0.62, y: -0.02 },
+      { z: 4.6, w: 0.62, h: 0.44, y: -0.02 },
+      { z: 5.4, w: 0.3, h: 0.26, y: 0 }
+    ], 18, function (z) { return z < -4.3 ? SHIP.yellow : SHIP.white; });
+    body.add(mesh(fus, SHIP_MAT.body));
+
+    // キャノピー (大きく細長い)
+    const canopy = mesh(new THREE.SphereGeometry(1, 20, 12), SHIP_MAT.glass, 0, 0.56, -2.6);
+    canopy.scale.set(0.55, 0.55, 1.8);
     body.add(canopy);
-    // 翼 (後退翼)
-    const wR = wingGeo([[0.8, -1.6], [6.2, 2.0], [6.4, 3.0], [0.9, 2.4]], 0.22);
-    const wL = wR.clone(); wL.scale(-1, 1, 1);
-    const wingR = mesh(wR, MAT.hull, 0, -0.1, 0); wingR.rotation.z = -0.06;
-    const wingL = mesh(wL, MAT.hull, 0, -0.1, 0); wingL.rotation.z = 0.06;
-    body.add(wingR, wingL);
-    // 赤い帯
-    body.add(mesh(new THREE.BoxGeometry(2.2, 0.26, 0.5), MAT.red, 3.6, 0.1, 1.1));
-    body.add(mesh(new THREE.BoxGeometry(2.2, 0.26, 0.5), MAT.red, -3.6, 0.1, 1.1));
-    body.add(mesh(new THREE.BoxGeometry(0.3, 0.9, 2.6), MAT.red, 0, 0.9, 1.6));
-    // 翼端の砲
-    const gunGeo = new THREE.CylinderGeometry(0.12, 0.16, 3.4, 6); gunGeo.rotateX(Math.PI / 2);
-    body.add(mesh(gunGeo, MAT.dark, 6.15, -0.05, 1.0), mesh(gunGeo, MAT.dark, -6.15, -0.05, 1.0));
-    // エンジン2基
-    const engGeo = new THREE.CylinderGeometry(0.62, 0.7, 3.6, 12); engGeo.rotateX(Math.PI / 2);
-    const nozGeo = new THREE.CylinderGeometry(0.52, 0.52, 0.1, 12); nozGeo.rotateX(Math.PI / 2);
+    // キャノピーの後ろの背中 (濃い灰の装備)
+    body.add(mesh(new THREE.BoxGeometry(0.9, 0.34, 2.2), SHIP_MAT.dark, 0, 0.74, 0.4));
+    body.add(mesh(new THREE.BoxGeometry(0.6, 0.22, 1.4), SHIP_MAT.white, 0, 0.94, 0.5));
+
+    // 胴の脇の張り出し (機首から主翼へ)。ふちが黄色
+    [1, -1].forEach(function (sx) {
+      const a = wingGeoMirrored([[0.45, -3.6], [1.25, -0.6], [1.6, 0.6], [0.6, 0.6]], 0.12, sx);
+      const e = wingGeoMirrored([[0.45, -3.6], [1.25, -0.6], [1.16, -0.52], [0.42, -3.3]], 0.14, sx);
+      body.add(mesh(a, SHIP_MAT.white, 0, -0.08, 0), mesh(e, SHIP_MAT.yellow, 0, -0.08, 0));
+    });
+
+    // エンジン 2 基: 前半は白い覆い、後ろは紺。前に吸気口、後ろに青く光る噴射口
     const flames = [];
-    [-1.45, 1.45].forEach(function (x) {
-      body.add(mesh(engGeo, MAT.dark, x, 0, 2.4));
-      body.add(mesh(nozGeo, MAT.engine, x, 0, 4.22));
-      const f1 = glowSprite(0x6fc8ff, 3.2, 1); f1.position.set(x, 0, 4.6);
-      const f2 = glowSprite(0x3a7dff, 5, 0.7); f2.position.set(x, 0, 5.6);
+    const EX = 1.55, EY = -0.12;
+    const cowl = new THREE.CylinderGeometry(0.72, 0.6, 2.9, 20); cowl.rotateX(Math.PI / 2);
+    const rear = new THREE.CylinderGeometry(0.8, 0.78, 2.6, 20); rear.rotateX(Math.PI / 2);
+    const ring = new THREE.TorusGeometry(0.78, 0.07, 6, 20);
+    const intake = new THREE.CircleGeometry(0.5, 20); intake.rotateY(Math.PI);
+    const noz = new THREE.CircleGeometry(0.62, 20);
+    [-EX, EX].forEach(function (x) {
+      body.add(mesh(cowl, SHIP_MAT.white, x, EY, 1.0));
+      body.add(mesh(rear, SHIP_MAT.navy, x, EY, 3.75));
+      [2.9, 3.7, 4.5].forEach(function (z) { body.add(mesh(ring, SHIP_MAT.dark, x, EY, z)); });
+      body.add(mesh(intake, SHIP_MAT.fan, x, EY, -0.4));
+      body.add(mesh(new THREE.TorusGeometry(0.6, 0.1, 6, 20), SHIP_MAT.dark, x, EY, -0.46));
+      body.add(mesh(noz, SHIP_MAT.nozzle, x, EY, 5.06));
+      // エンジンと胴をつなぐ板
+      body.add(mesh(new THREE.BoxGeometry(Math.abs(x) - 0.4, 0.5, 3.6), SHIP_MAT.white, x / 2 + Math.sign(x) * 0.2, EY + 0.05, 1.6));
+      const f1 = glowSprite(0x7fd0ff, 3.0, 1); f1.position.set(x, EY, 5.4);
+      const f2 = glowSprite(0x3a7dff, 5, 0.7); f2.position.set(x, EY, 6.4);
       body.add(f1, f2);
       flames.push(f1, f2);
     });
+
+    // 主翼: 後ろ寄りで約 46° 後退、前のふちが黄色、外へわずかに下がる
+    [1, -1].forEach(function (sx) {
+      const w = new THREE.Group();
+      const a = wingGeoMirrored([[1.9, -0.2], [5.0, 4.2], [4.7, 4.35], [3.0, 3.1], [2.2, 3.7], [1.9, 3.7]], 0.14, sx);
+      const e = wingGeoMirrored([[1.9, -0.2], [5.0, 4.2], [4.85, 4.25], [1.9, 0.25]], 0.16, sx);
+      w.add(mesh(a, SHIP_MAT.white), mesh(e, SHIP_MAT.yellow));
+      w.position.set(0, EY - 0.05, 0);
+      w.rotation.z = sx * -0.07;
+      body.add(w);
+    });
+
+    // 尾翼 2 枚: エンジンの上から外へ約 25° 開く。上半分が黄色
+    const fin = finGeo([[2.5, 0], [4.7, 0], [5.45, 1.55], [4.95, 1.6]], 0.1);
+    const finTip = finGeo([[3.7, 0.8], [5.08, 0.8], [5.45, 1.55], [4.95, 1.6]], 0.12);
+    [1, -1].forEach(function (sx) {
+      const f = new THREE.Group();
+      f.add(mesh(fin, SHIP_MAT.white), mesh(finTip, SHIP_MAT.yellow));
+      f.position.set(sx * 1.25, EY + 0.65, 0);
+      f.rotation.z = sx * -0.44;
+      body.add(f);
+    });
+
+    // 機首の横の「01」
+    const markGeo = new THREE.PlaneGeometry(0.7, 0.35);
+    const markMat = new THREE.MeshBasicMaterial({ map: markTex, transparent: true, depthWrite: false });
+    [1, -1].forEach(function (sx) {
+      const m = mesh(markGeo, markMat, sx * 0.64, -0.06, -3.55);
+      m.rotation.y = sx * Math.PI / 2;
+      m.rotation.x = 0;
+      body.add(m);
+    });
+
     g.userData = { body: body, flames: flames };
     return g;
   }
@@ -348,7 +481,7 @@
     body.add(nose);
     body.add(mesh(new THREE.BoxGeometry(1.8, 1.2, 4), hull, 0, 0, 1.0));
     const wR = wingGeo([[0.8, 2.2], [5.0, -1.2], [5.4, -0.4], [0.9, 3.4]], 0.2);
-    const wL = wR.clone(); wL.scale(-1, 1, 1);
+    const wL = wingGeoMirrored([[0.8, 2.2], [5.0, -1.2], [5.4, -0.4], [0.9, 3.4]], 0.2, -1);
     body.add(mesh(wR, hull, 0, 0, 0), mesh(wL, hull, 0, 0, 0));
     const finGeo = new THREE.BoxGeometry(0.2, 2.4, 1.6);
     const f1 = mesh(finGeo, ENEMY_MAT.dark, 5.2, 0.6, -0.8), f2 = mesh(finGeo, ENEMY_MAT.dark, -5.2, 0.6, -0.8);
@@ -1124,7 +1257,7 @@
       const big = i % 2 === 1;
       const s = (big ? 5 : 3.2) * thrust * (0.9 + Math.random() * 0.2);
       f.scale.set(s, s, 1);
-      f.position.z = big ? 4.4 + thrust * 1.6 : 4.5;
+      f.position.z = big ? 5.6 + thrust * 1.6 : 5.4;
     });
     if (pl.boosting && pl.alive) {
       const back = { x: pl.pos.x - pl.dir.x * 6, y: pl.pos.y - pl.dir.y * 6, z: pl.pos.z - pl.dir.z * 6 };
@@ -1312,17 +1445,54 @@
     planet.quaternion.copy(camera.quaternion);
   }
 
+  // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
+  let inspectView = null;
+  const inspectLight = new THREE.DirectionalLight(0xffffff, 1.6);
+  inspectLight.visible = false;
+  scene.add(inspectLight);
+  const INSPECT = {
+    side: { pos: [-30, 0, 0], up: [0, 1, 0] },
+    top: { pos: [0, 30, 0.001], up: [1, 0, 0] },
+    front: { pos: [0, 0.5, -30], up: [0, 1, 0] },
+    rear: { pos: [-14, 9, 16], up: [0, 1, 0] }
+  };
+  function renderInspect() {
+    const v = INSPECT[inspectView];
+    shipObj.position.set(0, 0, 0);
+    shipObj.rotation.set(0, 0, 0);
+    camera.position.set(v.pos[0], v.pos[1], v.pos[2]);
+    camera.up.set(v.up[0], v.up[1], v.up[2]);
+    camera.fov = 30; camera.updateProjectionMatrix();
+    camera.lookAt(0, 0, 0);
+    sky.visible = false; planet.visible = false; dust.lines.visible = false;
+    inspectLight.visible = true;
+    inspectLight.position.copy(camera.position);
+    scene.background = new THREE.Color(0xd400c8);
+    renderer.render(scene, camera);
+    hud.setTransform(1, 0, 0, 1, 0, 0);
+    hud.clearRect(0, 0, els.hud.width, els.hud.height);
+  }
+
   function updateTitleCamera(dt) {
     titleT += dt;
     shipObj.position.set(0, 0, 0);
     shipObj.rotation.order = 'YXZ';
     shipObj.rotation.set(0.05 * Math.sin(titleT * 0.7), -0.15, 0.12 * Math.sin(titleT * 0.5));
     shipObj.userData.flames.forEach(function (f, i) { const s = (i % 2 ? 5 : 3.2) * (0.9 + Math.random() * 0.2); f.scale.set(s, s, 1); });
-    const a = -0.85 + Math.sin(titleT * 0.12) * 0.25;
-    camera.position.set(Math.sin(a) * 26, 6 + Math.sin(titleT * 0.2) * 2, Math.cos(a) * 26 - 4);
+    // 斜め前の右から (日の当たる側)。ゆっくり少しだけ回り込む
+    const a = 2.3 + Math.sin(titleT * 0.12) * 0.2;
+    camera.position.set(Math.sin(a) * 24, 5 + Math.sin(titleT * 0.2) * 1.5, Math.cos(a) * 24);
     camera.up.set(0, 1, 0);
     camera.fov = 52; camera.updateProjectionMatrix();
-    camera.lookAt(-6, 1.5, -6);
+    // 機体がロゴとメニューの間の下 (画面の x 48%・y 74%) に来るよう、見る所をずらす
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    const d = camera.position.length();
+    const halfH = Math.tan(camera.fov * Math.PI / 360) * d, halfW = halfH * camera.aspect;
+    const sx = 0.48 * 2 - 1, sy = 1 - 0.74 * 2;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    camera.lookAt(right.multiplyScalar(-sx * halfW).add(up.multiplyScalar(-sy * halfH)));
     sky.position.copy(camera.position);
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
@@ -1673,6 +1843,10 @@
     frameLog.push(realDt);
     if (frameLog.length > 240) frameLog.shift();
 
+    if (inspectView && shipObj) {
+      renderInspect();
+      return;
+    }
     if (screen === 'title' || !game) {
       if (shipObj) updateTitleCamera(realDt);
       updateParticles(realDt);
@@ -1801,6 +1975,35 @@
       settings: settings,
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
       setSkyDim: setSkyDim,
+      // 面の表向き (頂点の並び) と、光の計算に使う向き (法線) が食い違う三角形の数。
+      // 鏡にした板 (geometry.scale(-1)) はここが食い違い、片側だけ黒く見える
+      flippedFaces: function () {
+        const out = {};
+        [['player', makePlayerShip()], ['enemy', makeEnemyShip()]].forEach(function (pair) {
+          let bad = 0, total = 0;
+          pair[1].traverse(function (o) {
+            if (!o.isMesh || o.isSprite || !o.geometry.attributes.normal) return;
+            const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry;
+            const P = g.attributes.position, N = g.attributes.normal;
+            const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+            for (let i = 0; i < P.count; i += 3) {
+              a.fromBufferAttribute(P, i); b.fromBufferAttribute(P, i + 1); c.fromBufferAttribute(P, i + 2);
+              n.fromBufferAttribute(N, i).add(_v.fromBufferAttribute(N, i + 1)).add(_v.fromBufferAttribute(N, i + 2));
+              const face = b.sub(a).cross(c.sub(a));
+              if (face.lengthSq() < 1e-12) continue;
+              total++;
+              if (face.dot(n) < 0) bad++;
+            }
+          });
+          out[pair[0]] = { bad: bad, total: total };
+        });
+        return out;
+      },
+      inspect: function (view) {
+        inspectView = view || null;
+        if (!view) { sky.visible = true; planet.visible = true; dust.lines.visible = true; scene.background = null; inspectLight.visible = false; }
+        els.title.hidden = !!view || screen !== 'title';
+      },
       skyDim: function () { return skyDim; },
       renderInfo: function () { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }; }
     };
