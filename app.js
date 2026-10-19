@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.2';
+  const VERSION = 'v0.5.3';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1680,7 +1680,7 @@
     return { x: (_v.x * 0.5 + 0.5) * W, y: (-_v.y * 0.5 + 0.5) * H, behind: behind };
   }
 
-  const hudInfo = { reticle: null, focusLead: null, markers: 0, brackets: [], arrows: [] };
+  const hudInfo = { reticle: null, focusLead: null, markers: 0, brackets: [], arrows: [], gauges: [] };
 
   function drawHud(dt) {
     const c = hud;
@@ -1896,10 +1896,12 @@
     });
 
     // 左上: シールド・装甲・ブースト
-    const x0 = sal + 4, y0 = 12;
-    bar(c, x0, y0, 150, 7, pl.shield / K.shieldMax, '#5ab8ff', 'SHIELD');
-    bar(c, x0, y0 + 20, 150, 7, pl.hull / K.hullMax, pl.hull < 35 ? '#ff5a5a' : '#e8ecf4', 'HULL');
-    bar(c, x0, y0 + 40, 110, 5, pl.boost / 100, pl.boosting ? '#ffe08a' : '#ffb547', 'BOOST');
+    // 左上: シールド・機体・ブーストのゲージ (送ってもらった絵の枠に、目盛りを描く)
+    const gx = sal - 2, gy = 6;
+    let gyy = gy;
+    gyy += drawGauge(c, 0, gx, gyy, pl.shield / K.shieldMax, false) + 1;
+    gyy += drawGauge(c, 1, gx, gyy, pl.hull / K.hullMax, pl.hull < 35 && Math.sin(game.t * 10) > 0) + 1;
+    drawGauge(c, 2, gx, gyy, pl.boost / 100, false, pl.boosting);
     // 速度
     c.textAlign = 'left';
     c.font = '700 12px -apple-system, sans-serif';
@@ -1984,19 +1986,64 @@
     return best;
   }
 
-  function bar(c, x, y, w, h, v, color, label) {
-    c.fillStyle = 'rgba(0,0,0,.45)';
-    c.fillRect(x, y, w, h);
-    c.fillStyle = color;
-    c.fillRect(x, y, w * C.clamp(v, 0, 1), h);
-    c.strokeStyle = 'rgba(160,200,255,.35)';
-    c.lineWidth = 1;
-    c.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    c.font = '600 9px -apple-system, sans-serif';
-    c.textAlign = 'left';
-    c.fillStyle = 'rgba(200,220,255,.75)';
-    c.fillText(label, x + w + 6, y + h);
+  /**
+   * ゲージ 1 本。枠・アイコン・名前は gauges.png (送ってもらった絵から、目盛りの溝だけ塗り直したもの)。
+   * 目盛りはその溝の中に、絵と同じ「/」向きで 14 本描き、いまの量のぶんだけ光らせる。
+   * 表に出すのは幅 190pt (絵は 2 倍の 380px)。戻り値は描いた高さ。
+   */
+  const GAUGE_SCALE = 0.5;
+  const GAUGES = [
+    // sy, h: 絵の中の段の位置と高さ / t: 目盛りの溝 (x0, y0, x1, y1) / 色: 光る目盛りの上と下、暗い目盛り
+    { sy: 0, h: 67, t: [119.5, 10.2, 367.5, 44.4], top: '#b4f0ff', bot: '#3b95dc', dim: 'rgba(90,140,180,.32)' },
+    { sy: 67, h: 65, t: [119.5, 9.7, 367.5, 41.0], top: '#ffffff', bot: '#b5cdea', dim: 'rgba(120,140,175,.32)' },
+    { sy: 132, h: 71, t: [119.5, 8.0, 367.5, 44.4], top: '#ffe28c', bot: '#ee8a2a', dim: 'rgba(160,112,48,.38)' }
+  ];
+  const GAUGE_SEGS = 14;
+  const gaugeImg = new Image();
+  (function () {
+    const src = (window.__ASSETS && window.__ASSETS['gauges.png']) || './gauges.png';
+    gaugeImg.onload = function () { assetsLoaded['gauges.png'] = true; };
+    gaugeImg.onerror = function () { assetsLoaded['gauges.png'] = false; };
+    gaugeImg.src = src;
+  })();
+  const gaugeGrad = [];
+  function drawGauge(c, i, x, y, v, warn, hot) {
+    const g = GAUGES[i], k = GAUGE_SCALE;
+    if (!gaugeImg.complete || !gaugeImg.naturalWidth) return g.h * k;
+    c.drawImage(gaugeImg, 0, g.sy, 380, g.h, x, y, 380 * k, g.h * k);
+    const tx0 = x + g.t[0] * k, ty0 = y + g.t[1] * k, tx1 = x + g.t[2] * k, ty1 = y + g.t[3] * k;
+    const pad = 2.5, th = ty1 - ty0 - pad * 2, lean = th * 0.45;
+    const step = (tx1 - tx0 - pad * 2 - lean) / GAUGE_SEGS, w = step * 0.66;
+    const yb = ty1 - pad, yt = ty0 + pad;
+    // 光る目盛りの色 (上が明るい)。段ごとに作り置く
+    if (!gaugeGrad[i] || gaugeGrad[i].y !== y) {
+      const gr = c.createLinearGradient(0, yt, 0, yb);
+      gr.addColorStop(0, g.top); gr.addColorStop(1, g.bot);
+      const wr = c.createLinearGradient(0, yt, 0, yb);
+      wr.addColorStop(0, '#ffb0a0'); wr.addColorStop(1, '#e8303a');
+      gaugeGrad[i] = { y: y, lit: gr, warn: wr };
+    }
+    const lit = C.clamp(v, 0, 1) * GAUGE_SEGS;
+    hudInfo.gauges[i] = lit;
+    for (let s = 0; s < GAUGE_SEGS; s++) {
+      const bx = tx0 + pad + s * step;
+      c.beginPath();
+      c.moveTo(bx, yb); c.lineTo(bx + w, yb); c.lineTo(bx + w + lean, yt); c.lineTo(bx + lean, yt); c.closePath();
+      c.globalAlpha = 1;
+      c.fillStyle = g.dim;
+      c.fill();
+      const f = C.clamp(lit - s, 0, 1);
+      if (f > 0) {
+        c.globalAlpha = f * (hot ? 1 : 0.95);
+        c.fillStyle = warn ? gaugeGrad[i].warn : gaugeGrad[i].lit;
+        c.fill();
+      }
+    }
+    c.globalAlpha = 1;
+    return g.h * k;
   }
+
+
 
   // 操作部品の表示 (変わったときだけ書き換える)
   const shown = { missiles: -1, locked: null, boostEmpty: null };

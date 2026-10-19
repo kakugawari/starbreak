@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const out = process.argv[2];
 if (!out) { console.error('使い方: node bundle.js 出力先.html'); process.exit(1); }
-const ASSETS = ['space.jpg', 'earth.jpg', 'hull.jpg'];
+const ASSETS = ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png'];
 const read = (f) => fs.readFileSync(path.join(__dirname, f), 'utf8');
 // </script> が中にあると、そこで埋め込みが切れる
 const safe = (js) => js.replace(/<\/script/gi, '<\\/script');
@@ -24,7 +24,7 @@ const page = [
   '<script>', safe(read('three.min.js')), '</script>',
   // 絵は data URI にして埋め込む (app.js の loadTex が window.__ASSETS を先に見る)
   '<script>window.__ASSETS = ' + JSON.stringify(Object.fromEntries(ASSETS.map((f) =>
-    [f, 'data:image/jpeg;base64,' + fs.readFileSync(path.join(__dirname, f)).toString('base64')]))) + ';</script>',
+    [f, 'data:image/' + (f.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + fs.readFileSync(path.join(__dirname, f)).toString('base64')]))) + ';</script>',
   '<script>', safe(read('core.js')), '</script>',
   '<script>', safe(read('app.js')), '</script>'
 ].join('\n');

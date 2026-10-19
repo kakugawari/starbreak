@@ -305,6 +305,14 @@ async function run() {
     const shown = await page.evaluate(() => document.getElementById('missileCount').textContent);
     ok(shown === String(m1.n), `残りの数の表示も変わる (${shown})`);
 
+    // ------------------------------------------------ ゲージ (送ってもらった絵)
+    section('左上のゲージ');
+    ok(await page.evaluate(() => window.__app.assetsLoaded()['gauges.png'] === true), 'ゲージの絵が読み込まれる');
+    await page.evaluate(() => { const pl = window.__app.game().player; pl.shield = 30; pl.hull = 100; pl.sinceHit = 0; });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const gz = await page.evaluate(() => window.__app.hudInfo.gauges.slice());
+    ok(Math.abs(gz[0] - 7) < 0.6 && Math.abs(gz[1] - 14) < 0.01, `目盛りが量どおりに光る (シールド半分 → ${gz[0] && gz[0].toFixed(1)}/14 本・機体満タン → ${gz[1] && gz[1].toFixed(1)}/14 本)`);
+
     // ------------------------------------------------ 計器
     section('計器');
     const reticle = await page.evaluate(() => window.__app.hudInfo.reticle);
@@ -474,9 +482,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(sa['space.jpg'] === true && sa['earth.jpg'] === true && sa['hull.jpg'] === true, 'ほかのファイルなしで、絵まで出る (背景・地球・装甲)');
+    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth
