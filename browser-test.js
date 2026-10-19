@@ -307,6 +307,77 @@ async function run() {
     ok(reticle && reticle.x > 932 * 0.3 && reticle.x < 932 * 0.7 && reticle.y > 30 && reticle.y < 300,
       `照準が画面の中ほどにあり、自機に隠れない (${reticle && reticle.x.toFixed(0)}, ${reticle && reticle.y.toFixed(0)})`);
 
+    // ------------------------------------------------ 画面の外の敵を示す三角
+    section('画面の外の敵を示す三角 (どの向きでも出て、ボタンに隠れない)');
+    // 止めた状態で、敵 3 機を自機のまわりの 24 方向 (真後ろ・真上・真下を含む) に置き直して写す
+    await page.evaluate(() => window.__app.setPaused(true));
+    await page.evaluate(() => { document.getElementById('pause').hidden = true; });
+    const dirs = [];
+    for (let i = 0; i < 8; i++) for (const el of [-60, 0, 60]) dirs.push([i * 45, el]);
+    dirs.push([180, 0], [0, 89], [0, -89]);
+    let missing = 0, hidden = 0, checked = 0;
+    const hiddenAt = [];
+    for (let k = 0; k < dirs.length; k += 3) {
+      await page.evaluate((group) => {
+        const g = window.__app.game();
+        const pl = g.player;
+        // 自機の向きを基準に、右へ az°・上へ el° の方向 400m に置く
+        const fwd = pl.dir, up0 = { x: 0, y: 1, z: 0 };
+        const right = { x: fwd.y * up0.z - fwd.z * up0.y, y: fwd.z * up0.x - fwd.x * up0.z, z: fwd.x * up0.y - fwd.y * up0.x };
+        const rl = Math.hypot(right.x, right.y, right.z); right.x /= rl; right.y /= rl; right.z /= rl;
+        const up = { x: right.y * fwd.z - right.z * fwd.y, y: right.z * fwd.x - right.x * fwd.z, z: right.x * fwd.y - right.y * fwd.x };
+        g.fighters.forEach((f, i) => {
+          const [az, el] = group[i % group.length];
+          const a = az * Math.PI / 180, e = el * Math.PI / 180;
+          const cf = Math.cos(a) * Math.cos(e), cr = Math.sin(a) * Math.cos(e), cu = Math.sin(e);
+          f.pos = { x: pl.pos.x + (fwd.x * cf + right.x * cr + up.x * cu) * 400, y: pl.pos.y + (fwd.y * cf + right.y * cr + up.y * cu) * 400, z: pl.pos.z + (fwd.z * cf + right.z * cr + up.z * cu) * 400 };
+        });
+      }, dirs.slice(k, k + 3));
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const res = await page.evaluate(() => {
+        const g = window.__app.game(), h = window.__app.hudInfo;
+        const rects = ['throttle', 'btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnPause'].map((id) => document.getElementById(id).getBoundingClientRect());
+        return g.fighters.map((f) => {
+          const b = h.brackets.find((x) => x.id === f.id), a = h.arrows.find((x) => x.id === f.id);
+          const under = a && rects.some((r) => a.x > r.left - 10 && a.x < r.right + 10 && a.y > r.top - 10 && a.y < r.bottom + 10);
+          return { shown: !!(b || a), under: !!under, a: a ? [Math.round(a.x), Math.round(a.y)] : null };
+        });
+      });
+      res.forEach((r, i) => {
+        checked++;
+        if (!r.shown) missing++;
+        if (r.under) { hidden++; hiddenAt.push(JSON.stringify(dirs[k + i]) + '→' + r.a); }
+      });
+    }
+    ok(missing === 0, `どの向きの敵にも、枠か三角が出る (${checked} 方向中 出ない ${missing})`);
+    ok(hidden === 0, `三角がボタンやスロットルに隠れない (${checked} 方向中 隠れた ${hidden}${hiddenAt.length ? ' ' + hiddenAt.join(' ') : ''})`);
+
+    // ------------------------------------------------ ロックオンボタン
+    section('ロックオンボタン');
+    // 敵の 1 機を真横 (右 90°) に置き、ほかは遠くへ
+    await page.evaluate(() => {
+      const g = window.__app.game(), pl = g.player;
+      g.fighters.forEach((f, i) => {
+        const right = { x: -pl.dir.z, y: 0, z: pl.dir.x };
+        const rl = Math.hypot(right.x, right.z);
+        f.pos = i === 0 ? { x: pl.pos.x + right.x / rl * 350, y: pl.pos.y, z: pl.pos.z + right.z / rl * 350 }
+          : { x: pl.pos.x - pl.dir.x * 1100, y: pl.pos.y + 300, z: pl.pos.z - pl.dir.z * 1100 };
+        f.mode = 'hold'; f.fireCd = 99; f.speed = 0;
+      });
+      window.__app.setPaused(false);
+    });
+    const tgtBtn = center(await rectOf(page, '#btnTarget'));
+    const before = await page.evaluate(() => ({ id: window.__app.game().fighters[0].id, ang: (() => { const g = window.__app.game(), p = g.player, f = g.fighters[0]; const v = { x: f.pos.x - p.pos.x, y: f.pos.y - p.pos.y, z: f.pos.z - p.pos.z }; const l = Math.hypot(v.x, v.y, v.z); return Math.acos((v.x * p.dir.x + v.y * p.dir.y + v.z * p.dir.z) / l) * 180 / Math.PI; })() }));
+    await f.down(7, tgtBtn.x, tgtBtn.y);
+    await waitGameTime(page, 0.15);
+    const picked = await page.evaluate(() => window.__app.game().player.targetId);
+    ok(picked === before.id, `タップで敵を選ぶ (真横の敵 ${before.id} → 選んだ ${picked})`);
+    await waitGameTime(page, 1.6);
+    const after = await page.evaluate(() => { const g = window.__app.game(), p = g.player, f = g.fighters.find((x) => x.id === p.targetId); const v = { x: f.pos.x - p.pos.x, y: f.pos.y - p.pos.y, z: f.pos.z - p.pos.z }; const l = Math.hypot(v.x, v.y, v.z); return Math.acos((v.x * p.dir.x + v.y * p.dir.y + v.z * p.dir.z) / l) * 180 / Math.PI; });
+    await f.up(7);
+    ok(after < before.ang - 40, `押しっぱなしで、その敵へ機首が向く (なす角 ${before.ang.toFixed(0)}° → ${after.toFixed(0)}°)`);
+    ok(await page.evaluate(() => document.getElementById('btnTarget').classList.contains('has-target')), '敵を選んでいる間、ボタンが光る');
+
     // ------------------------------------------------ 一時停止
     section('一時停止');
     const pauseBtn = center(await rectOf(page, '#btnPause'));

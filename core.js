@@ -400,6 +400,7 @@
         laserCd: 0, gun: 0,
         missiles: T.missileMax, missileCd: 0,
         focus: null, assist: null, lockId: 0, lockT: 0, locked: false,
+        targetId: 0, tracking: false,
         aimDir: vec(0, 0, -1), alive: true, outside: false
       },
       fighters: [],
@@ -518,6 +519,14 @@
     const pl = g.player;
     let best = null, bestAng = T.focusCone;
     const ts = targets(g);
+    // 狙う相手 (ロックオンボタンで選んだ敵) がいれば、円の外でもそれを優先する
+    const sel = pl.targetId ? findById(g, pl.targetId) : null;
+    if (sel && dist(sel.pos, pl.pos) <= T.focusRange) {
+      const ic = intercept(pl.pos, sel.pos, sel.vel, T.laserSpeed);
+      const lead = ic ? ic.point : sel.pos;
+      best = { target: sel, lead: lead, ang: angleBetween(pl.dir, sub(lead, pl.pos)), dist: dist(sel.pos, pl.pos) };
+      bestAng = -1;   // ほかの的に取られない
+    }
     for (let i = 0; i < ts.length; i++) {
       const t = ts[i];
       const d = dist(t.pos, pl.pos);
@@ -550,6 +559,31 @@
       if (pl.lockT === 0) { pl.lockId = 0; pl.locked = false; }
       else if (pl.locked && !findById(g, pl.lockId)) { pl.lockId = 0; pl.lockT = 0; pl.locked = false; }
     }
+  }
+
+  /**
+   * 狙う相手を選ぶ (ロックオンボタンのタップ)。照準にいちばん近い敵から順に並べ、
+   * いまの相手が並びの中にいれば、その次へ切り替える。
+   */
+  function selectTarget(g) {
+    const pl = g.player;
+    const ts = targets(g).filter(function (t) { return dist(t.pos, pl.pos) <= T.focusRange * 1.6; });
+    if (!ts.length) { pl.targetId = 0; return null; }
+    ts.sort(function (a, b) { return angleBetween(pl.dir, sub(a.pos, pl.pos)) - angleBetween(pl.dir, sub(b.pos, pl.pos)); });
+    let i = -1;
+    for (let k = 0; k < ts.length; k++) if (ts[k].id === pl.targetId) i = k;
+    const t = ts[(i + 1) % ts.length];
+    pl.targetId = t.id;
+    emit(g, 'target', { id: t.id });
+    return t;
+  }
+
+  /** 狙う相手を倒したら (いなくなったら)、照準にいちばん近い次の敵へ移る。 */
+  function keepTarget(g) {
+    const pl = g.player;
+    if (!pl.targetId || findById(g, pl.targetId)) return;
+    pl.targetId = 0;
+    if (targets(g).length) selectTarget(g);
   }
 
   function turnLimit(speed, boosting) {
@@ -595,6 +629,16 @@
       const k = 1 - stickMag / 0.5;
       tYaw += clamp(wrapAngle(want.yaw - pl.yaw) * 4, -T.magnetRate, T.magnetRate) * k;
       tPitch += clamp((want.pitch - pl.pitch) * 4, -T.magnetRate, T.magnetRate) * k;
+    }
+
+    // ロックオンボタンを押しっぱなし: 狙う相手へ機首を向ける。スティックを大きく倒せばそちらが勝つ
+    const sel = input.track && pl.targetId ? findById(g, pl.targetId) : null;
+    pl.tracking = !!sel && stickMag < 0.6;
+    if (pl.tracking) {
+      const want = yawPitchOf(sub(sel.pos, pl.pos));
+      const k = 1 - stickMag / 0.6;
+      tYaw = tYaw * (1 - k) + clamp(wrapAngle(want.yaw - pl.yaw) * 3, -lim, lim) * k;
+      tPitch = tPitch * (1 - k) + clamp((want.pitch - pl.pitch) * 3, -lim * 0.85, lim * 0.85) * k;
     }
 
     // 戦域の外: 中心へ向けて自動で戻す
@@ -1119,8 +1163,9 @@
   }
 
   /**
-   * 1ステップ進める。input = { stickX, stickY, throttle, fire, boost, missile }
-   * missile は「押した瞬間」だけ true にする。
+   * 1ステップ進める。input = { stickX, stickY, throttle, fire, boost, missile, select, track }
+   * missile と select (ロックオンボタンのタップ) は「押した瞬間」だけ true にする。
+   * track はロックオンボタンを押している間 true (狙う相手へ機首を向ける)。
    */
   function step(g, input, dt) {
     input = input || {};
@@ -1134,7 +1179,7 @@
     return g;
   }
   function withoutEdge(input) {
-    return { stickX: input.stickX, stickY: input.stickY, throttle: input.throttle, fire: input.fire, boost: input.boost, missile: false };
+    return { stickX: input.stickX, stickY: input.stickY, throttle: input.throttle, fire: input.fire, boost: input.boost, missile: false, track: input.track, select: false };
   }
 
   function stepOnce(g, input, dt) {
@@ -1151,10 +1196,12 @@
       updatePlayer(g, g.state === 'over' ? {} : input, dt);
       pl.sinceHit += dt;
       if (pl.sinceHit > T.shieldRegenDelay) pl.shield = Math.min(T.shieldMax, pl.shield + T.shieldRegen * dt);
+      keepTarget(g);
       updateAim(g);
       if (g.state === 'play') {
         fireLasers(g, input, dt);
         fireMissile(g, input, dt);
+        if (input.select) selectTarget(g);
       }
     }
     updateMissiles(g, dt);
@@ -1275,6 +1322,6 @@
     solidPlanes: solidPlanes, solidRange: solidRange, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
     createGame: createGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
-    autopilot: autopilot, makeFighter: makeFighter, makeBoss: makeBoss
+    autopilot: autopilot, selectTarget: selectTarget, makeFighter: makeFighter, makeBoss: makeBoss
   };
 });

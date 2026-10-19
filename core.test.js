@@ -213,6 +213,58 @@ test('ロックオンしたミサイルは、動く敵を追って当たる', ()
   assert.strictEqual(f.alive, false, 'ミサイルで撃墜');
 });
 
+// ------------------------------------------------------------ ロックオンボタン (狙う相手)
+
+test('ロックオンボタン: タップで照準にいちばん近い敵を選び、もう一度で次へ切り替わる', () => {
+  const g = quietGame();
+  const a = fighterAhead(g, 30, 300);     // 30° 右
+  const b = fighterAhead(g, -8, 400);     // 8° 左 (照準にいちばん近い)
+  const c = fighterAhead(g, 120, 300);    // 後ろ寄り
+  [a, b, c].forEach((f) => { f.mode = 'hold'; f.fireCd = 99; });
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, b.id, '照準にいちばん近い敵');
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, a.id, '次に近い敵');
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, c.id, 'その次 (後ろの敵も選べる)');
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, b.id, '一周して最初へ');
+});
+
+test('ロックオンボタン: 押しっぱなしで、真後ろの敵へも機首が向く', () => {
+  const g = quietGame();
+  const f = fighterAhead(g, 180, 300);
+  f.mode = 'hold'; f.fireCd = 99;
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, f.id);
+  let t = 0;
+  while (t < 6 && C.angleBetween(g.player.dir, C.sub(f.pos, g.player.pos)) > 8 * DEG) {
+    C.step(g, { track: true }, 1 / 60); t += 1 / 60;
+  }
+  const ang = C.angleBetween(g.player.dir, C.sub(f.pos, g.player.pos)) / DEG;
+  assert.ok(ang <= 8, `機首と敵のなす角 ${ang.toFixed(1)}° (${t.toFixed(1)} 秒)`);
+  assert.ok(t < 4, `4 秒以内に向く (${t.toFixed(1)} 秒)`);
+  // 手を離せば、それ以上は勝手に向かない (スティックを優先)
+  const g2 = quietGame();
+  const f2 = fighterAhead(g2, 90, 300); f2.mode = 'hold'; f2.fireCd = 99;
+  C.step(g2, { select: true }, 1 / 60);
+  run(g2, 1, { track: true, stickX: -1 });
+  assert.ok(g2.player.dir.x < 0, 'スティックを左いっぱいに倒すと、右の敵ではなく左へ曲がる');
+});
+
+test('ロックオンボタン: 狙う相手を倒すと、次の敵へ移る。狙う相手は円の外でも偏差の印が出る', () => {
+  const g = quietGame();
+  const a = fighterAhead(g, 0, 250);
+  const b = fighterAhead(g, 60, 300);
+  [a, b].forEach((f) => { f.mode = 'hold'; f.fireCd = 99; });
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, a.id);
+  run(g, 1.2, { fire: true });
+  assert.strictEqual(a.alive, false, '撃墜');
+  assert.strictEqual(g.player.targetId, b.id, '次の敵へ移る');
+  assert.ok(g.player.focus && g.player.focus.target === b, `60° 横でも狙う相手に偏差の印が出る`);
+});
+
 // ------------------------------------------------------------ 敵
 
 test('敵は追いかけている最中、ふだんの自機より遅く、小回りも利かない (追えば背後を取れる)', () => {

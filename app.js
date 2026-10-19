@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.0';
+  const VERSION = 'v0.5.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -15,6 +15,7 @@
     throttle: $('throttle'), throttleFill: $('throttleFill'), throttleKnob: $('throttleKnob'),
     stickZone: $('stickZone'), stick: $('stick'), stickKnob: $('stickKnob'),
     btnFire: $('btnFire'), btnBoost: $('btnBoost'), btnMissile: $('btnMissile'), missileCount: $('missileCount'),
+    btnTarget: $('btnTarget'),
     btnPause: $('btnPause'),
     title: $('title'), pause: $('pause'), result: $('result'),
     resultHead: $('resultHead'), resultRank: $('resultRank'), resultStats: $('resultStats'),
@@ -1090,8 +1091,8 @@
 
   // ------------------------------------------------------------ 入力
 
-  const input = { stickX: 0, stickY: 0, throttle: 0.5, fire: false, boost: false, missile: false };
-  const touch = { stickId: null, stickOrigin: null, throttleId: null, fireIds: new Set(), boostIds: new Set() };
+  const input = { stickX: 0, stickY: 0, throttle: 0.5, fire: false, boost: false, missile: false, select: false };
+  const touch = { stickId: null, stickOrigin: null, throttleId: null, fireIds: new Set(), boostIds: new Set(), trackIds: new Set() };
   const STICK_R = 54;
 
   function setStickVisual(x, y, on) {
@@ -1168,6 +1169,8 @@
   holdButton(els.btnBoost, touch.boostIds);
   const missileIds = new Set();
   holdButton(els.btnMissile, missileIds, function () { input.missile = true; });
+  // ロックオン: 押した瞬間に敵を選ぶ (2 回目からは次の敵へ)。押している間はその敵へ機首を向ける
+  holdButton(els.btnTarget, touch.trackIds, function () { input.select = true; });
   // 指を置いた瞬間に止める (遊んでいる間は touchend を打ち消すので click が来ない)
   els.btnPause.addEventListener('pointerdown', function (e) { e.preventDefault(); setPaused(true); });
 
@@ -1188,6 +1191,7 @@
     if (e.repeat) { if (e.code !== 'Space') return; }
     keys[e.code] = true;
     if (e.code === 'KeyE' || e.code === 'KeyM') input.missile = true;
+    if (e.code === 'KeyQ' || e.code === 'KeyT') input.select = true;
     if ((e.code === 'Escape' || e.code === 'KeyP') && screen === 'play') setPaused(!paused);
     if (e.code === 'Space' || e.code.indexOf('Arrow') === 0) e.preventDefault();
   });
@@ -1199,7 +1203,10 @@
     const ky = (keys.ArrowUp || keys.KeyW ? 1 : 0) - (keys.ArrowDown || keys.KeyS ? 1 : 0);
     if (keys.KeyR) input.throttle = Math.min(1, input.throttle + dt * 0.6);
     if (keys.KeyF) input.throttle = Math.max(0, input.throttle - dt * 0.6);
-    return { kx: kx, ky: ky * (settings.invert ? -1 : 1), fire: !!(keys.Space || keys.KeyJ), boost: !!(keys.ShiftLeft || keys.ShiftRight || keys.KeyK) };
+    return {
+      kx: kx, ky: ky * (settings.invert ? -1 : 1), fire: !!(keys.Space || keys.KeyJ),
+      boost: !!(keys.ShiftLeft || keys.ShiftRight || keys.KeyK), track: !!(keys.KeyQ || keys.KeyT)
+    };
   }
 
   // ------------------------------------------------------------ ゲームの状態
@@ -1242,8 +1249,8 @@
     shipObj = makePlayerShip();
     scene.add(shipObj);
     input.throttle = 0.5; input.stickX = 0; input.stickY = 0; input.missile = false;
-    touch.fireIds.clear(); touch.boostIds.clear();
-    els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on');
+    touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear();
+    els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on');
     setStickVisual(0, 0, false);
     cam.dir.set(0, 0, -1);
     fx.timeScale = 1; fx.slowT = 0; fx.bossCam = 0;
@@ -1273,8 +1280,8 @@
     paused = on;
     els.pause.hidden = !on;
     if (on) {
-      touch.fireIds.clear(); touch.boostIds.clear();
-      els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on');
+      touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear();
+      els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on');
       input.stickX = 0; input.stickY = 0; touch.stickId = null; setStickVisual(0, 0, false);
       els.diag.textContent = VERSION + ' · ' + fps.toFixed(0) + 'fps · 画素 x' + pixelRatio.toFixed(2) + ' · ' + W + 'x' + H;
       audio.suspend();
@@ -1374,6 +1381,7 @@
           break;
         case 'missile': audio.missile(); break;
         case 'lock': audio.lock(); break;
+        case 'target': audio.ui(); break;
         case 'boost': audio.boost(); fx.fovKick = 1; break;
         case 'playerHit': {
           const big = e.amount >= 20;
@@ -1689,7 +1697,7 @@
     return { x: (_v.x * 0.5 + 0.5) * W, y: (-_v.y * 0.5 + 0.5) * H, behind: behind };
   }
 
-  const hudInfo = { reticle: null, focusLead: null, markers: 0 };
+  const hudInfo = { reticle: null, focusLead: null, markers: 0, brackets: [], arrows: [] };
 
   function drawHud(dt) {
     const c = hud;
@@ -1728,17 +1736,23 @@
       // 敵のしるし
       const ts = C.targets(game);
       let markers = 0;
+      hudInfo.brackets = []; hudInfo.arrows = [];
+      const near = nearestPart(ts, pl);
+      camera.updateMatrixWorld();
+      const view = camera.matrixWorldInverse;
       ts.forEach(function (t) {
         const s = toScreen(t.pos);
         const d = dist3(t.pos, pl.pos);
         const isFocus = pl.focus && pl.focus.target === t;
-        const col = t.kind === 'fighter' ? '255,90,90' : t.kind === 'turret' ? '255,170,80' : '255,80,200';
+        const isTarget = pl.targetId === t.id;
+        const col = isTarget ? '255,214,106' : t.kind === 'fighter' ? '255,90,90' : t.kind === 'turret' ? '255,170,80' : '255,80,200';
         const on = !s.behind && s.x > 10 && s.x < W - 10 && s.y > 10 && s.y < H - 10;
         if (on) {
           markers++;
-          const size = Math.max(9, Math.min(40, t.radius * 900 / Math.max(d, 1) * (H / 430)));
-          c.strokeStyle = 'rgba(' + col + ',' + (isFocus ? 0.95 : 0.6) + ')';
-          c.lineWidth = isFocus ? 2 : 1.4;
+          hudInfo.brackets.push({ id: t.id, x: s.x, y: s.y });
+          const size = Math.max(9, Math.min(40, t.radius * 900 / Math.max(d, 1) * (H / 430))) + (isTarget ? 5 : 0);
+          c.strokeStyle = 'rgba(' + col + ',' + (isFocus || isTarget ? 0.95 : 0.6) + ')';
+          c.lineWidth = isTarget ? 2.6 : isFocus ? 2 : 1.4;
           const q = size * 0.45;
           c.beginPath();
           [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (k) {
@@ -1747,7 +1761,12 @@
             c.lineTo(s.x + k[0] * size - k[0] * q, s.y + k[1] * size);
           });
           c.stroke();
-          if (isFocus) {
+          if (isTarget) {
+            // 狙う相手: 上に小さな三角の札
+            c.fillStyle = 'rgba(' + col + ',.95)';
+            c.beginPath(); c.moveTo(s.x, s.y - size - 4); c.lineTo(s.x - 6, s.y - size - 13); c.lineTo(s.x + 6, s.y - size - 13); c.closePath(); c.fill();
+          }
+          if (isFocus || isTarget) {
             // 体力と距離
             c.fillStyle = 'rgba(' + col + ',.95)';
             c.font = '600 10px -apple-system, sans-serif';
@@ -1759,18 +1778,29 @@
             c.fillStyle = 'rgba(' + col + ',.95)';
             c.fillRect(s.x - size, s.y + size + 4, hpw * t.hp / t.maxHp, 3);
           }
-        } else if (t.kind === 'fighter' || (game.boss && t === nearestPart(ts, pl))) {
-          // 画面の外: ふちに矢印
-          let dx = s.x - W / 2, dy = s.y - H / 2;
-          if (s.behind) { dx = -dx; dy = -dy; }
+        } else if (t.kind === 'fighter' || isTarget || (game.boss && t === near)) {
+          // 画面の外: ふちに三角。向きはカメラから見た向き (横 x・上 y) で出す。
+          // 画面に映した位置から出すと、真後ろの物ほど向きがでたらめになる
+          _v.set(t.pos.x, t.pos.y, t.pos.z).applyMatrix4(view);
+          let dx = _v.x, dy = -_v.y;
+          if (Math.abs(dx) + Math.abs(dy) < 1e-3) dy = 1;     // 真後ろ: 下を指す
           const ang = Math.atan2(dy, dx);
-          const rx = W / 2 - sar - 30, ry = H / 2 - 34;
+          // ボタンやスロットルに隠れない楕円に並べる (右下のボタン群・左のスロットルの内側)
+          const rx = W / 2 - 200, ry = H / 2 - 58;
           const ex = W / 2 + Math.cos(ang) * rx, ey = H / 2 + Math.sin(ang) * ry;
+          hudInfo.arrows.push({ id: t.id, x: ex, y: ey, target: isTarget });
           c.save();
           c.translate(ex, ey); c.rotate(ang);
-          c.fillStyle = 'rgba(' + col + ',.85)';
-          c.beginPath(); c.moveTo(12, 0); c.lineTo(-4, -8); c.lineTo(-1, 0); c.lineTo(-4, 8); c.closePath(); c.fill();
+          c.fillStyle = 'rgba(' + col + ',.9)';
+          const k = isTarget ? 1.6 : 1;
+          c.beginPath(); c.moveTo(12 * k, 0); c.lineTo(-4 * k, -8 * k); c.lineTo(-1 * k, 0); c.lineTo(-4 * k, 8 * k); c.closePath(); c.fill();
           c.restore();
+          if (isTarget) {
+            c.fillStyle = 'rgba(' + col + ',.95)';
+            c.font = '700 11px -apple-system, sans-serif';
+            c.textAlign = 'center';
+            c.fillText(Math.round(d) + 'm', ex - Math.cos(ang) * 22, ey - Math.sin(ang) * 22 + 4);
+          }
         }
       });
       hudInfo.markers = markers;
@@ -1995,6 +2025,8 @@
       els.btnMissile.classList.toggle('empty', pl.missiles === 0);
     }
     if (shown.locked !== pl.locked) { shown.locked = pl.locked; els.btnMissile.classList.toggle('locked', pl.locked); }
+    const hasTarget = !!pl.targetId;
+    if (shown.hasTarget !== hasTarget) { shown.hasTarget = hasTarget; els.btnTarget.classList.toggle('has-target', hasTarget); }
     const be = pl.boost < 5 && !pl.boosting;
     if (shown.boostEmpty !== be) { shown.boostEmpty = be; els.btnBoost.classList.toggle('empty', be); }
   }
@@ -2048,10 +2080,13 @@
         throttle: input.throttle,
         fire: touch.fireIds.size > 0 || kb.fire,
         boost: touch.boostIds.size > 0 || kb.boost,
-        missile: input.missile
+        missile: input.missile,
+        select: input.select,
+        track: touch.trackIds.size > 0 || kb.track
       };
       if (window.__autopilot) Object.assign(stepInput, C.autopilot(game, 1));
       input.missile = false;
+      input.select = false;
       const ts = performance.now();
       C.step(game, stepInput, dt);
       consumeEvents();
