@@ -2,33 +2,98 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>アプリの雛形</title>
-<meta name="description" content="ビルドなしで動くアプリの雛形">
-<meta name="theme-color" content="#151a2e">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>STARBREAK</title>
+<meta name="description" content="小さな宇宙船で、巨大な敵に挑む。3D 宇宙シューティング">
+<meta name="theme-color" content="#05070f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
 
 <div id="app">
-  <header id="topbar">
-    <h1 class="title">アプリの雛形</h1>
-    <div class="topbar-actions">
-      <button type="button" id="btnAction" class="btn btn-primary">ためす</button>
-    </div>
-  </header>
+  <canvas id="gl"></canvas>
+  <canvas id="hud"></canvas>
 
-  <main id="stage">
-    <p class="lead">ここにアプリを作る。</p>
-    <p class="result" id="result">—</p>
-    <p class="note">
-      ロジックは <code>src/core.js</code> に、画面は <code>src/app.js</code> に書く。<br>
-      <code>npm test</code> でロジックを、<code>npm run test:ui</code> で画面を確かめる。
-    </p>
-  </main>
+  <!-- 操作 (遊んでいる間だけ出す) -->
+  <div id="controls" hidden>
+    <div id="throttle" aria-label="スロットル">
+      <div class="track"><div class="fill" id="throttleFill"></div></div>
+      <div class="knob" id="throttleKnob"></div>
+      <div class="cap">THR</div>
+    </div>
+    <div id="stickZone" aria-label="スティック">
+      <div class="stick" id="stick"><div class="stick-knob" id="stickKnob"></div></div>
+    </div>
+    <button type="button" class="pad" id="btnMissile" aria-label="ミサイル"><span class="pad-ico">◆</span><span class="pad-name">MSL</span><span class="pad-sub" id="missileCount">4</span></button>
+    <button type="button" class="pad" id="btnBoost" aria-label="ブースト"><span class="pad-ico">»</span><span class="pad-name">BOOST</span></button>
+    <button type="button" class="pad" id="btnFire" aria-label="レーザー"><span class="pad-ico">✦</span><span class="pad-name">LASER</span></button>
+    <button type="button" id="btnPause" aria-label="一時停止">II</button>
+  </div>
+
+  <!-- タイトル -->
+  <section id="title" class="screen">
+    <div class="title-block">
+      <div class="logo-arc"></div>
+      <h1 class="logo">STARBREAK</h1>
+      <p class="logo-sub"><span>スターブレイク</span></p>
+      <p class="tagline">その操縦で、銀河を変える。</p>
+    </div>
+    <div class="title-menu">
+      <button type="button" class="btn btn-primary" id="btnStart">出撃</button>
+      <button type="button" class="btn" id="btnBossOnly">巨大戦艦から</button>
+      <div class="toggles">
+        <label><input type="checkbox" id="optInvert"> 上下反転</label>
+        <label><input type="checkbox" id="optShake" checked> 画面のゆれ</label>
+        <label><input type="checkbox" id="optSound" checked> 音</label>
+      </div>
+      <p class="howto">左: スティックで機首 / 左端: スロットル<br>右: レーザー長押し・ロックしてミサイル・ブースト</p>
+    </div>
+    <p class="version" id="version"></p>
+  </section>
+
+  <!-- 一時停止 -->
+  <section id="pause" class="screen dim" hidden>
+    <div class="panel">
+      <h2>一時停止</h2>
+      <button type="button" class="btn btn-primary" id="btnResume">再開</button>
+      <button type="button" class="btn" id="btnRetry">やり直す</button>
+      <button type="button" class="btn" id="btnToTitle">タイトルへ</button>
+      <div class="toggles">
+        <label><input type="checkbox" id="optInvert2"> 上下反転</label>
+        <label><input type="checkbox" id="optShake2"> 画面のゆれ</label>
+        <label><input type="checkbox" id="optSound2"> 音</label>
+      </div>
+      <p class="diag" id="diag"></p>
+    </div>
+  </section>
+
+  <!-- 結果 -->
+  <section id="result" class="screen dim" hidden>
+    <div class="panel result-panel">
+      <p class="result-head" id="resultHead">MISSION CLEAR</p>
+      <div class="result-body">
+        <div class="rank" id="resultRank">A</div>
+        <dl class="stats" id="resultStats"></dl>
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn-primary" id="btnAgain">もう一度</button>
+        <button type="button" class="btn" id="btnResultTitle">タイトルへ</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 縦向きのとき -->
+  <section id="rotate" class="screen">
+    <div class="rotate-ico">⟲</div>
+    <p>横向きにして遊んでください</p>
+  </section>
 </div>
 
+<script src="./three.min.js"></script>
 <script src="./core.js"></script>
 <script src="./app.js"></script>
 </body>

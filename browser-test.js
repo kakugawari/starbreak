@@ -3,21 +3,17 @@
  *
  *   npm i -D playwright && npm run test:ui
  *
- * 画面まわりの不具合は node のテストでは捕まらない。ここでは本物の
- * ブラウザを立ち上げ、指の操作をそのまま再現して確かめる。
- *
- * ★ アプリを作ったら「ここにアプリごとの確認を足す」に書き足すこと。
- *   直した不具合には、かならず見張り役をここに置く。
+ * 本物のブラウザを立ち上げ、指の操作 (複数の指を同時に) をそのまま再現する。
+ * 直した不具合には、かならず見張り役をここに置く。
  */
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const http = require('node:http');
-const fs = require('node:fs');
 
 const PORT = Number(process.env.PORT || 8123);
 const URL = `http://localhost:${PORT}/`;
 const ROOT = __dirname;
-const CHROMIUM = process.env.CHROMIUM_PATH;   // 手元の Chromium を使いたいとき
+const CHROMIUM = process.env.CHROMIUM_PATH;
 
 let passed = 0;
 let failed = 0;
@@ -31,14 +27,8 @@ function ok(condition, message) {
     console.log('  \x1b[31m✗ FAIL\x1b[0m ' + message);
   }
 }
-
-function skip(message) {
-  console.log('  \x1b[90m- とばした: ' + message + '\x1b[0m');
-}
-
-function section(name) {
-  console.log('\n' + name);
-}
+function skip(message) { console.log('  \x1b[90m- とばした: ' + message + '\x1b[0m'); }
+function section(name) { console.log('\n' + name); }
 
 function waitForServer() {
   return new Promise((resolve, reject) => {
@@ -55,31 +45,67 @@ function waitForServer() {
 }
 
 /**
- * 何かした直後に、その要素が本来の場所からどれだけずれるかを
- * 1 フレームずつ測る。「置いた瞬間に一瞬とぶ」たぐいの不具合はこれで見つかる。
- *
- * @returns {Promise<number>} 最大のずれ (px)
+ * 対象は iPhone 16 Plus の横向き (932x430)。playwright がその名前を知らなければ、
+ * 同じ大きさの端末を自分で組み立てる (名前の決め打ちでテストが動かなくなった落とし穴)。
  */
-function measureJump(page, selector, act) {
-  return page.evaluate(async ({ sel, code }) => {
-    const before = document.querySelector(sel).getBoundingClientRect();
-    // eslint-disable-next-line no-new-func
-    new Function(code)();
-    let worst = 0;
-    for (let i = 0; i < 12; i++) {
-      await new Promise((r) => requestAnimationFrame(r));
-      const el = document.querySelector(sel);
-      if (!el) { worst = Infinity; break; }
-      const now = el.getBoundingClientRect();
-      worst = Math.max(worst, Math.abs(now.left - before.left), Math.abs(now.top - before.top));
-    }
-    return Math.round(worst);
-  }, { sel: selector, code: act });
+function phoneDevice(devices, portrait) {
+  const named = devices['iPhone 16 Plus' + (portrait ? '' : ' landscape')];
+  const base = named || devices['iPhone 15 Plus'] || {};
+  const w = portrait ? 430 : 932, h = portrait ? 932 : 430;
+  return {
+    userAgent: base.userAgent,
+    viewport: { width: w, height: h },
+    screen: { width: w, height: h },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true
+  };
+}
+
+/**
+ * 複数の指。CDP で触れている指の全部を毎回送る。
+ * 注意: CDP は「送らなかった指」を離したことにしない (離せるのは touchEnd で全部だけ)。
+ * 1本だけ離すときは、その指が押した要素へ本物と同じ pointerId で pointerup を送る。
+ */
+function fingers(cdp, page) {
+  const active = new Map();
+  const send = (type) => cdp.send('Input.dispatchTouchEvent', {
+    type: type,
+    touchPoints: type === 'touchEnd' ? [] : [...active.entries()].map(([id, p]) => ({ x: p.x, y: p.y, id: id }))
+  });
+  return {
+    async down(id, x, y) { active.set(id, { x, y }); await send(active.size === 1 ? 'touchStart' : 'touchStart'); },
+    async move(id, x, y) { active.set(id, { x, y }); await send('touchMove'); },
+    async up(id) {
+      const p = active.get(id);
+      active.delete(id);
+      if (!active.size) { await send('touchEnd'); return; }
+      await page.evaluate(({ x, y }) => {
+        const hit = window.__downs.filter((d) => d.x === Math.round(x) && d.y === Math.round(y)).pop();
+        hit.el.dispatchEvent(new PointerEvent('pointerup', { pointerId: hit.id, pointerType: 'touch', bubbles: true, clientX: x, clientY: y }));
+      }, p);
+    },
+    async upAll() { active.clear(); await send('touchEnd'); }
+  };
+}
+
+function center(r) { return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }
+
+async function rectOf(page, sel) {
+  return page.evaluate((s) => {
+    const r = document.querySelector(s).getBoundingClientRect();
+    return { x: r.left, y: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
+  }, sel);
+}
+
+/** ゲームの中の時計が sec 秒ぶん進むまで待つ。 */
+async function waitGameTime(page, sec, timeout) {
+  const t0 = await page.evaluate(() => window.__app.game().t);
+  await page.waitForFunction((t) => window.__app.game().t >= t, t0 + sec, { timeout: timeout || 60000 });
 }
 
 async function run() {
-  let chromium;
-  let devices;
+  let chromium, devices;
   try {
     ({ chromium, devices } = require('playwright'));
   } catch (e) {
@@ -87,110 +113,265 @@ async function run() {
     process.exit(1);
   }
 
-  const server = spawn(process.execPath, [path.join(ROOT, 'serve.js'), String(PORT)], {
-    stdio: 'ignore'
-  });
+  const server = spawn(process.execPath, [path.join(ROOT, 'serve.js'), String(PORT)], { stdio: 'ignore' });
   await waitForServer();
 
-  const browser = await chromium.launch(CHROMIUM ? { executablePath: CHROMIUM } : {});
+  const browser = await chromium.launch(Object.assign(
+    { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
+    CHROMIUM ? { executablePath: CHROMIUM } : {}
+  ));
   const errors = [];
+  const watch = (page, name) => {
+    page.on('pageerror', (e) => errors.push(name + ': ' + e.message));
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(name + ': ' + m.text()); });
+  };
 
   try {
-    // ------------------------------------------------ スマホで開く
-    section('スマホで開く');
-    const context = await browser.newContext({ ...devices['iPhone 13'] });
-    const phone = await context.newPage();
-    phone.on('pageerror', (e) => errors.push('スマホ: ' + e.message));
-    phone.on('console', (m) => { if (m.type() === 'error') errors.push('スマホ: ' + m.text()); });
-    await phone.goto(URL);
-    await phone.waitForFunction(() => window.__app);
-    ok(true, 'ページが開いて、画面のしくみが立ち上がる');
-
-    const fit = await phone.evaluate(() => ({
+    // ------------------------------------------------ 開く
+    section('iPhone 16 Plus (横 932x430) で開く');
+    const ctx = await browser.newContext(phoneDevice(devices, false));
+    const page = await ctx.newPage();
+    watch(page, '横');
+    await page.goto(URL);
+    await page.waitForFunction(() => window.__app && window.__app.frames() > 3);
+    ok(true, 'ページが開いて、描画が回る');
+    const title = await page.evaluate(() => ({
+      visible: !document.getElementById('title').hidden,
+      version: document.getElementById('version').textContent,
       wide: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      title: document.querySelector('h1') ? document.querySelector('h1').textContent.trim() : ''
+      tall: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+      rotate: getComputedStyle(document.getElementById('rotate')).display
     }));
-    ok(fit.wide <= 1, 'スマホ幅で横スクロールが出ない');
-    ok(fit.title.length > 0, `見出しが出ている (${fit.title})`);
+    ok(title.visible, 'タイトルが出る');
+    ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
+    ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
+    ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
 
-    // ------------------------------------------------ ここにアプリごとの確認を足す
-    section('アプリの操作');
-    await phone.locator('#btnAction').tap();
-    await phone.waitForTimeout(120);
-    const after = await phone.evaluate(() => ({
-      count: window.__app.state().count,
-      shown: document.getElementById('result').textContent
+    // 安全域を差し込んで、ボタンが画面に収まるか (chromium の安全域は 0 なので、まねる)
+    await page.evaluate(() => {
+      const s = document.documentElement.style;
+      s.setProperty('--sa-l', '59px'); s.setProperty('--sa-r', '59px'); s.setProperty('--sa-b', '21px');
+    });
+    const titleFit = await page.evaluate(() => [...document.querySelectorAll('#title button, #title label')].every((el) => {
+      const r = el.getBoundingClientRect();
+      return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
     }));
-    ok(after.count === 1 && after.shown !== '—', `ボタンを押すと結果が出る (${after.shown})`);
+    ok(titleFit, '安全域を入れても、タイトルのボタンが画面に収まる');
 
-    // 押した直後に表示が飛ばないか (CSS アニメーションの上書き事故よけ)
-    const jump = await measureJump(phone, '#result', 'document.getElementById("btnAction").click()');
-    ok(jump < 12, `押した直後に表示が飛ばない (最大ずれ ${jump}px)`);
+    // ------------------------------------------------ 出撃
+    section('出撃 (ボタンを指で押す)');
+    const startBtn = await rectOf(page, '#btnStart');
+    await page.touchscreen.tap(center(startBtn).x, center(startBtn).y);
+    await page.waitForFunction(() => window.__app.screen() === 'play');
+    const playing = await page.evaluate(() => ({
+      controls: !document.getElementById('controls').hidden,
+      title: document.getElementById('title').hidden,
+      fighters: window.__app.game().fighters.length
+    }));
+    ok(playing.controls && playing.title, '操作の部品が出て、タイトルが消える');
+    ok(playing.fighters === 3, `第1波は 3 機 (${playing.fighters})`);
 
-    // ------------------------------------------------ 明るい画面・暗い画面
-    section('明るい画面と暗い画面');
-    for (const scheme of ['light', 'dark']) {
-      const themed = await browser.newContext({ ...devices['iPhone 13'], colorScheme: scheme });
-      const page = await themed.newPage();
-      page.on('pageerror', (e) => errors.push(scheme + ': ' + e.message));
-      await page.goto(URL);
-      await page.waitForFunction(() => window.__app);
-      const colors = await page.evaluate(() => ({
-        bg: getComputedStyle(document.body).backgroundColor,
-        fg: getComputedStyle(document.body).color
-      }));
-      ok(colors.bg !== colors.fg, `${scheme}: 文字と背景の色が違う (${colors.bg} / ${colors.fg})`);
-      await themed.close();
-    }
+    // 操作の部品: 安全域の内側に収まり、重ならず、指で押せる大きさ
+    const layout = await page.evaluate(() => {
+      const ids = ['throttle', 'btnFire', 'btnBoost', 'btnMissile', 'btnPause'];
+      const rs = ids.map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; });
+      const inside = rs.every((r) => r.l >= 59 - 0.5 && r.r <= innerWidth - 59 + 0.5 && r.t >= 0 && r.b <= innerHeight - 21 + 0.5);
+      let overlap = [];
+      for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+        const a = rs[i], b = rs[j];
+        if (a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b) overlap.push(a.id + '/' + b.id);
+      }
+      const small = rs.filter((r) => Math.min(r.w, r.h) < 42).map((r) => r.id);
+      return { inside, overlap, small };
+    });
+    ok(layout.inside, '操作の部品が安全域の内側にある');
+    ok(layout.overlap.length === 0, '部品どうしが重ならない' + (layout.overlap.length ? ' (' + layout.overlap.join(', ') + ')' : ''));
+    ok(layout.small.length === 0, '部品は 42pt 以上' + (layout.small.length ? ' (' + layout.small.join(', ') + ')' : ''));
 
-    // ------------------------------------------------ アイコン (用意していれば)
-    section('アイコン');
-    const desk = await browser.newPage();
-    await desk.goto(URL);
-    const apple = await desk.evaluate(() =>
-      document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href'));
-    if (!apple) {
-      skip('ホーム画面用のアイコンはまだ無い (PWA にするときに用意する)');
-    } else {
-      // iOS は SVG のアイコンを使えない
-      ok(apple.endsWith('.png'), `ホーム画面用アイコンが PNG (${apple})`);
-      const res = await desk.request.get(URL + apple.replace('./', ''));
-      ok(res.ok(), `${apple} が配信される`);
-    }
+    const cdp = await ctx.newCDPSession(page);
+    const f = fingers(cdp, page);
+    // どの指 (pointerId) がどの要素を押したかを覚えておく (1本だけ離すため)
+    await page.evaluate(() => {
+      window.__downs = [];
+      document.addEventListener('pointerdown', (e) => {
+        window.__downs.push({ id: e.pointerId, x: Math.round(e.clientX), y: Math.round(e.clientY), el: e.currentTarget === document ? e.target.closest('#btnFire,#btnBoost,#btnMissile,#stickZone,#throttle') : e.target });
+      }, true);
+    });
 
-    // ------------------------------------------------ 更新とオフライン (sw.js があれば)
-    section('更新とオフライン');
-    if (!fs.existsSync(path.join(ROOT, 'sw.js'))) {
-      skip('サービスワーカーはまだ無い (オフライン対応するときに用意する)');
-    } else {
-      const swCtx = await browser.newContext();
-      const swPage = await swCtx.newPage();
-      await swPage.goto(URL);
-      await swPage.waitForFunction(() => window.__app);
-      ok(await swPage.evaluate(() => navigator.serviceWorker.ready.then((r) => !!r.active).catch(() => false)),
-        'サービスワーカーが動く');
-      await swPage.waitForTimeout(800);
+    // ------------------------------------------------ スティック
+    section('スティック');
+    await page.bringToFront();
+    const zone = await rectOf(page, '#stickZone');
+    const sx = zone.x + 150, sy = zone.y + zone.height - 110;
+    const yaw0 = await page.evaluate(() => window.__app.game().player.yaw);
+    await f.down(1, sx, sy);
+    await f.move(1, sx + 30, sy);
+    await f.move(1, sx + 60, sy);
+    const stick = await page.evaluate(() => ({ x: window.__app.input.stickX, y: window.__app.input.stickY }));
+    ok(stick.x > 0.95 && Math.abs(stick.y) < 0.05, `右へ倒すと右いっぱい (${stick.x.toFixed(2)}, ${stick.y.toFixed(2)})`);
+    await waitGameTime(page, 0.6);
+    const yaw1 = await page.evaluate(() => window.__app.game().player.yaw);
+    ok(yaw1 < yaw0 - 0.1, `機首が右へ回る (yaw ${yaw0.toFixed(2)} → ${yaw1.toFixed(2)})`);
 
-      // 直したものが 1 回のリロードで出るか (キャッシュ優先だと古い画面が出る)
-      const indexPath = path.join(ROOT, 'index.html');
-      const original = fs.readFileSync(indexPath, 'utf8');
-      const marker = original.match(/<h1[^>]*>([^<]*)<\/h1>/);
-      fs.writeFileSync(indexPath, original.replace(marker[1], 'こうしんかくにん'));
-      await swPage.reload();
-      await swPage.waitForTimeout(400);
-      const title = await swPage.textContent('h1');
-      fs.writeFileSync(indexPath, original);
-      ok(title.trim() === 'こうしんかくにん', `直したものが 1 回のリロードで出る (${title.trim()})`);
+    // 指をスティックの場所の外 (画面の右側) まで滑らせても、指を捕まえたまま
+    await f.move(1, 700, sy - 150);
+    const outside = await page.evaluate(() => ({ x: window.__app.input.stickX, y: window.__app.input.stickY }));
+    ok(Math.hypot(outside.x, outside.y) > 0.95, `スティックの場所の外へ滑らせても効き続ける (${outside.x.toFixed(2)}, ${outside.y.toFixed(2)})`);
+    await f.move(1, sx, sy - 60);
+    const up = await page.evaluate(() => window.__app.input.stickY);
+    ok(up > 0.95, `上へ倒すと機首上げ (上下反転が切のとき) (${up.toFixed(2)})`);
+    await f.up(1);
+    const released = await page.evaluate(() => ({ x: window.__app.input.stickX, y: window.__app.input.stickY }));
+    ok(released.x === 0 && released.y === 0, '指を離すと 0 に戻る');
 
-      await swPage.reload();
-      await swPage.waitForTimeout(500);
-      await swCtx.setOffline(true);
-      await swPage.reload().catch(() => {});
-      await swPage.waitForTimeout(400);
-      ok(await swPage.evaluate(() => !!window.__app).catch(() => false),
-        'ネットにつながらなくても開ける');
-      await swCtx.setOffline(false);
-    }
+    // ------------------------------------------------ 同時に押す
+    section('2本の指: スティックを倒しながら撃つ');
+    const fire = center(await rectOf(page, '#btnFire'));
+    const shots0 = await page.evaluate(() => window.__app.game().stats.shots);
+    await f.down(1, sx, sy);
+    await f.move(1, sx - 50, sy);
+    await f.down(2, fire.x, fire.y);
+    await waitGameTime(page, 0.6);
+    const both = await page.evaluate(() => ({ shots: window.__app.game().stats.shots, x: window.__app.input.stickX, on: document.getElementById('btnFire').classList.contains('on') }));
+    ok(both.shots - shots0 >= 5, `撃ち続ける (${both.shots - shots0} 発)`);
+    ok(both.x < -0.9, 'その間もスティックが効いている');
+    ok(both.on, '押している間、ボタンが光る');
+    await f.up(2);
+    const stillStick = await page.evaluate(() => window.__app.input.stickX);
+    ok(stillStick < -0.9, '撃つ指を離しても、スティックの指はそのまま');
+    await waitGameTime(page, 0.2);
+    const shotsA = await page.evaluate(() => window.__app.game().stats.shots);
+    await waitGameTime(page, 0.4);
+    const shotsB = await page.evaluate(() => window.__app.game().stats.shots);
+    ok(shotsB === shotsA, '離すと撃ち止む');
+    await f.upAll();
+
+    // ------------------------------------------------ スロットル・ブースト・ミサイル
+    section('スロットル・ブースト・ミサイル');
+    const thr = await rectOf(page, '#throttle .track');
+    await f.down(3, thr.x + thr.width / 2, thr.y + thr.height / 2);
+    await f.move(3, thr.x + thr.width / 2, thr.y + 2);
+    await f.up(3);
+    await waitGameTime(page, 1.5);
+    const fast = await page.evaluate(() => ({ thr: window.__app.input.throttle, speed: window.__app.game().player.speed }));
+    ok(fast.thr > 0.95, `スロットルを上へ (${fast.thr.toFixed(2)})`);
+    ok(fast.speed > 90, `速くなる (${fast.speed.toFixed(0)} m/s)`);
+
+    const boost = center(await rectOf(page, '#btnBoost'));
+    await f.down(4, boost.x, boost.y);
+    await waitGameTime(page, 1.0);
+    const boosted = await page.evaluate(() => ({ speed: window.__app.game().player.speed, energy: window.__app.game().player.boost }));
+    await f.up(4);
+    ok(boosted.speed > 120, `ブーストで加速 (${boosted.speed.toFixed(0)} m/s)`);
+    ok(boosted.energy < 80, `エネルギーが減る (${boosted.energy.toFixed(0)})`);
+
+    const mBtn = center(await rectOf(page, '#btnMissile'));
+    const m0 = await page.evaluate(() => window.__app.game().player.missiles);
+    await f.down(5, mBtn.x, mBtn.y);
+    await waitGameTime(page, 0.1);
+    await f.up(5);
+    const m1 = await page.evaluate(() => ({ n: window.__app.game().player.missiles, shown: document.getElementById('missileCount').textContent }));
+    ok(m1.n === m0 - 1, `ミサイルを1発撃つ (${m0} → ${m1.n})`);
+    await waitGameTime(page, 0.1);
+    const shown = await page.evaluate(() => document.getElementById('missileCount').textContent);
+    ok(shown === String(m1.n), `残りの数の表示も変わる (${shown})`);
+
+    // ------------------------------------------------ 計器
+    section('計器');
+    const reticle = await page.evaluate(() => window.__app.hudInfo.reticle);
+    ok(reticle && reticle.x > 932 * 0.3 && reticle.x < 932 * 0.7 && reticle.y > 30 && reticle.y < 300,
+      `照準が画面の中ほどにあり、自機に隠れない (${reticle && reticle.x.toFixed(0)}, ${reticle && reticle.y.toFixed(0)})`);
+
+    // ------------------------------------------------ 一時停止
+    section('一時停止');
+    const pauseBtn = center(await rectOf(page, '#btnPause'));
+    await page.touchscreen.tap(pauseBtn.x, pauseBtn.y);
+    await page.waitForFunction(() => window.__app.paused());
+    const tP = await page.evaluate(() => window.__app.game().t);
+    await page.waitForTimeout(500);
+    const tP2 = await page.evaluate(() => window.__app.game().t);
+    ok(tP2 === tP, '止めている間、時間が進まない');
+    ok(await page.evaluate(() => !document.getElementById('pause').hidden), '一時停止の画面が出る');
+    ok(/v\d/.test(await page.evaluate(() => document.getElementById('diag').textContent)), '一時停止の画面に版の番号が出る');
+    const resume = center(await rectOf(page, '#btnResume'));
+    await page.touchscreen.tap(resume.x, resume.y);
+    await waitGameTime(page, 0.2);
+    ok(!(await page.evaluate(() => window.__app.paused())), '再開すると進む');
+
+    // アプリを切り替えたら止まる。ヘッドレスでは visibilitychange が来ないので、自分で送る
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    ok(await page.evaluate(() => window.__app.paused()), '画面が隠れたら一時停止する');
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      window.__app.setPaused(false);
+    });
+
+    // ------------------------------------------------ 音
+    section('音');
+    await f.down(6, fire.x, fire.y);
+    await waitGameTime(page, 0.3);
+    const level = await page.evaluate(() => window.__app.audioLevel());
+    await f.up(6);
+    if (!level) skip('このブラウザでは音を測れない');
+    else ok(level.max > 0.005 && level.max < 1.0, `撃つと音が鳴り、割れない (最大 ${level.max.toFixed(3)})`);
+
+    // ------------------------------------------------ 負け → 結果
+    section('撃墜されたとき');
+    await page.evaluate(() => {
+      const g = window.__app.game();
+      const pl = g.player;
+      g.fighters = [];
+      pl.shield = 0; pl.hull = 1;
+      const p = { x: pl.pos.x + pl.dir.x * 15, y: pl.pos.y + pl.dir.y * 15, z: pl.pos.z + pl.dir.z * 15 };
+      g.shots.push({ owner: 'enemy', pos: p, prev: p, vel: { x: -pl.dir.x * 300, y: -pl.dir.y * 300, z: -pl.dir.z * 300 }, life: 1, dmg: 5, dead: false });
+    });
+    await page.waitForFunction(() => window.__app.screen() === 'result', null, { timeout: 60000 });
+    const lost = await page.evaluate(() => ({ head: document.getElementById('resultHead').textContent, rank: document.getElementById('resultRank').textContent, controls: document.getElementById('controls').hidden }));
+    ok(lost.head === 'MISSION FAILED' && lost.rank === '—', `負けの結果が出る (${lost.head})`);
+    ok(lost.controls, '結果の画面では操作の部品を隠す');
+
+    // ------------------------------------------------ 巨大戦艦 → 勝ち
+    section('巨大戦艦から → 撃沈 → 結果');
+    const toTitle = center(await rectOf(page, '#btnResultTitle'));
+    await page.touchscreen.tap(toTitle.x, toTitle.y);
+    await page.waitForFunction(() => window.__app.screen() === 'title');
+    const bossBtn = center(await rectOf(page, '#btnBossOnly'));
+    await page.touchscreen.tap(bossBtn.x, bossBtn.y);
+    await page.waitForFunction(() => window.__app.game() && window.__app.game().boss);
+    await page.evaluate(() => { window.__app.game().boss.arriveT = 12.9; });
+    await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
+    const kill = async (kind) => {
+      await page.evaluate((k) => {
+        window.__app.game().boss.parts.forEach((p) => { if (p.kind === k) { p.hp = 0; p.alive = false; } });
+        window.__app.game().fighters = [];
+      }, kind);
+      await waitGameTime(page, 0.1);
+    };
+    await kill('turret');
+    ok(await page.evaluate(() => window.__app.game().boss.phase === 'weak'), '砲台を全部こわすと、エンジンが弱点になる');
+    await kill('engine');
+    ok(await page.evaluate(() => window.__app.game().boss.phase === 'core'), 'エンジンをこわすと、装甲が外れる');
+    await kill('core');
+    await page.waitForFunction(() => window.__app.screen() === 'result', null, { timeout: 120000 });
+    const won = await page.evaluate(() => ({ head: document.getElementById('resultHead').textContent, rank: document.getElementById('resultRank').textContent }));
+    ok(won.head === 'MISSION CLEAR' && /^[SABC]$/.test(won.rank), `勝ちの結果とランクが出る (${won.head} / ${won.rank})`);
+    const again = center(await rectOf(page, '#btnAgain'));
+    await page.touchscreen.tap(again.x, again.y);
+    await page.waitForFunction(() => window.__app.screen() === 'play');
+    ok(await page.evaluate(() => window.__app.game().stage === 'bossIn' || window.__app.game().stage === 'boss'), '「もう一度」で同じところから始まる');
+
+    // ------------------------------------------------ 縦向き
+    section('縦向き');
+    const pctx = await browser.newContext(phoneDevice(devices, true));
+    const pp = await pctx.newPage();
+    watch(pp, '縦');
+    await pp.goto(URL);
+    await pp.waitForFunction(() => window.__app);
+    ok(await pp.evaluate(() => getComputedStyle(document.getElementById('rotate')).display !== 'none'), '縦向きなら「横向きにして」が出る');
+    await pctx.close();
 
     section('エラー');
     ok(errors.length === 0, errors.length ? '画面のエラー: ' + errors.join(' / ') : 'JS エラーなし');

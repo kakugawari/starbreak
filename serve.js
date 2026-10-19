@@ -40,5 +40,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`しきつめパズル: http://localhost:${PORT}/`);
+  console.log(`STARBREAK: http://localhost:${PORT}/`);
 });
