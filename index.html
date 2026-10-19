@@ -33,20 +33,19 @@
   <!-- タイトル -->
   <section id="title" class="screen">
     <div class="title-block">
-      <div class="logo-arc"></div>
-      <h1 class="logo">STARBREAK</h1>
-      <p class="logo-sub"><span>スターブレイク</span></p>
+      <!-- ロゴと出撃ボタンは送ってもらった絵。src は app.js が入れる (1 枚版では埋め込んだ絵を使う) -->
+      <img class="logo" data-asset="logo.png" alt="STARBREAK スターブレイク" width="731" height="221">
       <p class="tagline">その操縦で、銀河を変える。</p>
     </div>
     <div class="title-menu">
-      <button type="button" class="btn btn-primary" id="btnStart">出撃</button>
-      <button type="button" class="btn" id="btnBossOnly">巨大戦艦から</button>
+      <button type="button" class="btn-start" id="btnStart" aria-label="出撃"><img data-asset="btn_start.png" alt="" width="427" height="105"><span>出撃</span></button>
+      <button type="button" class="btn btn-glass" id="btnBossOnly">巨大戦艦から</button>
       <div class="toggles">
         <label><input type="checkbox" id="optInvert"> 上下反転</label>
         <label><input type="checkbox" id="optShake" checked> 画面のゆれ</label>
         <label><input type="checkbox" id="optSound" checked> 音</label>
       </div>
-      <p class="howto">左: スティックで機首 (大きく倒すと減速して小回り)<br>右: レーザー長押し・ミサイル・ブースト・LOCK (敵を選ぶ / 長押しでその敵へ)</p>
+      <p class="howto">左: スティックで機首 (大きく倒すと減速・小回り)<br>右: レーザー長押し・ミサイル・ブースト・LOCK (敵を選ぶ / 長押しでその敵へ)</p>
     </div>
     <p class="version" id="version"></p>
   </section>

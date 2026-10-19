@@ -181,60 +181,73 @@ body {
   padding-right: calc(var(--sa-r) + 36px);
   background: linear-gradient(90deg, rgba(2, 4, 12, .72), rgba(2, 4, 12, .15) 55%, rgba(2, 4, 12, .55));
 }
-.title-block { position: relative; }
-.logo-arc {
-  position: absolute;
-  left: -6px; right: -6px; top: -26px;
-  height: 60px;
-  border-top: 2px solid rgba(220, 235, 255, .85);
-  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
-  -webkit-mask: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
-  mask: linear-gradient(90deg, transparent, #000 25%, #000 75%, transparent);
-}
+/* ロゴは上寄せ。下半分はタイトルの機体を見せる場所 (画面の y 74% に映す) */
+.title-block { position: relative; display: flex; flex-direction: column; align-items: center; align-self: flex-start; margin-top: calc(var(--sa-t) + 44px); }
+/* ロゴは送ってもらった絵 (731 x 221) */
 .logo {
-  margin: 0;
-  font-size: 56px;
-  font-weight: 300;
-  letter-spacing: .14em;
-  line-height: 1;
-  color: #fff;
-  text-shadow: 0 0 24px rgba(120, 190, 255, .55);
-}
-.logo-sub {
-  margin: 10px 0 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  letter-spacing: .5em;
-  color: #cfe0ff;
-}
-.logo-sub::before, .logo-sub::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: rgba(200, 220, 255, .5);
+  display: block;
+  width: 420px;
+  height: auto;
+  filter: drop-shadow(0 0 18px rgba(150, 120, 255, .35));
 }
 .tagline {
-  margin: 26px 0 0;
+  margin: 14px 0 0;
   font-size: 22px;
   font-weight: 700;
   letter-spacing: .2em;
   line-height: 1.6;
 }
 
+/* すりガラスの板 (送ってもらった絵を CSS で作り直したもの。後ろの宇宙が透ける) */
 .title-menu {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
   width: 290px;
   padding: 16px;
-  border-radius: 16px;
-  background: rgba(4, 8, 20, .62);
-  border: 1px solid rgba(150, 200, 255, .18);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 70% at 100% 100%, rgba(255, 255, 255, .16), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, .13), rgba(255, 255, 255, .07));
+  border: 1px solid rgba(255, 255, 255, .28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .55),
+    inset 0 -1px 0 rgba(255, 255, 255, .35),
+    0 10px 36px rgba(0, 0, 0, .35);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+/* 出撃: 字ごと絵 (427 x 105)。字は読み上げ用に残して見えなくする */
+.btn-start {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 31px;
+  -webkit-appearance: none;
+  appearance: none;
+  filter: drop-shadow(0 0 14px rgba(90, 230, 210, .35));
+}
+.btn-start img { display: block; width: 100%; height: auto; }
+.btn-start span {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.btn-start:active { transform: translateY(1px); filter: drop-shadow(0 0 20px rgba(90, 230, 210, .6)) brightness(1.08); }
+/* 巨大戦艦から: 細い枠だけのガラスのボタン */
+.btn.btn-glass {
+  font-weight: 500;
+  font-size: 16px;
+  letter-spacing: .08em;
+  padding: 11px 18px;
+  color: #c4d2ee;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(170, 205, 235, .55);
+  border-radius: 6px;
 }
 .howto {
   margin: 4px 0 0;

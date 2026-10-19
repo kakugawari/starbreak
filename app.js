@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.3';
+  const VERSION = 'v0.5.4';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -2170,6 +2170,13 @@
 
   function main() {
     els.version.textContent = VERSION;
+    // 画面に置いた絵 (タイトルのロゴ・出撃ボタン)。1 枚版では埋め込んだ data URI を使う
+    document.querySelectorAll('img[data-asset]').forEach(function (img) {
+      const name = img.dataset.asset;
+      img.onload = function () { assetsLoaded[name] = true; };
+      img.onerror = function () { assetsLoaded[name] = false; };
+      img.src = (window.__ASSETS && window.__ASSETS[name]) || './' + name;
+    });
     bindToggle(['optInvert', 'optInvert2'], 'invert');
     bindToggle(['optShake', 'optShake2'], 'shake');
     bindToggle(['optSound', 'optSound2'], 'sound');

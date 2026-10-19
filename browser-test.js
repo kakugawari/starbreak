@@ -146,9 +146,19 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg', 'logo.png', 'btn_start.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
     ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・戦艦の装甲の絵が読み込まれる');
+    ok(assets['logo.png'] === true && assets['btn_start.png'] === true, 'タイトルのロゴと出撃ボタンの絵が読み込まれる');
+    // ロゴとメニューの板が重ならない (ロゴは左、板は右)
+    const titleRects = await page.evaluate(() => {
+      const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };
+      return { logo: r('#title .logo'), menu: r('.title-menu'), start: r('#btnStart'), tag: r('#title .tagline'), H: innerHeight };
+    });
+    // タイトルの機体は画面の y 74% に映す (機体の上端はおよそ 63%)。題字の下はそれより上に収める
+    ok(titleRects.tag.b <= titleRects.H * 0.6, `題字が機体に重ならない (題字の下 ${titleRects.tag.b.toFixed(0)} / 機体の上 約${(titleRects.H * 0.63).toFixed(0)})`);
+    ok(titleRects.logo.r <= titleRects.menu.l - 8 && titleRects.logo.w > 300, `ロゴとメニューが重ならない (ロゴの右 ${titleRects.logo.r.toFixed(0)} / 板の左 ${titleRects.menu.l.toFixed(0)})`);
+    ok(titleRects.start.b - titleRects.start.t >= 44, `出撃ボタンは押せる高さ (${(titleRects.start.b - titleRects.start.t).toFixed(0)}pt)`);
 
     // 安全域を差し込んで、ボタンが画面に収まるか (chromium の安全域は 0 なので、まねる)
     await page.evaluate(() => {
@@ -482,9 +492,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ)');
+    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・ロゴ・出撃ボタン)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth
