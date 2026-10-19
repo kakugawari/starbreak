@@ -188,7 +188,7 @@ body {
   display: block;
   width: 420px;
   height: auto;
-  filter: drop-shadow(0 0 18px rgba(150, 120, 255, .35));
+  filter: drop-shadow(0 0 18px rgba(90, 230, 210, .28));
 }
 /* すりガラスの板 (送ってもらった絵を CSS で作り直したもの。後ろの宇宙が透ける) */
 .title-menu {

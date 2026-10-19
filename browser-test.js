@@ -158,6 +158,23 @@ async function run() {
     // タイトルの機体は画面の y 74% に映す (機体の上端はおよそ 63%)。ロゴの塊の下はそれより上に収める
     ok(titleRects.tag.b <= titleRects.H * 0.6, `ロゴが機体に重ならない (ロゴの下 ${titleRects.tag.b.toFixed(0)} / 機体の上 約${(titleRects.H * 0.63).toFixed(0)})`);
     ok(titleRects.logo.r <= titleRects.menu.l - 8 && titleRects.logo.w > 300, `ロゴとメニューが重ならない (ロゴの右 ${titleRects.logo.r.toFixed(0)} / 板の左 ${titleRects.menu.l.toFixed(0)})`);
+    // ロゴのふちは出撃ボタンの青緑 (送ってもらった絵ではマゼンタ)。紫〜マゼンタの色の画素が残っていない
+    const logoHue = await page.evaluate(() => {
+      const img = document.querySelector('#title .logo');
+      const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+      const d = x.getImageData(0, 0, c.width, c.height).data;
+      let magenta = 0, teal = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 128) continue;
+        const r = d[i], g = d[i + 1], b = d[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        if (mx - mn < 0.3 * mx) continue;
+        if (r > g + 30 && b > g + 30) magenta++;
+        else if (g > r + 30 && b > r + 30) teal++;
+      }
+      return { magenta, teal };
+    });
+    ok(logoHue.magenta < 50 && logoHue.teal > 3000, `ロゴのふちが青緑 (マゼンタ ${logoHue.magenta} / 青緑 ${logoHue.teal} 画素)`);
     ok(titleRects.start.b - titleRects.start.t >= 44, `出撃ボタンは押せる高さ (${(titleRects.start.b - titleRects.start.t).toFixed(0)}pt)`);
 
     // 安全域を差し込んで、ボタンが画面に収まるか (chromium の安全域は 0 なので、まねる)
