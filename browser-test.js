@@ -153,10 +153,10 @@ async function run() {
     // ロゴとメニューの板が重ならない (ロゴは左、板は右)
     const titleRects = await page.evaluate(() => {
       const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };
-      return { logo: r('#title .logo'), menu: r('.title-menu'), start: r('#btnStart'), tag: r('#title .tagline'), H: innerHeight };
+      return { logo: r('#title .logo'), menu: r('.title-menu'), start: r('#btnStart'), tag: r('#title .title-block'), H: innerHeight };
     });
-    // タイトルの機体は画面の y 74% に映す (機体の上端はおよそ 63%)。題字の下はそれより上に収める
-    ok(titleRects.tag.b <= titleRects.H * 0.6, `題字が機体に重ならない (題字の下 ${titleRects.tag.b.toFixed(0)} / 機体の上 約${(titleRects.H * 0.63).toFixed(0)})`);
+    // タイトルの機体は画面の y 74% に映す (機体の上端はおよそ 63%)。ロゴの塊の下はそれより上に収める
+    ok(titleRects.tag.b <= titleRects.H * 0.6, `ロゴが機体に重ならない (ロゴの下 ${titleRects.tag.b.toFixed(0)} / 機体の上 約${(titleRects.H * 0.63).toFixed(0)})`);
     ok(titleRects.logo.r <= titleRects.menu.l - 8 && titleRects.logo.w > 300, `ロゴとメニューが重ならない (ロゴの右 ${titleRects.logo.r.toFixed(0)} / 板の左 ${titleRects.menu.l.toFixed(0)})`);
     ok(titleRects.start.b - titleRects.start.t >= 44, `出撃ボタンは押せる高さ (${(titleRects.start.b - titleRects.start.t).toFixed(0)}pt)`);
 

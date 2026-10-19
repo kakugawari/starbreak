@@ -190,14 +190,6 @@ body {
   height: auto;
   filter: drop-shadow(0 0 18px rgba(150, 120, 255, .35));
 }
-.tagline {
-  margin: 14px 0 0;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: .2em;
-  line-height: 1.6;
-}
-
 /* すりガラスの板 (送ってもらった絵を CSS で作り直したもの。後ろの宇宙が透ける) */
 .title-menu {
   position: relative;
