@@ -188,6 +188,36 @@ async function run() {
     }));
     ok(titleFit, '安全域を入れても、タイトルのボタンが画面に収まる');
 
+    // タイトルの板: 中は始めるボタン 2 つだけ。設定・遊び方は下の小さなボタンから同じ板に開く
+    const menuState = () => page.evaluate(() => {
+      const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+      const panel = document.getElementById('titleMenu').getBoundingClientRect();
+      return {
+        buttons: [...document.querySelectorAll('#titleMenu button')].filter(vis).map((b) => b.id || b.textContent.trim()),
+        toggles: [...document.querySelectorAll('#titleMenu input')].filter(vis).length,
+        howto: vis(document.querySelector('#titleMenu .howto')),
+        top: panel.top,
+        sub: ['btnSettings', 'btnHowto'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top); }).join(' '),
+        invert: window.__app.settings.invert
+      };
+    });
+    const mn0 = await menuState();
+    ok(mn0.buttons.join() === 'btnStart,btnBossOnly' && mn0.toggles === 0 && !mn0.howto, `タイトルの板は 出撃・巨大戦艦から の 2 つだけ (${mn0.buttons.join()} / スイッチ ${mn0.toggles})`);
+    const tapEl = async (sel) => { const r = await rectOf(page, sel); await page.touchscreen.tap(center(r).x, center(r).y); await page.waitForTimeout(120); };
+    await tapEl('#btnSettings');
+    const mn1 = await menuState();
+    ok(mn1.toggles === 3 && !mn1.buttons.includes('btnStart'), `設定を押すと、板の中がスイッチ 3 つに替わる (${mn1.toggles})`);
+    await tapEl('#optInvert');
+    ok((await menuState()).invert === !mn0.invert, '設定のスイッチを指で押すと切り替わる (上下反転)');
+    await tapEl('#optInvert');
+    await tapEl('#btnHowto');
+    const mn2 = await menuState();
+    ok(mn2.howto && mn2.toggles === 0, '遊び方を押すと、板の中が説明に替わる');
+    ok(mn0.top === mn1.top && mn1.top === mn2.top && mn0.sub === mn1.sub && mn1.sub === mn2.sub, `中身を替えても、板の上端と下の小さなボタンが動かない (上端 ${mn0.top}/${mn1.top}/${mn2.top})`);
+    await tapEl('#menuHowto [data-back]');
+    const mn3 = await menuState();
+    ok(mn3.buttons.join() === 'btnStart,btnBossOnly' && mn3.invert === mn0.invert, '戻るで始めるボタンの板に戻る');
+
     // 機体の面: 鏡にした翼が片側だけ黒く見えた不具合の見張り
     const faces = await page.evaluate(() => window.__app.flippedFaces());
     ok(faces.player.bad === 0 && faces.enemy.bad === 0 && faces.boss.bad === 0,

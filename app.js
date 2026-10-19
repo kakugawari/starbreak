@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.6';
+  const VERSION = 'v0.5.7';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1247,7 +1247,16 @@
     consumeEvents();
   }
 
+  // タイトルの板の中身を切り替える (始めるボタン / 設定 / 遊び方)。もう一度押すと戻る
+  function showMenu(id) {
+    if (id !== 'menuMain' && !$(id).hidden) id = 'menuMain';
+    ['menuMain', 'menuSettings', 'menuHowto'].forEach(function (k) { $(k).hidden = k !== id; });
+    $('btnSettings').classList.toggle('on', id === 'menuSettings');
+    $('btnHowto').classList.toggle('on', id === 'menuHowto');
+  }
+
   function toTitle() {
+    showMenu('menuMain');
     clearWorld();
     game = null;
     setSkyDim(SKY_DIM.title);
@@ -2182,6 +2191,9 @@
     bindToggle(['optSound', 'optSound2'], 'sound');
     $('btnStart').addEventListener('click', function () { startGame(); });
     $('btnBossOnly').addEventListener('click', function () { startGame({ start: 'boss' }); });
+    $('btnSettings').addEventListener('click', function () { showMenu('menuSettings'); });
+    $('btnHowto').addEventListener('click', function () { showMenu('menuHowto'); });
+    document.querySelectorAll('[data-back]').forEach(function (b) { b.addEventListener('click', function () { showMenu('menuMain'); }); });
     $('btnResume').addEventListener('click', function () { setPaused(false); });
     $('btnRetry').addEventListener('click', function () { startGame({ start: lastStart }); });
     $('btnToTitle').addEventListener('click', toTitle);

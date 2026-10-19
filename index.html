@@ -36,15 +36,38 @@
       <!-- ロゴと出撃ボタンは送ってもらった絵。src は app.js が入れる (1 枚版では埋め込んだ絵を使う) -->
       <img class="logo" data-asset="logo.png" alt="STARBREAK スターブレイク" width="731" height="221">
     </div>
-    <div class="title-menu">
-      <button type="button" class="btn-start" id="btnStart" aria-label="出撃"><img data-asset="btn_start.png" alt="" width="427" height="105"><span>出撃</span></button>
-      <button type="button" class="btn btn-glass" id="btnBossOnly">巨大戦艦から</button>
-      <div class="toggles">
-        <label><input type="checkbox" id="optInvert"> 上下反転</label>
-        <label><input type="checkbox" id="optShake" checked> 画面のゆれ</label>
-        <label><input type="checkbox" id="optSound" checked> 音</label>
+    <div class="title-right">
+    <div class="title-menu" id="titleMenu">
+      <!-- 板の中は始めるボタン 2 つだけ。設定と遊び方は小さなボタンから同じ板に開く -->
+      <div class="menu-view" id="menuMain">
+        <button type="button" class="btn-start" id="btnStart" aria-label="出撃"><img data-asset="btn_start.png" alt="" width="427" height="105"><span>出撃</span></button>
+        <button type="button" class="btn btn-glass" id="btnBossOnly">巨大戦艦から</button>
       </div>
-      <p class="howto">左: スティックで機首 (大きく倒すと減速・小回り)<br>右: レーザー長押し・ミサイル・ブースト・LOCK (敵を選ぶ / 長押しでその敵へ)</p>
+      <div class="menu-view" id="menuSettings" hidden>
+        <p class="sheet-head">設定</p>
+        <div class="toggles toggles-col">
+          <label><span>上下反転</span><input type="checkbox" id="optInvert"></label>
+          <label><span>画面のゆれ</span><input type="checkbox" id="optShake" checked></label>
+          <label><span>音</span><input type="checkbox" id="optSound" checked></label>
+        </div>
+        <button type="button" class="btn btn-glass btn-back" data-back>戻る</button>
+      </div>
+      <div class="menu-view" id="menuHowto" hidden>
+        <p class="sheet-head">遊び方</p>
+        <dl class="howto">
+          <dt>左手</dt><dd>スティックで機首を向ける。大きく倒すと減速して小回り</dd>
+          <dt>LASER</dt><dd>押しているあいだ撃ち続ける</dd>
+          <dt>MSL</dt><dd>ミサイル</dd>
+          <dt>BOOST</dt><dd>速く飛ぶ</dd>
+          <dt>LOCK</dt><dd>タップで敵を選ぶ。長押しでその敵へ向く</dd>
+        </dl>
+        <button type="button" class="btn btn-glass btn-back" data-back>戻る</button>
+      </div>
+    </div>
+    <div class="menu-sub" id="menuSub">
+      <button type="button" class="link-btn" id="btnSettings">⚙ 設定</button>
+      <button type="button" class="link-btn" id="btnHowto">? 遊び方</button>
+    </div>
     </div>
     <p class="version" id="version"></p>
   </section>
