@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>アプリの雛形</title>
+<meta name="description" content="ビルドなしで動くアプリの雛形">
+<meta name="theme-color" content="#151a2e">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<div id="app">
+  <header id="topbar">
+    <h1 class="title">アプリの雛形</h1>
+    <div class="topbar-actions">
+      <button type="button" id="btnAction" class="btn btn-primary">ためす</button>
+    </div>
+  </header>
+
+  <main id="stage">
+    <p class="lead">ここにアプリを作る。</p>
+    <p class="result" id="result">—</p>
+    <p class="note">
+      ロジックは <code>src/core.js</code> に、画面は <code>src/app.js</code> に書く。<br>
+      <code>npm test</code> でロジックを、<code>npm run test:ui</code> で画面を確かめる。
+    </p>
+  </main>
+</div>
+
+<script src="./core.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

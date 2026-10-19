@@ -1,0 +1,132 @@
+/* 見た目。色は :root にまとめ、明るい画面と暗い画面の両方を用意する。 */
+
+:root {
+  --bg: #10142a;
+  --bg-2: #171d3a;
+  --line: #2e3868;
+  --text: #eef1ff;
+  --muted: #9aa3cf;
+  --accent: #ffd166;
+  --accent-ink: #2a2200;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f5fb;
+    --bg-2: #ffffff;
+    --line: #dbe0f0;
+    --text: #1b1f36;
+    --muted: #666e93;
+    --accent: #ffb703;
+    --accent-ink: #2a1f00;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI",
+               system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.topbar-actions { margin-left: auto; }
+
+.btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: transform .08s ease, border-color .15s ease;
+}
+
+.btn:hover { border-color: var(--muted); }
+.btn:active { transform: translateY(1px); }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+#stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+.lead { margin: 0; font-size: 18px; font-weight: 700; }
+
+.result {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.note {
+  margin: 0;
+  max-width: 34em;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .95em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: .01ms !important; animation: none !important; }
+}

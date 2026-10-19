@@ -1,0 +1,12 @@
+{
+  "name": "app-template",
+  "version": "1.0.0",
+  "description": "ビルドなしで動くアプリの雛形 (進め方のルールつき)",
+  "private": true,
+  "scripts": {
+    "start": "node serve.js",
+    "test": "node --test *.test.js",
+    "test:ui": "node browser-test.js"
+  },
+  "license": "MIT"
+}

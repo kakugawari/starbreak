@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="アプリの雛形">
+  <rect width="512" height="512" rx="108" fill="#151a2e"/>
+  <rect x="96" y="96" width="200" height="200" rx="28" fill="#4cc9f0"/>
+  <rect x="216" y="216" width="200" height="200" rx="28" fill="#ffd166"/>
+</svg>
