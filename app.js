@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.7';
+  const VERSION = 'v0.5.8';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -104,6 +104,48 @@
     c.fillStyle = g;
     c.fillRect(0, 0, w, w);
   });
+
+  /**
+   * 噴射の光 (縦長)。上が噴射口で白く、下 (後ろ) へ細く消える。幅は中心が明るい。
+   * 十字に組んだ 2 枚の板に貼る (煙の玉ではなく、光の筋に見せるため)。
+   */
+  const jetTex = canvasTex(64, 256, function (c, w, h) {
+    const img = c.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const t = y / (h - 1);
+      const along = Math.pow(1 - t, 1.6);
+      const halfW = 0.5 * (1 - t * 0.75);
+      for (let x = 0; x < w; x++) {
+        const u = Math.abs((x + 0.5) / w - 0.5) / halfW;
+        const across = u >= 1 ? 0 : Math.pow(1 - u * u, 2);
+        const core = Math.exp(-u * u * 18) * Math.pow(1 - t, 3);
+        const v = Math.min(1, along * across * 0.85 + core);
+        const i = (y * w + x) * 4;
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+        img.data[i + 3] = Math.round(v * 255);
+      }
+    }
+    c.putImageData(img, 0, 0);
+  });
+
+  const JET_MAT = new THREE.MeshBasicMaterial({
+    map: jetTex, color: 0x8fd4ff, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+
+  /**
+   * 自機の噴射を推力に合わせる。光だけで見せる: 噴射口の白い芯・小さな青い光・後ろへ延びる光の筋。
+   * thrust はふだん 1 前後、ブーストで 1.9
+   */
+  function setThrust(ship, thrust) {
+    const fl = 0.92 + Math.random() * 0.16;
+    ship.userData.flames.forEach(function (f, i) {
+      const s = (i % 2 ? 2.6 + 1.2 * thrust : 1.6 + 0.7 * thrust) * fl;
+      f.scale.set(s, s, 1);
+    });
+    const len = (1.5 + 3.5 * Math.pow(thrust, 1.5)) * fl, wid = 0.8 + 0.45 * thrust;
+    ship.userData.jets.forEach(function (j) { j.scale.set(wid, wid, len); });
+  }
 
   function glowSprite(color, size, opacity) {
     const m = new THREE.SpriteMaterial({
@@ -406,7 +448,7 @@
     });
 
     // エンジン 2 基: 前半は白い覆い、後ろは紺。前に吸気口、後ろに青く光る噴射口
-    const flames = [];
+    const flames = [], jets = [];
     const EX = 1.55, EY = -0.12;
     const cowl = new THREE.CylinderGeometry(0.72, 0.6, 2.9, 20); cowl.rotateX(Math.PI / 2);
     const rear = new THREE.CylinderGeometry(0.8, 0.78, 2.6, 20); rear.rotateX(Math.PI / 2);
@@ -422,10 +464,19 @@
       body.add(mesh(noz, SHIP_MAT.nozzle, x, EY, 5.06));
       // エンジンと胴をつなぐ板
       body.add(mesh(new THREE.BoxGeometry(Math.abs(x) - 0.4, 0.5, 3.6), SHIP_MAT.white, x / 2 + Math.sign(x) * 0.2, EY + 0.05, 1.6));
-      const f1 = glowSprite(0x7fd0ff, 3.0, 1); f1.position.set(x, EY, 5.4);
-      const f2 = glowSprite(0x3a7dff, 5, 0.7); f2.position.set(x, EY, 6.4);
+      const f1 = glowSprite(0xbfe8ff, 3.0, 1); f1.position.set(x, EY, 5.3);
+      const f2 = glowSprite(0x3a7dff, 4, 0.5); f2.position.set(x, EY, 5.6);
       body.add(f1, f2);
       flames.push(f1, f2);
+      // 噴射口から後ろへ延びる光の筋 (十字の板 2 枚)。長さは推力で変える
+      const jet = new THREE.Group();
+      jet.position.set(x, EY, 5.1);
+      [0, Math.PI / 2].forEach(function (rz) {
+        const g = new THREE.PlaneGeometry(1, 1); g.translate(0, -0.5, 0); g.rotateX(-Math.PI / 2); g.rotateZ(rz);
+        jet.add(new THREE.Mesh(g, JET_MAT));
+      });
+      body.add(jet);
+      jets.push(jet);
     });
 
     // 主翼: 後ろ寄りで約 46° 後退、前のふちが黄色、外へわずかに下がる
@@ -460,7 +511,7 @@
       body.add(m);
     });
 
-    g.userData = { body: body, flames: flames };
+    g.userData = { body: body, flames: flames, jets: jets };
     return g;
   }
 
@@ -1419,15 +1470,15 @@
     shipObj.rotation.order = 'YXZ';
     shipObj.rotation.set(pl.pitch, pl.yaw, pl.roll);
     const thrust = pl.boosting ? 1.9 : 0.6 + pl.throttle * 0.7;
-    shipObj.userData.flames.forEach(function (f, i) {
-      const big = i % 2 === 1;
-      const s = (big ? 5 : 3.2) * thrust * (0.9 + Math.random() * 0.2);
-      f.scale.set(s, s, 1);
-      f.position.z = big ? 5.6 + thrust * 1.6 : 5.4;
-    });
+    setThrust(shipObj, thrust);
+    // ブースト: 煙の玉ではなく、噴射口から後ろへ飛ぶ小さな光の粒
     if (pl.boosting && pl.alive) {
-      const back = { x: pl.pos.x - pl.dir.x * 6, y: pl.pos.y - pl.dir.y * 6, z: pl.pos.z - pl.dir.z * 6 };
-      for (let k = 0; k < 2; k++) spawnParticle(back.x + rnd(-1, 1), back.y + rnd(-0.5, 0.5), back.z + rnd(-1, 1), 0, 0, 0, 0.35, 3, 0.5, [0.4, 0.7, 1], [0.1, 0.2, 0.8]);
+      const back = { x: pl.pos.x - pl.dir.x * 5.5, y: pl.pos.y - pl.dir.y * 5.5, z: pl.pos.z - pl.dir.z * 5.5 };
+      for (let k = 0; k < 2; k++) {
+        const sx = (k ? 1 : -1) * 1.55;
+        spawnParticle(back.x + rnd(-0.3, 0.3) + sx * Math.cos(pl.yaw), back.y + rnd(-0.3, 0.3), back.z + rnd(-0.3, 0.3) - sx * Math.sin(pl.yaw),
+          pl.vel.x * 0.5 + rnd(-3, 3), pl.vel.y * 0.5 + rnd(-3, 3), pl.vel.z * 0.5 + rnd(-3, 3), rnd(0.15, 0.28), 0.6, 0.05, [0.9, 0.97, 1], [0.3, 0.55, 1]);
+      }
     }
 
     // 敵戦闘機
@@ -1446,10 +1497,11 @@
       if (!seen.has(id)) { scene.remove(o); enemyObjs.delete(id); }
     });
 
-    // ミサイル: 炎と煙を出す
+    // ミサイル: 炎と光の跡を出す
     game.missiles.forEach(function (m) {
       spawnParticle(m.pos.x, m.pos.y, m.pos.z, 0, 0, 0, 0.12, 4, 1, [1, 0.9, 0.6], [1, 0.4, 0.1]);
-      spawnParticle(m.pos.x, m.pos.y, m.pos.z, rnd(-2, 2), rnd(-2, 2), rnd(-2, 2), 0.9, 1.5, 5, [0.35, 0.35, 0.4], [0.05, 0.05, 0.06], 1);
+      // 煙ではなく、細く消えていく光の跡
+      spawnParticle(m.pos.x, m.pos.y, m.pos.z, rnd(-0.5, 0.5), rnd(-0.5, 0.5), rnd(-0.5, 0.5), 0.45, 1.1, 0.15, [1, 0.62, 0.3], [0.5, 0.12, 0.04]);
     });
 
     // 戦艦
@@ -1657,7 +1709,7 @@
     shipObj.position.set(0, 0, 0);
     shipObj.rotation.order = 'YXZ';
     shipObj.rotation.set(0.05 * Math.sin(titleT * 0.7), -0.15, 0.12 * Math.sin(titleT * 0.5));
-    shipObj.userData.flames.forEach(function (f, i) { const s = (i % 2 ? 5 : 3.2) * (0.9 + Math.random() * 0.2); f.scale.set(s, s, 1); });
+    setThrust(shipObj, 1);
     // 斜め前の右から (日の当たる側)。ゆっくり少しだけ回り込む
     const a = 2.3 + Math.sin(titleT * 0.12) * 0.2;
     camera.position.set(Math.sin(a) * 24, 5 + Math.sin(titleT * 0.2) * 1.5, Math.cos(a) * 24);
@@ -2236,6 +2288,14 @@
       audioLevel: function () { return audio.level(); },
       settings: settings,
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
+      // 自機のまわり r m にある、大きな (煙の玉のような) 粒の数。ブーストで煙を出さない見張り用
+      bigParticlesNear: function (r, minSize) {
+        const p = game.player.pos;
+        return particles.list.filter(function (q) {
+          return q.on && Math.max(q.s0, q.s1) >= minSize && Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < r;
+        }).length;
+      },
+      jetLength: function () { return shipObj.userData.jets[0].scale.z; },
       setSkyDim: setSkyDim,
       // 面の表向き (頂点の並び) と、光の計算に使う向き (法線) が食い違う三角形の数。
       // 鏡にした板 (geometry.scale(-1)) はここが食い違い、片側だけ黒く見える

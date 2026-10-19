@@ -254,6 +254,16 @@ async function run() {
     ok(layout.overlap.length === 0, '部品どうしが重ならない' + (layout.overlap.length ? ' (' + layout.overlap.join(', ') + ')' : ''));
     ok(layout.small.length === 0, '部品は 42pt 以上' + (layout.small.length ? ' (' + layout.small.join(', ') + ')' : ''));
 
+    // ブースト: 煙の玉 (大きな粒) を出さず、噴射の光の筋が延びる
+    await page.waitForTimeout(300);
+    const jetNormal = await page.evaluate(() => window.__app.jetLength());
+    await page.keyboard.down('Shift');
+    await page.waitForTimeout(700);
+    const boostFx = await page.evaluate(() => ({ big: window.__app.bigParticlesNear(40, 2), jet: window.__app.jetLength(), boosting: window.__app.game().player.boosting }));
+    await page.keyboard.up('Shift');
+    ok(boostFx.boosting && boostFx.big === 0, `ブーストで煙の玉を出さない (自機の 40m 以内の大きな粒 ${boostFx.big})`);
+    ok(boostFx.jet > jetNormal * 1.6, `ブーストで噴射の光が延びる (${jetNormal.toFixed(1)} → ${boostFx.jet.toFixed(1)})`);
+
     const cdp = await ctx.newCDPSession(page);
     const f = fingers(cdp, page);
     const cdp0Tap = async (x, y) => {
