@@ -194,6 +194,10 @@ async function run() {
 
     const cdp = await ctx.newCDPSession(page);
     const f = fingers(cdp, page);
+    const cdp0Tap = async (x, y) => {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 9 }] });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    };
     // どの指 (pointerId) がどの要素を押したかを覚えておく (1本だけ離すため)
     await page.evaluate(() => {
       window.__downs = [];
@@ -201,6 +205,18 @@ async function run() {
         window.__downs.push({ id: e.pointerId, x: Math.round(e.clientX), y: Math.round(e.clientY), el: e.currentTarget === document ? e.target.closest('#btnFire,#btnBoost,#btnMissile,#stickZone,#throttle') : e.target });
       }, true);
     });
+
+    // ------------------------------------------------ 連続タップで拡大しない
+    section('連続タップで拡大しない (iPhone は指定を無視して拡大することがある)');
+    await page.evaluate(() => {
+      window.__ends = [];
+      window.addEventListener('touchend', (e) => window.__ends.push(e.defaultPrevented), false);
+    });
+    for (const [x, y] of [[466, 150], [250, 330]]) {
+      await cdp0Tap(x, y); await cdp0Tap(x, y);
+    }
+    const ends = await page.evaluate(() => window.__ends.splice(0));
+    ok(ends.length === 4 && ends.every(Boolean), `遊んでいる間は、指を離した動作を打ち消す (${ends.join(',')})`);
 
     // ------------------------------------------------ スティック
     section('スティック');
@@ -381,6 +397,12 @@ async function run() {
     await sp.waitForFunction(() => window.__app && window.__app.assetsLoaded()['space.jpg'] !== undefined && window.__app.assetsLoaded()['earth.jpg'] !== undefined, null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
     ok(sa['space.jpg'] === true && sa['earth.jpg'] === true, 'ほかのファイルなしで、絵まで出る');
+    const vp = await sp.evaluate(() => ({
+      meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
+      scale: visualViewport.scale, w: innerWidth
+    }));
+    ok(/user-scalable=no/.test(vp.meta) && /maximum-scale=1/.test(vp.meta), '1 枚版にも「拡大しない」指定が入っている');
+    ok(vp.scale === 1 && vp.w === 932, `1 枚版も倍率 1 で、幅 932 (倍率 ${vp.scale} / 幅 ${vp.w})`);
     ok(fs.statSync(single).size < 4 * 1024 * 1024, `大きさ ${(fs.statSync(single).size / 1024 / 1024).toFixed(1)}MB`);
     await sctx.close();
 

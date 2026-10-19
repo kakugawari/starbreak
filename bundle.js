@@ -16,6 +16,8 @@ const html = read('index.html');
 const body = html.slice(html.indexOf('<body>') + 6, html.indexOf('<script'));
 const page = [
   '<title>STARBREAK</title>',
+  // index.html の <head> は使わないので、拡大しない指定はここで入れる
+  '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">',
   '<meta name="claude:viewport-fit-sides" content="cover">',
   '<style>', read('styles.css'), '</style>',
   body.trim(),

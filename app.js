@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.2.0';
+  const VERSION = 'v0.2.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -869,7 +869,19 @@
   holdButton(els.btnBoost, touch.boostIds);
   const missileIds = new Set();
   holdButton(els.btnMissile, missileIds, function () { input.missile = true; });
-  els.btnPause.addEventListener('click', function () { setPaused(true); });
+  // 指を置いた瞬間に止める (遊んでいる間は touchend を打ち消すので click が来ない)
+  els.btnPause.addEventListener('pointerdown', function (e) { e.preventDefault(); setPaused(true); });
+
+  // iPhone は「拡大しない」と指定しても、連続タップで拡大することがある。
+  // 遊んでいる間は、指を離したときの既定の動作 (連続タップの拡大) と、2本指の拡大を打ち消す。
+  // 操作はすべて pointerdown/pointermove で受けているので、ここで打ち消しても効く。
+  function blockZoom(e) {
+    if (screen === 'play' && !paused) e.preventDefault();
+  }
+  document.addEventListener('touchend', blockZoom, { passive: false });
+  document.addEventListener('dblclick', blockZoom, { passive: false });
+  document.addEventListener('gesturestart', blockZoom, { passive: false });
+  document.addEventListener('gesturechange', blockZoom, { passive: false });
 
   // キーボード (手もとで試す用)
   const keys = {};
