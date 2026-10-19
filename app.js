@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.3.0';
+  const VERSION = 'v0.3.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -465,31 +465,95 @@
   }
 
   const ENEMY_MAT = {
-    hull: new THREE.MeshPhongMaterial({ color: 0x4a4f5c, shininess: 50, specular: 0x333844 }),
-    dark: new THREE.MeshPhongMaterial({ color: 0x1b1d24, shininess: 30 }),
-    glow: new THREE.MeshBasicMaterial({ color: 0xff3a3a })
+    // 図の色 (暗い灰) より少しだけ明るく。暗いままだと星雲の上で見分けられない
+    hull: new THREE.MeshPhongMaterial({ color: 0x62666f, shininess: 45, specular: 0x4a4d55, flatShading: true }),
+    dark: new THREE.MeshPhongMaterial({ color: 0x23252b, shininess: 30, flatShading: true }),
+    canopy: new THREE.MeshPhongMaterial({ color: 0x5a0a12, emissive: 0x2a0306, shininess: 140, specular: 0xff9090 }),
+    glow: new THREE.MeshBasicMaterial({ color: 0xff2a3a })
   };
 
-  /** 敵戦闘機。尖った前進翼。 */
+  /**
+   * 敵戦闘機。前は -Z。全長 10m・全幅 9m・全高 3.2m (送ってもらった三面図から測った寸法)。
+   * 暗い灰色の角ばった機体、小さな赤いキャノピー、機首の横の前翼、後ろの大きなエンジン 1 基が赤く光る。
+   */
   function makeEnemyShip() {
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
+    // 当たったときに白く光らせるので、機体ごとに材質を分ける
     const hull = ENEMY_MAT.hull.clone();
-    const nose = mesh(new THREE.ConeGeometry(1.0, 6, 4), hull, 0, 0, -3.6);
-    nose.rotation.x = -Math.PI / 2; nose.rotation.y = Math.PI / 4;
-    body.add(nose);
-    body.add(mesh(new THREE.BoxGeometry(1.8, 1.2, 4), hull, 0, 0, 1.0));
-    const wR = wingGeo([[0.8, 2.2], [5.0, -1.2], [5.4, -0.4], [0.9, 3.4]], 0.2);
-    const wL = wingGeoMirrored([[0.8, 2.2], [5.0, -1.2], [5.4, -0.4], [0.9, 3.4]], 0.2, -1);
-    body.add(mesh(wR, hull, 0, 0, 0), mesh(wL, hull, 0, 0, 0));
-    const finGeo = new THREE.BoxGeometry(0.2, 2.4, 1.6);
-    const f1 = mesh(finGeo, ENEMY_MAT.dark, 5.2, 0.6, -0.8), f2 = mesh(finGeo, ENEMY_MAT.dark, -5.2, 0.6, -0.8);
-    body.add(f1, f2);
-    body.add(mesh(new THREE.BoxGeometry(1.1, 0.25, 1.4), ENEMY_MAT.glow, 0, 0.62, -1.2));
-    const eng = glowSprite(0xff5040, 4.5, 0.95); eng.position.set(0, 0, 3.4);
-    const eng2 = glowSprite(0xff2a1a, 7, 0.5); eng2.position.set(0, 0, 4.6);
-    body.add(eng, eng2);
+
+    // 胴体: 断面を 8 角にして、面で角ばった形に
+    const fus = loftGeo([
+      { z: -5.0, w: 0.02, h: 0.02, y: -0.08 },
+      { z: -4.2, w: 0.34, h: 0.2, y: -0.06 },
+      { z: -3.0, w: 0.58, h: 0.44, y: -0.02 },
+      { z: -1.6, w: 0.82, h: 0.6, y: 0.02 },
+      { z: 0.4, w: 1.05, h: 0.68, y: 0 },
+      { z: 2.4, w: 1.0, h: 0.72, y: 0 },
+      { z: 3.4, w: 0.98, h: 0.82, y: 0.05 },
+      { z: 4.5, w: 0.92, h: 0.86, y: 0.05 }
+    ], 8, function () { return 0xffffff; });
+    body.add(mesh(fus, hull));
+
+    // 小さな赤いキャノピー
+    const canopy = mesh(new THREE.SphereGeometry(1, 12, 8), ENEMY_MAT.canopy, 0, 0.44, -2.4);
+    canopy.scale.set(0.34, 0.3, 1.05);
+    body.add(canopy);
+
+    // 脇の吸気口 (前が赤く光る)
+    [1, -1].forEach(function (sx) {
+      body.add(mesh(new THREE.BoxGeometry(0.55, 0.62, 2.6), hull, sx * 1.02, -0.05, 0.2));
+      const lip = mesh(new THREE.PlaneGeometry(0.42, 0.42), ENEMY_MAT.glow, sx * 1.02, -0.05, -1.11);
+      lip.rotation.y = Math.PI;
+      body.add(lip);
+      // 胴の横の赤い線
+      body.add(mesh(new THREE.BoxGeometry(0.04, 0.06, 1.2), ENEMY_MAT.glow, sx * 1.31, 0.12, 0.4));
+    });
+
+    // 機首の横の前翼。先に丸い筒と赤いライト
+    [1, -1].forEach(function (sx) {
+      body.add(mesh(wingGeoMirrored([[0.3, -4.0], [2.0, -3.6], [2.0, -3.1], [0.4, -3.1]], 0.1, sx), hull, 0, -0.05, 0));
+      const podGeo = new THREE.CylinderGeometry(0.15, 0.15, 1.0, 8); podGeo.rotateX(Math.PI / 2);
+      body.add(mesh(podGeo, ENEMY_MAT.dark, sx * 2.05, -0.05, -3.45));
+      body.add(mesh(new THREE.SphereGeometry(0.08, 6, 4), ENEMY_MAT.glow, sx * 2.05, -0.05, -3.97));
+      const b1 = glowSprite(0xff3040, 2.6, 0.9); b1.position.set(sx * 2.05, -0.05, -4.05);
+      body.add(b1);
+    });
+
+    // 主翼: 後ろ寄りで大きく後退、外へわずかに下がる。先に赤いライト
+    [1, -1].forEach(function (sx) {
+      const w = new THREE.Group();
+      w.add(mesh(wingGeoMirrored([[1.0, -0.9], [4.5, 2.3], [4.35, 2.65], [2.3, 2.0], [1.0, 2.6]], 0.14, sx), hull));
+      w.add(mesh(new THREE.SphereGeometry(0.09, 6, 4), ENEMY_MAT.glow, sx * 4.42, 0, 2.45));
+      // 翼の先の赤いライト。遠くからでも敵だと分かる光の玉
+      const b2 = glowSprite(0xff3040, 3.6, 0.95); b2.position.set(sx * 4.45, 0, 2.5);
+      w.add(b2);
+      w.position.y = -0.1;
+      w.rotation.z = sx * -0.06;
+      body.add(w);
+      // 水平の尾翼
+      body.add(mesh(wingGeoMirrored([[0.85, 3.2], [2.5, 4.7], [2.3, 5.0], [0.85, 4.8]], 0.1, sx), hull, 0, -0.05, 0));
+    });
+
+    // 背中の尾翼 2 枚 (外へ開く) と、腹の小さな尾翼 2 枚
+    const topFin = finGeo([[0.8, 0], [3.1, 0], [4.0, 2.0], [3.35, 2.05]], 0.1);
+    const lowFin = finGeo([[3.2, 0], [4.6, 0], [5.0, -0.9], [4.5, -0.95]], 0.08);
+    [1, -1].forEach(function (sx) {
+      const t = mesh(topFin, hull, sx * 0.55, 0.55, 0); t.rotation.z = sx * -0.38;
+      const b = mesh(lowFin, hull, sx * 0.6, -0.55, 0); b.rotation.z = sx * 0.35;
+      body.add(t, b);
+    });
+
+    // 後ろの大きなエンジン 1 基 (八角形)。奥が赤く光る
+    const eng = new THREE.CylinderGeometry(0.95, 1.0, 1.4, 8); eng.rotateX(Math.PI / 2); eng.rotateZ(Math.PI / 8);
+    body.add(mesh(eng, ENEMY_MAT.dark, 0, 0.05, 4.7));
+    const noz = new THREE.CircleGeometry(0.72, 8); noz.rotateZ(Math.PI / 8);
+    body.add(mesh(noz, ENEMY_MAT.glow, 0, 0.05, 5.41));
+    const e1 = glowSprite(0xff4050, 4.2, 0.95); e1.position.set(0, 0.05, 5.7);
+    const e2 = glowSprite(0xff1a2a, 7, 0.5); e2.position.set(0, 0.05, 6.8);
+    body.add(e1, e2);
+
     g.userData = { body: body, mat: hull };
     return g;
   }
@@ -1456,10 +1520,12 @@
     front: { pos: [0, 0.5, -30], up: [0, 1, 0] },
     rear: { pos: [-14, 9, 16], up: [0, 1, 0] }
   };
+  let inspectObj = null;
   function renderInspect() {
     const v = INSPECT[inspectView];
-    shipObj.position.set(0, 0, 0);
-    shipObj.rotation.set(0, 0, 0);
+    const obj = inspectObj || shipObj;
+    obj.position.set(0, 0, 0);
+    obj.rotation.set(0, 0, 0);
     camera.position.set(v.pos[0], v.pos[1], v.pos[2]);
     camera.up.set(v.up[0], v.up[1], v.up[2]);
     camera.fov = 30; camera.updateProjectionMatrix();
@@ -1999,8 +2065,11 @@
         });
         return out;
       },
-      inspect: function (view) {
+      inspect: function (view, kind) {
         inspectView = view || null;
+        if (inspectObj) { scene.remove(inspectObj); inspectObj = null; }
+        if (view && kind === 'enemy') { inspectObj = makeEnemyShip(); scene.add(inspectObj); }
+        if (shipObj) shipObj.visible = !inspectObj;
         if (!view) { sky.visible = true; planet.visible = true; dust.lines.visible = true; scene.background = null; inspectLight.visible = false; }
         els.title.hidden = !!view || screen !== 'title';
       },
