@@ -204,15 +204,16 @@
     laserSpeed: 620, laserLife: 1.6, laserInterval: 0.09, laserDamage: 1,
     // 照準補助
     focusCone: 26 * DEG, focusRange: 1300,
-    assistCone: 5 * DEG,        // この角度の中にいる敵だけ補助する
-    assistBend: 2.2 * DEG,      // 弾を曲げるのは最大これだけ
-    magnetCone: 4 * DEG, magnetRate: 7 * DEG,
+    assistCone: 7 * DEG,        // この角度の中にいる敵だけ補助する
+    assistBend: 3 * DEG,        // 弾を曲げるのは最大これだけ
+    magnetCone: 8 * DEG, magnetRate: 14 * DEG,
     // ミサイル
-    lockCone: 12 * DEG, lockRange: 950, lockTime: 0.6,
+    lockCone: 15 * DEG, lockRange: 950, lockTime: 0.6,
     missileMax: 4, missileReload: 4, missileDamage: 8,
     missileSpeed0: 110, missileSpeed1: 330, missileTurn: 210 * DEG, missileLife: 6,
     // 敵戦闘機
-    fighterHp: 5, fighterRadius: 7, fighterSpeed: 68, fighterTurn: 72 * DEG,
+    // 敵は自機 (ふだん 60m/s・約70°/秒) より遅く、小回りも利かない。追えば背後を取れる
+    fighterHp: 5, fighterRadius: 7, fighterSpeed: 54, fighterTurn: 58 * DEG,
     enemyShotSpeed: 270, enemyShotLife: 2.2, fighterShotDamage: 5,
     fighterFireRange: 520, fighterFireCone: 9 * DEG, fighterAimError: 1.6 * DEG,
     maxBursting: 2,
@@ -310,7 +311,7 @@
       hp: T.fighterHp, maxHp: T.fighterHp, radius: T.fighterRadius, alive: true, active: true,
       mode: 'attack', modeT: 0, breakDir: vec(0, 0, -1),
       fireCd: rand(g, 1.0, 2.5), burst: 0, burstCd: 0,
-      bank: 0, flash: 0, skill: rand(g, 0.85, 1.15)
+      bank: 0, flash: 0, skill: rand(g, 0.9, 1.1)
     };
   }
 

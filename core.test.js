@@ -215,6 +215,16 @@ test('ロックオンしたミサイルは、動く敵を追って当たる', ()
 
 // ------------------------------------------------------------ 敵
 
+test('敵は追いかけている最中、ふだんの自機より遅く、小回りも利かない (追えば背後を取れる)', () => {
+  const g = quietGame();
+  const myTurn = C.turnLimit(T.speedNormal, false);
+  for (let i = 0; i < 200; i++) {
+    const f = C.makeFighter(g, C.vec(0, 0, -500), C.vec(0, 0, 1));
+    assert.ok(T.fighterSpeed * f.skill < T.speedNormal, `速さ ${(T.fighterSpeed * f.skill).toFixed(1)} < ${T.speedNormal}`);
+    assert.ok(T.fighterTurn * f.skill < myTurn, `旋回 ${(T.fighterTurn * f.skill / DEG).toFixed(1)}° < ${(myTurn / DEG).toFixed(1)}°`);
+  }
+});
+
 test('敵戦闘機は撃ってくるが、体当たりはしてこない', () => {
   const g = C.createGame({ seed: 5 });
   let minD = 1e9, shots = 0;
