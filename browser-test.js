@@ -188,6 +188,14 @@ async function run() {
     }));
     ok(titleFit, '安全域を入れても、タイトルのボタンが画面に収まる');
 
+    // ホーム画面のアイコン: iOS は SVG を使えないので PNG (180x180) を指す
+    const icon = await page.evaluate(() => new Promise((res) => {
+      const l = document.querySelector('link[rel="apple-touch-icon"]');
+      if (!l) return res(null);
+      const im = new Image(); im.onload = () => res({ href: l.getAttribute('href'), w: im.naturalWidth, h: im.naturalHeight }); im.onerror = () => res({ href: l.getAttribute('href'), w: 0 });
+      im.src = l.href;
+    }));
+    ok(icon && /\.png$/.test(icon.href) && icon.w === 180 && icon.h === 180, `ホーム画面のアイコンが PNG で読める (${icon ? icon.href + ' ' + icon.w + 'x' + icon.h : 'なし'})`);
     // タイトルの板: 中は始めるボタン 2 つだけ。設定・遊び方は下の小さなボタンから同じ板に開く
     const menuState = () => page.evaluate(() => {
       const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };

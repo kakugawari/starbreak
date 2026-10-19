@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.8';
+  const VERSION = 'v0.5.9';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1678,27 +1678,33 @@
     side: { pos: [-30, 0, 0], up: [0, 1, 0] },
     top: { pos: [0, 30, 0.001], up: [1, 0, 0] },
     front: { pos: [0, 0.5, -30], up: [0, 1, 0] },
-    rear: { pos: [-14, 9, 16], up: [0, 1, 0] }
+    rear: { pos: [-14, 9, 16], up: [0, 1, 0] },
+    // アプリのアイコン用: 斜め後ろ上から、噴射を長く (icon-shot.js が背景の色を変えて 2 回写す)
+    icon: { pos: [-9, 10, 15], up: [0, 1, 0], rot: [0.05, 0.1, -0.5], k: 1.25, thrust: 1.9 }
   };
   let inspectObj = null;
   function renderInspect() {
     const v = INSPECT[inspectView];
     const obj = inspectObj || shipObj;
     obj.position.set(0, 0, 0);
-    obj.rotation.set(0, 0, 0);
-    // 写す物の大きさに合わせて離れる (機体は 30m、戦艦はその 22 倍ほど)
-    const box3 = new THREE.Box3().setFromObject(obj);
+    obj.rotation.order = 'YXZ';
+    obj.rotation.set(v.rot ? v.rot[0] : 0, v.rot ? v.rot[1] : 0, v.rot ? v.rot[2] : 0);
+    obj.updateMatrixWorld(true);
+    // 写す物の大きさに合わせて離れる (機体は 30m、戦艦はその 22 倍ほど)。噴射の光は大きさに入れない
+    const box3 = new THREE.Box3().setFromObject(obj.userData.body || obj);
     const center = box3.getCenter(new THREE.Vector3());
-    const dist = box3.getSize(new THREE.Vector3()).length() * 1.75;
+    const dist = box3.getSize(new THREE.Vector3()).length() * (v.k || 1.75);
     camera.position.set(v.pos[0], v.pos[1], v.pos[2]).normalize().multiplyScalar(dist).add(center);
     camera.far = Math.max(30000, dist * 4);
     camera.up.set(v.up[0], v.up[1], v.up[2]);
     camera.fov = 30; camera.updateProjectionMatrix();
     camera.lookAt(center);
-    sky.visible = false; planet.visible = false; dust.lines.visible = false;
+    sky.visible = !!v.sky; planet.visible = !!v.planet; dust.lines.visible = false;
+    if (v.sky) { sky.position.copy(camera.position); planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset); }
+    if (v.thrust && obj === shipObj) setThrust(shipObj, v.thrust);
     inspectLight.visible = true;
     inspectLight.position.copy(camera.position);
-    scene.background = new THREE.Color(0xd400c8);
+    scene.background = v.sky ? null : new THREE.Color(v.bg !== undefined ? v.bg : 0xd400c8);
     renderer.render(scene, camera);
     hud.setTransform(1, 0, 0, 1, 0, 0);
     hud.clearRect(0, 0, els.hud.width, els.hud.height);
@@ -2336,6 +2342,7 @@
         if (!view) { sky.visible = true; planet.visible = true; dust.lines.visible = true; scene.background = null; inspectLight.visible = false; }
         els.title.hidden = !!view || screen !== 'title';
       },
+      inspectViews: INSPECT,
       skyDim: function () { return skyDim; },
       renderInfo: function () { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }; }
     };
