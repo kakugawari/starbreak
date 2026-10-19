@@ -229,36 +229,117 @@
 
   // ------------------------------------------------------------ 巨大戦艦の形
   //
-  // 当たり判定と見た目を同じ箱の表から作る。見た目と判定が食い違いようがない。
-  // 戦艦は回さない (向きは常に艦首が -X)。だから箱は座標軸にそろったまま。
+  // 当たり判定と見た目を同じ表から作る。見た目と判定が食い違いようがない。
+  // 1 つ 1 つの立体は「上から見た凸の多角形 (x, z) を、高さ y0〜y1 で押し出したもの」。
+  // 三角の船体も、段々の上部構造も、箱も、これで表せる。
+  // 戦艦は回さない (向きは常に艦首が -X)。
+  // 形と比率は、送ってもらった絵 (上から・横から) を測って決めた:
+  // 全長 640m、幅は艦尾の近くで長さの約半分、艦橋のてっぺんまで長さの約 25%。
 
-  const BOSS_BOXES = [
-    { name: 'hull',   c: vec(0, 0, 0),     s: vec(640, 60, 140) },
-    { name: 'keel',   c: vec(-20, -42, 0), s: vec(520, 24, 90) },
-    { name: 'deck',   c: vec(40, 45, 0),   s: vec(420, 30, 90) },
-    { name: 'bridge', c: vec(180, 95, 0),  s: vec(60, 70, 40) },
-    { name: 'mast',   c: vec(190, 145, 0), s: vec(14, 30, 14) },
-    { name: 'prow',   c: vec(-360, 0, 0),  s: vec(80, 40, 90) },
-    { name: 'stern',  c: vec(335, 0, 0),   s: vec(30, 70, 160) },
-    { name: 'armor',  c: vec(40, 73, 0),   s: vec(70, 26, 60), armor: true }
+  function box(x0, x1, z) { return [[x0, -z], [x1, -z], [x1, z], [x0, z]]; }
+
+  const BOSS_SOLIDS = [
+    // 船体 (上と下の 2 枚。下を少し小さくして、ふちを段にする)
+    { name: 'hullTop', poly: [[-320, 0], [300, -150], [320, -140], [320, 140], [300, 150]], y0: 0, y1: 14 },
+    { name: 'hullLow', poly: [[-300, 0], [300, -130], [320, -120], [320, 120], [300, 130]], y0: -22, y1: 0 },
+    { name: 'keel', poly: [[-180, 0], [310, -36], [310, 36]], y0: -34, y1: -22 },
+    // 上部構造 (艦尾へ寄せて段々に積む)
+    { name: 'tier1', poly: [[-140, 0], [290, -95], [290, 95]], y0: 14, y1: 30 },
+    { name: 'tier2', poly: [[10, -25], [285, -70], [285, 70], [10, 25]], y0: 30, y1: 46 },
+    { name: 'tier3', poly: [[110, -20], [280, -45], [280, 45], [110, 20]], y0: 46, y1: 62 },
+    { name: 'tier4', poly: [[180, -15], [275, -30], [275, 30], [180, 15]], y0: 62, y1: 76 },
+    // 艦橋の塔と、その上の横長の艦橋
+    { name: 'neck', poly: box(235, 268, 10), y0: 76, y1: 112 },
+    { name: 'bridge', poly: box(238, 270, 55), y0: 112, y1: 124 },
+    // コアの蓋。エンジンをこわすと外れる。コア (中心 68・半径 15) をすっぽり覆う
+    { name: 'armor', poly: box(120, 160, 18), y0: 62, y1: 86, armor: true }
   ];
 
   const BOSS_PARTS = [
-    { kind: 'turret', at: vec(100, 66, -28),  face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(100, 66, 28),   face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-100, 66, -28), face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-100, 66, 28),  face: vec(0, 1, 0) },
-    { kind: 'turret', at: vec(-230, 12, -76), face: vec(0, 0, -1) },
-    { kind: 'turret', at: vec(-230, 12, 76),  face: vec(0, 0, 1) },
-    { kind: 'engine', at: vec(354, 0, -45),   face: vec(1, 0, 0) },
-    { kind: 'engine', at: vec(354, 0, 45),    face: vec(1, 0, 0) },
-    { kind: 'core',   at: vec(40, 70, 0),     face: vec(0, 1, 0) }
+    // 砲台: 船体の上に 2 つ、一段目の上に 2 つ、船体の下に 2 つ (下にも死角を作らない)
+    { kind: 'turret', at: vec(-170, 20, -25), face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(-170, 20, 25),  face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(-20, 36, -18),  face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(-20, 36, 18),   face: vec(0, 1, 0) },
+    { kind: 'turret', at: vec(-60, -28, -45), face: vec(0, -1, 0) },
+    { kind: 'turret', at: vec(-60, -28, 45),  face: vec(0, -1, 0) },
+    { kind: 'engine', at: vec(334, -4, -60),  face: vec(1, 0, 0) },
+    { kind: 'engine', at: vec(334, -4, 60),   face: vec(1, 0, 0) },
+    { kind: 'core',   at: vec(140, 68, 0),    face: vec(0, 1, 0) }
   ];
 
-  const BOSS_CANNON = vec(-406, 0, 0);
-  const BOSS_FROM = vec(2300, -60, -1150);
-  const BOSS_AT = vec(0, -60, -1150);
+  const BOSS_CANNON = vec(-330, 7, 0);
+  // 自機 (高さ 0) より 300m 下に来る。真横からだと平たい船体が細い線にしか見えないので、
+  // 甲板と段々の上部構造を見下ろせる高さにする
+  const BOSS_FROM = vec(2300, -300, -1150);
+  const BOSS_AT = vec(0, -300, -1150);
   const BOSS_ARRIVE = 13;
+
+  /**
+   * 立体を、外向きの面 (n・p <= d が内側) の並びにする。off は戦艦の位置。
+   * 多角形の向き (時計回りか) によらず、重心から外を向く法線を選ぶ。
+   */
+  function solidPlanes(solid, off) {
+    const P = solid.poly;
+    let cx = 0, cz = 0;
+    for (let i = 0; i < P.length; i++) { cx += P[i][0]; cz += P[i][1]; }
+    cx /= P.length; cz /= P.length;
+    const planes = [];
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length];
+      let n = norm(vec(b[1] - a[1], 0, -(b[0] - a[0])));
+      const mid = vec((a[0] + b[0]) / 2 - cx, 0, (a[1] + b[1]) / 2 - cz);
+      if (dot(n, mid) < 0) n = scale(n, -1);
+      planes.push({ n: n, d: dot(n, vec(a[0] + off.x, 0, a[1] + off.z)) });
+    }
+    planes.push({ n: vec(0, 1, 0), d: solid.y1 + off.y });
+    planes.push({ n: vec(0, -1, 0), d: -(solid.y0 + off.y) });
+    let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+    for (let i = 0; i < P.length; i++) {
+      x0 = Math.min(x0, P[i][0]); x1 = Math.max(x1, P[i][0]);
+      z0 = Math.min(z0, P[i][1]); z1 = Math.max(z1, P[i][1]);
+    }
+    return {
+      name: solid.name, planes: planes,
+      min: vec(x0 + off.x, solid.y0 + off.y, z0 + off.z),
+      max: vec(x1 + off.x, solid.y1 + off.y, z1 + off.z)
+    };
+  }
+
+  /** 線分 p0→p1 が凸の立体に入る最初の位置 (0〜1)。入らなければ -1。 */
+  function segmentSolid(p0, p1, planes) {
+    let t0 = 0, t1 = 1;
+    const d = sub(p1, p0);
+    for (let i = 0; i < planes.length; i++) {
+      const pl = planes[i];
+      const dn = dot(pl.n, d);
+      const dist = dot(pl.n, p0) - pl.d;
+      if (Math.abs(dn) < 1e-12) {
+        if (dist > 0) return -1;
+      } else {
+        const t = -dist / dn;
+        if (dn < 0) { if (t > t0) t0 = t; } else if (t < t1) t1 = t;
+        if (t0 > t1) return -1;
+      }
+    }
+    return t0;
+  }
+
+  /** 球が凸の立体にめり込んでいたら、押し出す向きと深さ (いちばん近い面から出す)。 */
+  function sphereSolidPush(c, r, planes) {
+    let best = -1e9, bi = -1;
+    for (let i = 0; i < planes.length; i++) {
+      const dist = dot(planes[i].n, c) - planes[i].d;
+      if (dist > best) { best = dist; bi = i; }
+    }
+    if (best >= r) return null;
+    return { normal: planes[bi].n, depth: r - best };
+  }
+
+  function pointInSolid(p, planes) {
+    for (let i = 0; i < planes.length; i++) if (dot(planes[i].n, p) - planes[i].d > 0) return false;
+    return true;
+  }
 
   // ------------------------------------------------------------ ゲーム
 
@@ -351,24 +432,25 @@
       parts: parts,
       armor: true,
       cannon: { state: 'idle', t: 0, next: 4, dir: vec(1, 0, 0), from: copy(BOSS_CANNON), hitDone: false },
-      dyingT: 0,
-      boxes: BOSS_BOXES
+      dyingT: 0
     };
   }
 
-  /** いま当たり判定に使う戦艦の箱 (世界座標)。装甲は外れたら消える。 */
-  function bossBoxes(boss) {
+  /**
+   * いま当たり判定に使う戦艦の立体 (世界座標の面の並び)。装甲は外れたら消える。
+   * 弾ごと・コマごとに何度も呼ぶので、位置と装甲が変わらない間は作り直さない。
+   */
+  function bossSolids(boss) {
+    const key = boss.pos.x + ',' + boss.pos.y + ',' + boss.pos.z + ',' + boss.armor;
+    if (boss._solidsKey === key) return boss._solids;
     const out = [];
-    for (let i = 0; i < BOSS_BOXES.length; i++) {
-      const b = BOSS_BOXES[i];
-      if (b.armor && !boss.armor) continue;
-      const c = add(boss.pos, b.c);
-      out.push({
-        name: b.name,
-        min: vec(c.x - b.s.x / 2, c.y - b.s.y / 2, c.z - b.s.z / 2),
-        max: vec(c.x + b.s.x / 2, c.y + b.s.y / 2, c.z + b.s.z / 2)
-      });
+    for (let i = 0; i < BOSS_SOLIDS.length; i++) {
+      const sd = BOSS_SOLIDS[i];
+      if (sd.armor && !boss.armor) continue;
+      out.push(solidPlanes(sd, boss.pos));
     }
+    boss._solidsKey = key;
+    boss._solids = out;
     return out;
   }
 
@@ -593,10 +675,10 @@
           if (t >= 0 && t < bestT) { bestT = t; best = { target: p.active ? p : null, part: p }; }
         }
       }
-      const boxes = bossBoxes(g.boss);
-      for (let i = 0; i < boxes.length; i++) {
-        const t = segmentBox(p0, p1, boxes[i].min, boxes[i].max);
-        if (t >= 0 && t < bestT) { bestT = t; best = { target: null, hull: boxes[i].name }; }
+      const solids = bossSolids(g.boss);
+      for (let i = 0; i < solids.length; i++) {
+        const t = segmentSolid(p0, p1, solids[i].planes);
+        if (t >= 0 && t < bestT) { bestT = t; best = { target: null, hull: solids[i].name }; }
       }
     }
     if (!best) return null;
@@ -710,17 +792,17 @@
 
       // 戦艦の船体はよける
       if (g.boss && g.boss.phase !== 'dead') {
-        const boxes = bossBoxes(g.boss);
-        for (let k = 0; k < boxes.length; k++) {
+        const solids = bossSolids(g.boss);
+        for (let k = 0; k < solids.length; k++) {
           const ahead = addScaled(f.pos, f.dir, 60);
           const pad = 30;
-          const b = boxes[k];
+          const b = solids[k];
           if (ahead.x > b.min.x - pad && ahead.x < b.max.x + pad && ahead.y > b.min.y - pad &&
               ahead.y < b.max.y + pad && ahead.z > b.min.z - pad && ahead.z < b.max.z + pad) {
             const c = scale(add(b.min, b.max), 0.5);
             desired = add(norm(sub(f.pos, c)), vec(0, 0.8, 0));
           }
-          const push = sphereBoxPush(f.pos, f.radius, b.min, b.max);
+          const push = sphereSolidPush(f.pos, f.radius, b.planes);
           if (push) f.pos = addScaled(f.pos, push.normal, push.depth);
         }
       }
@@ -730,6 +812,14 @@
       f.speed = approach(f.speed, speed, 2, dt);
       f.vel = scale(f.dir, f.speed);
       f.pos = addScaled(f.pos, f.vel, dt);
+      // 動いたあとにも船体から押し出す (動く前だけだと、そのコマで進んだぶんめり込む)
+      if (g.boss && g.boss.phase !== 'dead') {
+        const solids = bossSolids(g.boss);
+        for (let k = 0; k < solids.length; k++) {
+          const push = sphereSolidPush(f.pos, f.radius, solids[k].planes);
+          if (push) f.pos = addScaled(f.pos, push.normal, push.depth);
+        }
+      }
       // 曲がる向きに機体を傾ける (見た目)
       const turn = cross(before, f.dir);
       const bankT = clamp(-dot(turn, vec(0, 1, 0)) / Math.max(dt, 1e-4) / T.fighterTurn, -1, 1) * 1.0;
@@ -765,7 +855,8 @@
     const b = g.boss;
     for (let i = 0; i < n; i++) {
       const side = i % 2 === 0 ? -1 : 1;
-      const pos = add(b.pos, vec(300 - i * 30, -10, side * 110));
+      // 船体の下 (竜骨の横) から出す。三角の船体の中に出ないように
+      const pos = add(b.pos, vec(250 - i * 30, -48, side * 60));
       const dir = vec(-0.4, 0.2, side);
       g.fighters.push(makeFighter(g, pos, dir));
     }
@@ -802,8 +893,8 @@
     if (b.phase === 'dying') {
       b.dyingT += dt;
       if (Math.floor((b.dyingT - dt) * 5) !== Math.floor(b.dyingT * 5)) {
-        const box = BOSS_BOXES[Math.floor(g.rng() * 7)];
-        const p = add(add(b.pos, box.c), vec(rand(g, -0.5, 0.5) * box.s.x, rand(g, -0.5, 0.5) * box.s.y, rand(g, -0.5, 0.5) * box.s.z));
+        const sd = bossSolids(b)[Math.floor(g.rng() * 6)];
+        const p = vec(rand(g, sd.min.x, sd.max.x), rand(g, sd.min.y, sd.max.y), rand(g, sd.min.z, sd.max.z) * 0.5 + (sd.min.z + sd.max.z) * 0.25);
         emit(g, 'explode', { pos: p, size: rand(g, 2, 4), kind: 'chain' });
       }
       if (b.dyingT > 4.2) {
@@ -831,7 +922,8 @@
       b.phase = 'core';
       b.armor = false;
       for (let i = 0; i < b.parts.length; i++) if (b.parts[i].kind === 'core') b.parts[i].active = true;
-      emit(g, 'explode', { pos: add(b.pos, BOSS_BOXES[7].c), size: 3, kind: 'armor' });
+      const armorAt = BOSS_PARTS[BOSS_PARTS.length - 1].at;
+      emit(g, 'explode', { pos: add(b.pos, vec(armorAt.x, armorAt.y + 6, armorAt.z)), size: 3, kind: 'armor' });
       emit(g, 'bossPhase', { phase: 'core', text: '装甲が吹き飛んだ  コアを撃ち抜け' });
       launchEscorts(g, 3);
     }
@@ -944,8 +1036,8 @@
   }
 
   function sweepHull(g, p0, p1) {
-    const boxes = bossBoxes(g.boss);
-    for (let i = 0; i < boxes.length; i++) if (segmentBox(p0, p1, boxes[i].min, boxes[i].max) >= 0) return true;
+    const solids = bossSolids(g.boss);
+    for (let i = 0; i < solids.length; i++) if (segmentSolid(p0, p1, solids[i].planes) >= 0) return true;
     return false;
   }
 
@@ -953,11 +1045,23 @@
     const pl = g.player;
     pl.scrapeCd = Math.max(0, pl.scrapeCd - dt);
     if (!g.boss || g.boss.phase === 'dead' || !pl.alive) return;
-    const boxes = bossBoxes(g.boss);
-    for (let i = 0; i < boxes.length; i++) {
-      const push = sphereBoxPush(pl.pos, T.playerRadius, boxes[i].min, boxes[i].max);
+    const solids = bossSolids(g.boss);
+    for (let i = 0; i < solids.length; i++) {
+      const push = sphereSolidPush(pl.pos, T.playerRadius, solids[i].planes);
       if (!push) continue;
       pl.pos = addScaled(pl.pos, push.normal, push.depth + 0.01);
+      // 壁へ向かっていたら、跳ね返る向きへ機首をそらす。押し出すだけだと
+      // 機首が壁を向いたままで、壁沿いをこすり続けて落とされる
+      const into = dot(pl.dir, push.normal);
+      if (into < 0) {
+        const out = norm(addScaled(pl.dir, push.normal, -into * 1.6));
+        const yp = yawPitchOf(out);
+        pl.yaw = yp.yaw;
+        pl.pitch = clamp(yp.pitch, -T.pitchLimit, T.pitchLimit);
+        pl.yawRate = 0; pl.pitchRate = 0;
+        pl.dir = forwardFrom(pl.yaw, pl.pitch);
+        pl.vel = scale(pl.dir, pl.speed);
+      }
       if (pl.scrapeCd <= 0) {
         pl.scrapeCd = 0.6;
         emit(g, 'scrape', { pos: pl.pos });
@@ -1089,10 +1193,10 @@
     }
     // 船体に近づいたら上へ逃げる
     if (g.boss && g.boss.phase !== 'dead') {
-      const boxes = bossBoxes(g.boss);
+      const solids = bossSolids(g.boss);
       const ahead = addScaled(pl.pos, pl.dir, 70);
-      for (let i = 0; i < boxes.length; i++) {
-        const push = sphereBoxPush(ahead, 25, boxes[i].min, boxes[i].max);
+      for (let i = 0; i < solids.length; i++) {
+        const push = sphereSolidPush(ahead, 25, solids[i].planes);
         if (push) aim = add(pl.pos, add(scale(push.normal, 100), scale(pl.dir, 30)));
       }
     }
@@ -1124,7 +1228,7 @@
   return {
     DEG: DEG,
     TUNING: T,
-    BOSS_BOXES: BOSS_BOXES,
+    BOSS_SOLIDS: BOSS_SOLIDS,
     BOSS_PARTS: BOSS_PARTS,
     BOSS_CANNON: BOSS_CANNON,
     mulberry32: mulberry32,
@@ -1132,8 +1236,9 @@
     clamp: clamp, lerp: lerp, approach: approach, angleBetween: angleBetween, rotateToward: rotateToward,
     forwardFrom: forwardFrom, yawPitchOf: yawPitchOf, wrapAngle: wrapAngle,
     intercept: intercept, segmentSphere: segmentSphere, segmentBox: segmentBox, sphereBoxPush: sphereBoxPush,
+    solidPlanes: solidPlanes, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
-    createGame: createGame, step: step, targets: targets, bossBoxes: bossBoxes, result: result,
+    createGame: createGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
     autopilot: autopilot, makeFighter: makeFighter, makeBoss: makeBoss
   };
 });

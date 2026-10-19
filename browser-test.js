@@ -146,9 +146,9 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => window.__app.assetsLoaded()['space.jpg'] !== undefined && window.__app.assetsLoaded()['earth.jpg'] !== undefined, null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
-    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true, '宇宙の背景と地球の絵が読み込まれる');
+    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・戦艦の装甲の絵が読み込まれる');
 
     // 安全域を差し込んで、ボタンが画面に収まるか (chromium の安全域は 0 なので、まねる)
     await page.evaluate(() => {
@@ -163,8 +163,8 @@ async function run() {
 
     // 機体の面: 鏡にした翼が片側だけ黒く見えた不具合の見張り
     const faces = await page.evaluate(() => window.__app.flippedFaces());
-    ok(faces.player.bad === 0 && faces.enemy.bad === 0,
-      `機体の面の表向きと光の向きがそろっている (自機 ${faces.player.bad}/${faces.player.total}・敵機 ${faces.enemy.bad}/${faces.enemy.total} 枚が逆)`);
+    ok(faces.player.bad === 0 && faces.enemy.bad === 0 && faces.boss.bad === 0,
+      `機体の面の表向きと光の向きがそろっている (自機 ${faces.player.bad}/${faces.player.total}・敵機 ${faces.enemy.bad}/${faces.enemy.total}・戦艦 ${faces.boss.bad}/${faces.boss.total} 枚が逆)`);
 
     // ------------------------------------------------ 出撃
     section('出撃 (ボタンを指で押す)');
@@ -399,9 +399,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && window.__app.assetsLoaded()['space.jpg'] !== undefined && window.__app.assetsLoaded()['earth.jpg'] !== undefined, null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(sa['space.jpg'] === true && sa['earth.jpg'] === true, 'ほかのファイルなしで、絵まで出る');
+    ok(sa['space.jpg'] === true && sa['earth.jpg'] === true && sa['hull.jpg'] === true, 'ほかのファイルなしで、絵まで出る (背景・地球・装甲)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth

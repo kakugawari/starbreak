@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.3.3';
+  const VERSION = 'v0.4.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -566,66 +566,153 @@
 
   // ------------------------------------------------------------ 巨大戦艦
   //
-  // 箱の表 (core.js の BOSS_BOXES) から作る。当たり判定と見た目が同じ箱。
+  // 立体の表 (core.js の BOSS_SOLIDS) から作る。当たり判定と見た目が同じ立体。
+  // 表面には装甲の絵 (hull.jpg) を、40m 四方ごとに 1 枚の大きさで貼る。
+
+  const HULL_TILE = 40;
+  const hullMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 30, specular: 0x50555e, flatShading: true });
+  loadTex('hull.jpg', function (t) {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 4;
+    hullMat.map = t;
+    hullMat.needsUpdate = true;
+  });
+
+  /**
+   * 立体 (上から見た凸の多角形を高さで押し出したもの) の三角形。
+   * 面ごとに外向きの法線を持たせ、頂点の並びもそれにそろえる (片側が黒く見える不具合よけ)。
+   * 絵の座標は、上下の面は (x, z)、横の面は (ふちに沿った長さ, y) を HULL_TILE で割ったもの。
+   */
+  function prismGeo(solid, shade, out) {
+    const P = solid.poly, y0 = solid.y0, y1 = solid.y1;
+    let cx = 0, cz = 0;
+    P.forEach(function (q) { cx += q[0]; cz += q[1]; });
+    cx /= P.length; cz /= P.length;
+    const tri = function (a, b, c, n, ua, ub, uc) {
+      // 表向き (頂点の並び) を法線にそろえる
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      if (cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0) { const t = b; b = c; c = t; const tu = ub; ub = uc; uc = tu; }
+      [a, b, c].forEach(function (v) { out.pos.push(v[0], v[1], v[2]); out.nor.push(n[0], n[1], n[2]); out.col.push(shade[0], shade[1], shade[2]); });
+      out.uv.push(ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]);
+    };
+    const S = HULL_TILE;
+    // 上と下の面 (扇形に割る)
+    for (let i = 1; i < P.length - 1; i++) {
+      const a = P[0], b = P[i], c = P[i + 1];
+      tri([a[0], y1, a[1]], [b[0], y1, b[1]], [c[0], y1, c[1]], [0, 1, 0], [a[0] / S, a[1] / S], [b[0] / S, b[1] / S], [c[0] / S, c[1] / S]);
+      tri([a[0], y0, a[1]], [b[0], y0, b[1]], [c[0], y0, c[1]], [0, -1, 0], [a[0] / S, a[1] / S], [b[0] / S, b[1] / S], [c[0] / S, c[1] / S]);
+    }
+    // 横の面
+    let run = 0;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      let n = [b[1] - a[1], 0, -(b[0] - a[0])];
+      const nl = Math.hypot(n[0], n[2]); n = [n[0] / nl, 0, n[2] / nl];
+      if (n[0] * ((a[0] + b[0]) / 2 - cx) + n[2] * ((a[1] + b[1]) / 2 - cz) < 0) n = [-n[0], 0, -n[2]];
+      const u0 = run / S, u1 = (run + L) / S, v0 = y0 / S, v1 = y1 / S;
+      tri([a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], y1, b[1]], n, [u0, v0], [u1, v0], [u1, v1]);
+      tri([a[0], y0, a[1]], [b[0], y1, b[1]], [a[0], y1, a[1]], n, [u0, v0], [u1, v1], [u0, v1]);
+      run += L;
+    }
+  }
+
+  function geoFrom(out) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(out.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(out.nor, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(out.col, 3));
+    if (out.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(out.uv, 2));
+    return g;
+  }
+
+  function insidePoly(P, x, z) {
+    let sign = 0;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length];
+      const c = (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]);
+      if (Math.abs(c) < 1e-9) continue;
+      const sg = c > 0 ? 1 : -1;
+      if (sign === 0) sign = sg; else if (sg !== sign) return false;
+    }
+    return true;
+  }
 
   function makeBossModel() {
     const group = new THREE.Group();
     const rng = C.mulberry32(1234);
-    const hullGeos = [], lightGeos = [];
-    const box = function (cx, cy, cz, sx, sy, sz, shade, list) {
-      const g = new THREE.BoxGeometry(sx, sy, sz).toNonIndexed();
-      g.translate(cx, cy, cz);
-      const n = g.attributes.position.count;
-      const col = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { col[i * 3] = shade[0]; col[i * 3 + 1] = shade[1]; col[i * 3 + 2] = shade[2]; }
-      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-      g.deleteAttribute('uv');
-      (list || hullGeos).push(g);
+    const hull = { pos: [], nor: [], col: [], uv: [] };
+    const lights = { pos: [], nor: [], col: [] };
+    const shadeOf = function (k) { const v = 0.62 + k * 0.38; return [v * 0.96, v * 0.98, v * 1.04]; };
+    const light = function (x, y, z, size, c) {
+      const g = new THREE.BoxGeometry(size, size * 0.6, size).toNonIndexed();
+      g.translate(x, y, z);
+      const P = g.attributes.position.array, N = g.attributes.normal.array;
+      for (let i = 0; i < P.length; i += 3) { lights.pos.push(P[i], P[i + 1], P[i + 2]); lights.nor.push(N[i], N[i + 1], N[i + 2]); lights.col.push(c[0], c[1], c[2]); }
+      g.dispose();
     };
-    const shadeOf = function (k) { const v = 0.16 + k * 0.2; return [v * 0.92, v * 0.97, v * 1.1]; };
 
-    C.BOSS_BOXES.forEach(function (b) {
-      if (b.armor) return;
-      box(b.c.x, b.c.y, b.c.z, b.s.x, b.s.y, b.s.z, shadeOf(rng()));
-      // 上面と側面に細かい凹凸 (判定には入れない小さな物)
-      const top = b.c.y + b.s.y / 2;
-      const count = Math.floor(b.s.x * b.s.z / 900);
+    C.BOSS_SOLIDS.forEach(function (sd) {
+      if (sd.armor) return;
+      prismGeo(sd, shadeOf(rng()), hull);
+      const P = sd.poly;
+      let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+      P.forEach(function (q) { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); z0 = Math.min(z0, q[1]); z1 = Math.max(z1, q[1]); });
+      // 上の面に細かい凸凹 (判定には入れない小さな物)。多角形の内側にだけ置く
+      const area = (x1 - x0) * (z1 - z0);
+      const count = Math.floor(area / 700);
       for (let i = 0; i < count; i++) {
-        const sx = 4 + rng() * 22, sz = 4 + rng() * 18, sy = 1 + rng() * 5;
-        const x = b.c.x + (rng() - 0.5) * (b.s.x - sx), z = b.c.z + (rng() - 0.5) * (b.s.z - sz);
-        box(x, top + sy / 2, z, sx, sy, sz, shadeOf(rng() * 0.8));
+        const sx = 4 + rng() * 18, sz = 3 + rng() * 14, h = 0.8 + rng() * 4;
+        const x = x0 + rng() * (x1 - x0), z = z0 + rng() * (z1 - z0);
+        if (!insidePoly(P, x - sx / 2, z - sz / 2) || !insidePoly(P, x + sx / 2, z - sz / 2) ||
+            !insidePoly(P, x + sx / 2, z + sz / 2) || !insidePoly(P, x - sx / 2, z + sz / 2)) continue;
+        prismGeo({ poly: [[x - sx / 2, z - sz / 2], [x + sx / 2, z - sz / 2], [x + sx / 2, z + sz / 2], [x - sx / 2, z + sz / 2]], y0: sd.y1, y1: sd.y1 + h }, shadeOf(rng() * 0.7), hull);
+        // ところどころ赤い明かり
+        if (rng() < 0.25) light(x, sd.y1 + h + 0.3, z, 1.2, [1, 0.18, 0.15]);
       }
-      const sideN = Math.floor(b.s.x / 14);
-      for (let i = 0; i < sideN; i++) {
-        const sx = 6 + rng() * 26, sy = 3 + rng() * (b.s.y * 0.5), sz = 1 + rng() * 3;
-        const x = b.c.x + (rng() - 0.5) * (b.s.x - sx), y = b.c.y + (rng() - 0.5) * (b.s.y - sy);
-        box(x, y, b.c.z + b.s.z / 2 + sz / 2, sx, sy, sz, shadeOf(rng() * 0.6));
-        box(x, y, b.c.z - b.s.z / 2 - sz / 2, sx, sy, sz, shadeOf(rng() * 0.6));
-      }
-      // 窓の明かり
-      const winN = Math.floor(b.s.x / 6);
-      for (let i = 0; i < winN; i++) {
-        if (rng() < 0.4) continue;
-        const x = b.c.x + (rng() - 0.5) * b.s.x * 0.95, y = b.c.y + (rng() - 0.5) * b.s.y * 0.8;
-        const warm = rng() < 0.75;
-        const c = warm ? [1.0, 0.8, 0.5] : [0.5, 0.8, 1.0];
-        box(x, y, b.c.z + b.s.z / 2 + 0.3, 2.2, 0.9, 0.4, c, lightGeos);
-        box(x, y, b.c.z - b.s.z / 2 - 0.3, 2.2, 0.9, 0.4, c, lightGeos);
+      // 横の面に、小さな明かりの列 (赤と、少しだけ暖色)
+      for (let i = 0; i < P.length; i++) {
+        const a = P[i], b = P[(i + 1) % P.length];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        let nx = b[1] - a[1], nz = -(b[0] - a[0]);
+        const nl = Math.hypot(nx, nz); nx /= nl; nz /= nl;
+        const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
+        let cx = 0, cz = 0; P.forEach(function (q) { cx += q[0]; cz += q[1]; }); cx /= P.length; cz /= P.length;
+        if (nx * (mx - cx) + nz * (mz - cz) < 0) { nx = -nx; nz = -nz; }
+        const n = Math.floor(L / 9);
+        for (let k = 0; k < n; k++) {
+          if (rng() < 0.55) continue;
+          const t = rng();
+          const y = sd.y0 + (0.25 + rng() * 0.5) * (sd.y1 - sd.y0);
+          const warm = rng() < 0.3;
+          light(a[0] + (b[0] - a[0]) * t + nx * 0.4, y, a[1] + (b[1] - a[1]) * t + nz * 0.4, 1.1, warm ? [1, 0.7, 0.4] : [1, 0.15, 0.12]);
+        }
       }
     });
     // 艦首の主砲の筒
     const cn = C.BOSS_CANNON;
-    box(cn.x + 20, cn.y, cn.z, 40, 22, 22, [0.2, 0.2, 0.24]);
+    prismGeo({ poly: [[cn.x - 4, -5], [cn.x + 30, -5], [cn.x + 30, 5], [cn.x - 4, 5]], y0: cn.y - 5, y1: cn.y + 5 }, [0.45, 0.45, 0.5], hull);
 
-    const hullMesh = new THREE.Mesh(mergeGeos(hullGeos), new THREE.MeshPhongMaterial({
-      vertexColors: true, shininess: 40, specular: 0x6a7a90, flatShading: true
-    }));
-    const lightMesh = new THREE.Mesh(mergeGeos(lightGeos), new THREE.MeshBasicMaterial({ vertexColors: true }));
+    const hullMesh = new THREE.Mesh(geoFrom(hull), hullMat);
+    const lightMesh = new THREE.Mesh(geoFrom(lights), new THREE.MeshBasicMaterial({ vertexColors: true }));
     group.add(hullMesh, lightMesh);
 
+    // 艦橋の上: 丸いドーム 2 つとアンテナ (絵のとおり。判定には入れない)
+    const br = C.BOSS_SOLIDS.find(function (sd) { return sd.name === 'bridge'; });
+    const domeMat = new THREE.MeshPhongMaterial({ color: 0x5a5e66, shininess: 50, flatShading: true });
+    [-44, 44].forEach(function (z) {
+      const d = mesh(new THREE.SphereGeometry(6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), domeMat, 254, br.y1, z);
+      group.add(d);
+    });
+    const mast = new THREE.CylinderGeometry(0.5, 0.7, 18, 5);
+    group.add(mesh(mast, domeMat, 250, br.y1 + 9, 0), mesh(mast, domeMat, 262, br.y1 + 6, 8));
+
     // 装甲 (コアの蓋)。外れたら消す
-    const ab = C.BOSS_BOXES.filter(function (b) { return b.armor; })[0];
-    const armor = mesh(new THREE.BoxGeometry(ab.s.x, ab.s.y, ab.s.z), new THREE.MeshPhongMaterial({ color: 0x5a6070, shininess: 60, flatShading: true }), ab.c.x, ab.c.y, ab.c.z);
+    const ab = C.BOSS_SOLIDS.filter(function (sd) { return sd.armor; })[0];
+    const armorGeo = { pos: [], nor: [], col: [], uv: [] };
+    prismGeo(ab, [0.85, 0.85, 0.9], armorGeo);
+    const armor = new THREE.Mesh(geoFrom(armorGeo), hullMat);
     group.add(armor);
 
     // 部位
@@ -650,10 +737,10 @@
       } else if (p.kind === 'engine') {
         const geo = new THREE.CylinderGeometry(15, 17, 14, 16); geo.rotateZ(Math.PI / 2);
         pg.add(mesh(geo, mat));
-        const core = mesh(new THREE.CircleGeometry(12, 20), new THREE.MeshBasicMaterial({ color: 0x66aaff }), 7.2, 0, 0);
+        const core = mesh(new THREE.CircleGeometry(12, 20), new THREE.MeshBasicMaterial({ color: 0xff5040 }), 7.2, 0, 0);
         core.rotation.y = Math.PI / 2;
         pg.add(core);
-        const gl = glowSprite(0x4a8dff, 70, 0.8); gl.position.x = 14;
+        const gl = glowSprite(0xff3a30, 70, 0.8); gl.position.x = 14;
         pg.add(gl);
         pg.userData.glow = gl; pg.userData.disc = core;
       } else {
@@ -680,36 +767,20 @@
     const guide = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
     [beamOuter, beamCore, guide].forEach(function (m) { m.frustumCulled = false; scene.add(m); m.visible = false; });
 
-    // 艦尾の噴射
+    // 艦尾の噴射 (赤)。真ん中の大きいものと、外側の 2 つ (弱点のエンジン 2 基とは別)
     const thrusters = [];
-    for (let i = -2; i <= 2; i++) {
-      const t = glowSprite(0x6a9dff, 60, 0.55);
-      t.position.set(362, -18, i * 30);
+    [[0, 1.4], [-105, 0.9], [105, 0.9]].forEach(function (q) {
+      const t = glowSprite(0xff3a30, 60 * q[1], 0.6);
+      t.position.set(330, -4, q[0]);
       group.add(t);
       thrusters.push(t);
-    }
+      const disc = mesh(new THREE.CircleGeometry(10 * q[1], 20), new THREE.MeshBasicMaterial({ color: 0xff6048 }), 320.6, -4, q[0]);
+      disc.rotation.y = Math.PI / 2;
+      group.add(disc);
+    });
 
     group.userData = { parts: parts, armor: armor, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: thrusters, hull: hullMesh };
     return group;
-  }
-
-  function mergeGeos(list) {
-    let n = 0;
-    list.forEach(function (g) { n += g.attributes.position.count; });
-    const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
-    let o = 0;
-    list.forEach(function (g) {
-      pos.set(g.attributes.position.array, o * 3);
-      nor.set(g.attributes.normal.array, o * 3);
-      col.set(g.attributes.color.array, o * 3);
-      o += g.attributes.position.count;
-      g.dispose();
-    });
-    const out = new THREE.BufferGeometry();
-    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
-    out.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    return out;
   }
 
   // ------------------------------------------------------------ 弾 (まとめて1回で描く)
@@ -1532,10 +1603,15 @@
     const obj = inspectObj || shipObj;
     obj.position.set(0, 0, 0);
     obj.rotation.set(0, 0, 0);
-    camera.position.set(v.pos[0], v.pos[1], v.pos[2]);
+    // 写す物の大きさに合わせて離れる (機体は 30m、戦艦はその 22 倍ほど)
+    const box3 = new THREE.Box3().setFromObject(obj);
+    const center = box3.getCenter(new THREE.Vector3());
+    const dist = box3.getSize(new THREE.Vector3()).length() * 1.75;
+    camera.position.set(v.pos[0], v.pos[1], v.pos[2]).normalize().multiplyScalar(dist).add(center);
+    camera.far = Math.max(30000, dist * 4);
     camera.up.set(v.up[0], v.up[1], v.up[2]);
     camera.fov = 30; camera.updateProjectionMatrix();
-    camera.lookAt(0, 0, 0);
+    camera.lookAt(center);
     sky.visible = false; planet.visible = false; dust.lines.visible = false;
     inspectLight.visible = true;
     inspectLight.position.copy(camera.position);
@@ -2051,7 +2127,9 @@
       // 鏡にした板 (geometry.scale(-1)) はここが食い違い、片側だけ黒く見える
       flippedFaces: function () {
         const out = {};
-        [['player', makePlayerShip()], ['enemy', makeEnemyShip()]].forEach(function (pair) {
+        const boss = makeBossModel();
+        ['beamOuter', 'beamCore', 'guide'].forEach(function (k) { scene.remove(boss.userData[k]); });
+        [['player', makePlayerShip()], ['enemy', makeEnemyShip()], ['boss', boss]].forEach(function (pair) {
           let bad = 0, total = 0;
           pair[1].traverse(function (o) {
             if (!o.isMesh || o.isSprite || !o.geometry.attributes.normal) return;
@@ -2073,8 +2151,13 @@
       },
       inspect: function (view, kind) {
         inspectView = view || null;
-        if (inspectObj) { scene.remove(inspectObj); inspectObj = null; }
+        if (inspectObj) {
+          scene.remove(inspectObj);
+          if (inspectObj.userData.beamOuter) ['beamOuter', 'beamCore', 'guide'].forEach(function (k) { scene.remove(inspectObj.userData[k]); });
+          inspectObj = null;
+        }
         if (view && kind === 'enemy') { inspectObj = makeEnemyShip(); scene.add(inspectObj); }
+        if (view && kind === 'boss') { inspectObj = makeBossModel(); scene.add(inspectObj); }
         if (shipObj) shipObj.visible = !inspectObj;
         if (!view) { sky.visible = true; planet.visible = true; dust.lines.visible = true; scene.background = null; inspectLight.visible = false; }
         els.title.hidden = !!view || screen !== 'title';

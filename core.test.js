@@ -339,44 +339,96 @@ test('主砲: 射線に乗ったままだと当たる。固定されてから横
   assert.strictEqual(hitDodge, 0, '動いていればよけられる');
 });
 
+test('三角の船体: 箱で近似せず、三角の外の弾は素通りし、中の弾は当たる', () => {
+  // 艦首 (-320) から艦尾へ広がる三角。艦首寄りの x = -200 では、半幅は約 29m しかない
+  const hull = C.solidPlanes(C.BOSS_SOLIDS.find((sd) => sd.name === 'hullTop'), C.vec(0, 0, 0));
+  const down = (x, z) => C.segmentSolid(C.vec(x, 100, z), C.vec(x, -100, z), hull.planes);
+  assert.ok(down(-200, 0) >= 0, '真ん中は当たる');
+  assert.ok(down(-200, 25) >= 0, 'ふちの内側は当たる');
+  assert.strictEqual(down(-200, 40), -1, 'ふちの外は素通り (箱で近似していたら当たってしまう所)');
+  assert.ok(down(-200, 40) === -1 && hull.max.z > 40, '外接する箱の中ではある');
+  assert.strictEqual(down(-330, 0), -1, '艦首の先より前は素通り');
+  // 横から撃っても同じ
+  const side = (x, y) => C.segmentSolid(C.vec(x, y, 500), C.vec(x, y, -500), hull.planes);
+  assert.ok(side(0, 7) >= 0 && side(0, 20) === -1 && side(0, -5) === -1, '高さの範囲 (0〜14m) の中だけ当たる');
+});
+
 test('船体にぶつかっても、中に入り込まない', () => {
   const g = bossGame();
-  const hull = C.bossBoxes(g.boss)[0];
-  g.player.pos = C.vec((hull.min.x + hull.max.x) / 2, hull.max.y + 30, (hull.min.z + hull.max.z) / 2);
+  // 艦首寄りの船体の真上から突っ込む
+  g.player.pos = C.add(g.boss.pos, C.vec(-150, 60, 0));
   g.player.pitch = -60 * DEG;
   let inside = 0, scrapes = 0;
   run(g, 3, (gg) => {
-    for (const b of C.bossBoxes(gg.boss)) {
-      const p = gg.player.pos;
-      if (p.x > b.min.x + 0.5 && p.x < b.max.x - 0.5 && p.y > b.min.y + 0.5 && p.y < b.max.y - 0.5 &&
-          p.z > b.min.z + 0.5 && p.z < b.max.z - 0.5) inside++;
+    for (const sd of C.bossSolids(gg.boss)) {
+      // 0.5m より深く入っていたら「中」
+      const deep = sd.planes.every((pl) => C.dot(pl.n, gg.player.pos) - pl.d < -0.5);
+      if (deep) inside++;
     }
     for (const e of gg.events) if (e.type === 'scrape') scrapes++;
     gg.events.length = 0;
     return { stickY: -1, throttle: 1 };
   });
-  assert.strictEqual(inside, 0, '箱の中に入らない');
+  assert.strictEqual(inside, 0, '立体の中に入らない');
   assert.ok(scrapes > 0, 'こすった知らせが出る');
 });
 
-test('見た目と当たり判定は同じ箱の表から作る (装甲だけが外れる)', () => {
+test('船体にぶつかったら跳ね返る: 手を離していれば、こすり続けない', () => {
+  // 上部構造の壁 (二段目の前の面) へ、まっすぐ水平に突っ込む
   const g = bossGame();
-  assert.strictEqual(C.bossBoxes(g.boss).length, C.BOSS_BOXES.length);
+  g.player.pos = C.add(g.boss.pos, C.vec(-60, 38, 0));
+  g.player.yaw = -90 * DEG; g.player.pitch = 0;          // +X (艦尾の方) を向く
+  let scrapes = 0;
+  run(g, 4, (gg) => {
+    for (const e of gg.events) if (e.type === 'scrape') scrapes++;
+    gg.events.length = 0;
+    return { throttle: 0.5 };
+  });
+  assert.ok(scrapes >= 1, 'ぶつかってはいる');
+  assert.ok(scrapes <= 1, `こすったのは ${scrapes} 回`);
+});
+
+test('見た目と当たり判定は同じ立体の表から作る (装甲だけが外れる)', () => {
+  const g = bossGame();
+  assert.strictEqual(C.bossSolids(g.boss).length, C.BOSS_SOLIDS.length);
   g.boss.armor = false;
-  assert.strictEqual(C.bossBoxes(g.boss).length, C.BOSS_BOXES.length - 1);
-  // 部位は船体の箱の外側に顔を出している (撃てる)
+  assert.strictEqual(C.bossSolids(g.boss).length, C.BOSS_SOLIDS.length - 1);
+  // 部位は船体の外側に顔を出している (その面の向きから撃てる)
+  const zero = C.vec(0, 0, 0);
   for (const p of C.BOSS_PARTS) {
-    const top = C.add(p.at, C.scale(p.face, 1000));
+    const from = C.add(p.at, C.scale(p.face, 1000));
     let first = 1;
-    for (const b of C.BOSS_BOXES) {
-      if (b.armor && p.kind === 'core') continue;
-      const min = C.sub(b.c, C.scale(b.s, 0.5)), max = C.add(b.c, C.scale(b.s, 0.5));
-      const t = C.segmentBox(top, p.at, min, max);
+    for (const sd of C.BOSS_SOLIDS) {
+      if (sd.armor && p.kind === 'core') continue;
+      const t = C.segmentSolid(from, p.at, C.solidPlanes(sd, zero).planes);
       if (t >= 0) first = Math.min(first, t);
     }
-    const tPart = C.segmentSphere(top, p.at, p.at, p.kind === 'turret' ? 12 : p.kind === 'engine' ? 17 : 15);
+    const tPart = C.segmentSphere(from, p.at, p.at, p.kind === 'turret' ? 12 : p.kind === 'engine' ? 17 : 15);
     assert.ok(tPart < first, `${p.kind} (${p.at.x},${p.at.y},${p.at.z}) は外から撃てる`);
   }
+  // 装甲があるうちは、コアは上から撃っても装甲に当たる
+  const core = C.BOSS_PARTS.find((p) => p.kind === 'core');
+  const armor = C.solidPlanes(C.BOSS_SOLIDS.find((sd) => sd.armor), zero);
+  const from = C.add(core.at, C.vec(0, 1000, 0));
+  assert.ok(C.segmentSolid(from, core.at, armor.planes) < C.segmentSphere(from, core.at, core.at, 15), 'コアは装甲の中');
+});
+
+test('護衛機は船体の外から出て、船体にめり込まない', () => {
+  const g = C.createGame({ seed: 1, start: 'boss' });
+  let worst = 0, launched = 0;
+  run(g, 40, (gg) => {
+    for (const e of gg.events) if (e.type === 'escorts') launched++;
+    gg.events.length = 0;
+    if (gg.boss && gg.boss.phase !== 'arrive') {
+      for (const f of gg.fighters) for (const sd of C.bossSolids(gg.boss)) {
+        const push = C.sphereSolidPush(f.pos, T.fighterRadius, sd.planes);
+        if (push) worst = Math.max(worst, push.depth);
+      }
+    }
+    return {};
+  });
+  assert.ok(launched >= 1, '護衛機が出る');
+  assert.ok(worst < 0.05, `いちばん深いめり込み ${worst.toFixed(3)}m`);
 });
 
 // ------------------------------------------------------------ 通しで遊ぶ
