@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.8';
+  const VERSION = 'v0.6.9';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -191,6 +191,7 @@
   function setSkyDim(v) {
     skyDim = v;
     if (sky.userData.mat && sky.userData.mat.map) sky.userData.mat.color.setScalar(v);
+    if (sky.userData.starMat) sky.userData.starMat.uniforms.dim.value = v;
   }
 
   const sky = new THREE.Group();
@@ -233,6 +234,50 @@
     }));
     stars.renderOrder = -9;
     sky.add(stars);
+
+    // 絵から抜き出した星 (sky-stars.py → stars.js)。絵は画面で 2.6〜3.4 倍に引き伸ばされて星がぼやけた玉になるので、
+    // 星だけは絵から消して、同じ向きに画面の解像度の点として描き直す。明るい星は小さな光のにじみも付ける
+    if (window.SKY_STARS) {
+      const raw = atob(window.SKY_STARS), u8 = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+      const PW = u8[0] | (u8[1] << 8), PH = u8[2] | (u8[3] << 8);
+      const sn = (u8.length - 4) / 8;
+      const sp = new Float32Array(sn * 3), sc = new Float32Array(sn * 3), ss = new Float32Array(sn);
+      for (let i = 0; i < sn; i++) {
+        const o = 4 + i * 8;
+        const px = u8[o] | (u8[o + 1] << 8), py = u8[o + 2] | (u8[o + 3] << 8), pk = u8[o + 4];
+        // 球の貼り方 (SphereGeometry・左右反転して貼っている) に合わせて、絵の点 → 向き
+        const phi = (1 - (px + 0.5) / PW) * Math.PI * 2, th = (py + 0.5) / PH * Math.PI;
+        const R = 19000;
+        sp[i * 3] = -Math.cos(phi) * Math.sin(th) * R; sp[i * 3 + 1] = Math.cos(th) * R; sp[i * 3 + 2] = Math.sin(phi) * Math.sin(th) * R;
+        // 色は星の画素の色、明るさは まわりとの差
+        const k = Math.min(1, pk / 70 + 0.3), mx = Math.max(1, u8[o + 5], u8[o + 6], u8[o + 7]);
+        sc[i * 3] = u8[o + 5] / mx * k; sc[i * 3 + 1] = u8[o + 6] / mx * k; sc[i * 3 + 2] = u8[o + 7] / mx * k;
+        ss[i] = 1.1 + Math.min(1, pk / 140) * 2.4 + (pk > 90 ? 4 : 0);   // 画面の点の大きさ (CSS px)。明るい星はにじみのぶん大きく
+      }
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+      g2.setAttribute('color', new THREE.BufferAttribute(sc, 3));
+      g2.setAttribute('size', new THREE.BufferAttribute(ss, 1));
+      const starMat = new THREE.ShaderMaterial({
+        uniforms: { ratio: { value: 1 }, dim: { value: 1 } },
+        vertexShader: 'attribute float size; attribute vec3 color; uniform float ratio; varying vec3 vC; varying float vS;' +
+          'void main(){ vC = color; vS = size; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = size * ratio; }',
+        // 芯はくっきり (1.6px)、大きい点はそのまわりに薄いにじみ
+        fragmentShader: 'uniform float dim; varying vec3 vC; varying float vS;' +
+          'void main(){ float d = length(gl_PointCoord - 0.5) * vS; float core = clamp(1.0 - (d - min(vS, 3.2) * 0.32) * 1.6, 0.0, 1.0);' +
+          'float halo = vS > 5.0 ? 0.35 * exp(-d * d / (vS * 0.9)) : 0.0; float a = max(core, halo); if (a < 0.01) discard;' +
+          'gl_FragColor = vec4(vC * a * dim, 1.0); }',
+        blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false
+      });
+      const realStars = new THREE.Points(g2, starMat);
+      realStars.renderOrder = -9;
+      realStars.frustumCulled = false;
+      sky.add(realStars);
+      sky.userData.starMat = starMat;
+      starMat.uniforms.ratio.value = pixelRatio;
+      starMat.uniforms.dim.value = skyDim;
+    }
 
     // 太陽
     const sunS = glowSprite(0xfff0d0, 2600, 1);
@@ -2505,6 +2550,7 @@
         if (avg > 0.024 && pixelRatio > 1.25 && perfChecked < 3) {
           pixelRatio = Math.max(1.25, pixelRatio - 0.35);
           renderer.setPixelRatio(pixelRatio);
+          if (sky.userData.starMat) sky.userData.starMat.uniforms.ratio.value = pixelRatio;
           resize();
           perfChecked++;
         }
@@ -2582,6 +2628,7 @@
         }).length;
       },
       titlePlanet: TITLE_PLANET, titleShip: TITLE_SHIP,
+      skyStars: function () { return sky.children.filter(function (o) { return o.isPoints && o.material.uniforms && o.material.uniforms.ratio; }).map(function (o) { return o.geometry.attributes.position.count; })[0] || 0; },
       // タイトルの惑星: 出ているか・ゲームの地球は隠れているか・絵の切れた下端が画面に入っていないか (下端の 41 点のうち画面の中の数)
       titlePlanetInfo: function () {
         let inside = 0;
