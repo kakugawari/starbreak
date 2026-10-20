@@ -294,13 +294,15 @@
   const BOSS_CANNON = vec(-352, 0, 0);
   // 自機 (高さ 0) より 300m 下に来る。真横からだと平たい船体が細い線にしか見えないので、
   // 甲板と段々の上部構造を見下ろせる高さにする
-  // ボスの登場: カットインの間は隠れていて、終わると自機の近く (前へ 700m・下へ 150m) にワープして現れる。
-  // 遠くから来ると小さくてショボく見えたため。下に置くのは、真横からだと平たい船体が線にしか見えないため
-  const BOSS_WARP_DELAY = 2.3;  // カットインのあいだ (隠れている)
-  const BOSS_WARP_IN = 0.8;     // 遠くから一気に飛び込んで止まる
-  const BOSS_WARP_FROM = 1800;  // 飛び込みはじめの距離 (艦首の向き = -x へ進んでくる)
+  // ボスの登場: カットインの間に、自機の近く (前へ 700m・下へ 150m) の右側 (+x) に赤いワープの光が開く。
+  // 終わると、その光の中から艦首 (-x) を先にゆっくり出てきて止まる。遠くから来ると小さくてショボく見えたため。
+  // 下に置くのは、真横からだと平たい船体が線にしか見えないため
+  const BOSS_WARP_DELAY = 2.3;  // カットインのあいだ (光が開いていく。艦はまだ光の向こう)
+  const BOSS_EMERGE = 3.0;      // 光の中から出きるまで (はじめ速く、だんだんゆっくり止まる)
+  const BOSS_BOW = -360, BOSS_STERN = 320;  // 艦首 (主砲の先) と艦尾 (噴射の光) の x
+  const BOSS_PORTAL = BOSS_STERN + 40;      // ワープの光は、止まる所から +x にこれだけ離れた所
   const BOSS_AHEAD = 700, BOSS_DROP = 150;  // 見下ろす角度 12°: 画面の下寄りの真ん中に出る (下 300m だと画面の下のふちに切れた)
-  const BOSS_ARRIVE = 4.2;     // ここで戦闘が始まる (前は遠くから 13 秒かけて来ていた)
+  const BOSS_ARRIVE = 5.8;     // ここで戦闘が始まる (前は遠くから 13 秒かけて来ていた)
 
   /**
    * 立体を押し出す向き。ふつうは上下 (y)。axis: 'z' の立体は、横から見た多角形 (x, y) を
@@ -471,7 +473,8 @@
 
   function makeBoss(g) {
     const at = bossSpot(g);
-    const from = add(at, vec(BOSS_WARP_FROM, 0, 0));
+    const portal = add(at, vec(BOSS_PORTAL, 0, 0));
+    const from = add(portal, vec(-BOSS_BOW, 0, 0)); // 艦首がちょうど光の面にある所
     const parts = BOSS_PARTS.map(function (d) {
       const hp = d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp;
       return {
@@ -484,7 +487,7 @@
       };
     });
     return {
-      pos: copy(from), at: at, from: from, vel: vec(), arriveT: 0, shown: false,
+      pos: copy(from), at: at, from: from, portal: portal, vel: vec(), arriveT: 0, shown: false, emerge: 0,
       phase: 'arrive',        // arrive / battle / cannon / weak / core / dying / dead
       parts: parts,
       armor: true,
@@ -988,15 +991,15 @@
     if (b.phase === 'arrive') {
       b.arriveT += dt;
       const k = clamp(b.arriveT / BOSS_ARRIVE, 0, 1);
-      // 飛び込み: はじめ速く、最後にぴたりと止まる
-      const w = clamp((b.arriveT - BOSS_WARP_DELAY) / BOSS_WARP_IN, 0, 1);
-      const e = 1 - Math.pow(1 - w, 4);
-      if (!b.shown && b.arriveT >= BOSS_WARP_DELAY) { b.shown = true; emit(g, 'bossWarp', { pos: copy(b.at) }); }
+      // 光の中から出てくる: はじめ速く、だんだんゆっくりになって止まる
+      const w = clamp((b.arriveT - BOSS_WARP_DELAY) / BOSS_EMERGE, 0, 1);
+      const e = 1 - Math.pow(1 - w, 2);
+      if (!b.shown && b.arriveT >= BOSS_WARP_DELAY) { b.shown = true; emit(g, 'bossWarp', { pos: copy(b.portal) }); }
       if (w >= 1 && !b.landed) { b.landed = true; emit(g, 'bossLand', { pos: copy(b.at) }); }
       const prev = b.pos;
       b.pos = vec(lerp(b.from.x, b.at.x, e), b.at.y, b.at.z);
       b.vel = dt > 0 && b.shown ? scale(sub(b.pos, prev), 1 / dt) : vec();
-      b.warp = w;
+      b.emerge = w;
       if (k >= 1) {
         b.phase = 'battle';
         b.vel = vec();
@@ -1365,6 +1368,6 @@
     solidPlanes: solidPlanes, solidRange: solidRange, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
     createGame: createGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
-    autopilot: autopilot, selectTarget: selectTarget, BOSS_TIMING: { delay: BOSS_WARP_DELAY, warpIn: BOSS_WARP_IN, arrive: BOSS_ARRIVE, ahead: BOSS_AHEAD, drop: BOSS_DROP }, makeFighter: makeFighter, makeBoss: makeBoss
+    autopilot: autopilot, selectTarget: selectTarget, BOSS_TIMING: { delay: BOSS_WARP_DELAY, emerge: BOSS_EMERGE, arrive: BOSS_ARRIVE, ahead: BOSS_AHEAD, drop: BOSS_DROP, bow: BOSS_BOW, stern: BOSS_STERN }, makeFighter: makeFighter, makeBoss: makeBoss
   };
 });

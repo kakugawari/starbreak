@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.2';
+  const VERSION = 'v0.6.3';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -48,6 +48,7 @@
 
   const renderer = new THREE.WebGLRenderer({ canvas: els.gl, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.localClippingEnabled = true; // ワープの光から出てくるボスを、光の面で切って描く
   renderer.setClearColor(0x02040a, 1);
   let pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(pixelRatio);
@@ -1044,13 +1045,24 @@
     c.fillStyle = g;
     c.fillRect(0, 0, w, w);
   });
-  // ボスが現れる所に集まる青い光 (カットインの間)
-  const warpGlow = glowSprite(0x8fcaff, 1, 0);
-  const warpCore = glowSprite(0xffffff, 1, 0);
+  // ボスが出てくるワープの光 (敵の色の赤)。カットインの間に開き、艦が出きると閉じる
+  const warpGlow = glowSprite(0xff2a30, 1, 0);
+  const warpCore = glowSprite(0xffd8d0, 1, 0);
+  const warpRing = new THREE.Sprite(new THREE.SpriteMaterial({ map: null, color: 0xff3a40, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 }));
   warpGlow.add(warpCore);
   warpGlow.visible = false;
   scene.add(warpGlow);
+  // 光の面より向こう (+x) にある艦の部分は描かない (光の中から出てくるように見せる)
+  const bossClip = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e9);
+  function clipBoss(obj) {
+    obj.traverse(function (o) {
+      if (!o.material) return;
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) { m.clippingPlanes = [bossClip]; });
+    });
+  }
 
+  warpRing.material.map = ringTex;
+  warpGlow.add(warpRing);
   const rings = [];
   for (let i = 0; i < 8; i++) {
     const m = new THREE.SpriteMaterial({ map: ringTex, color: 0xffd8a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
@@ -1059,9 +1071,10 @@
     scene.add(sp);
     rings.push({ s: sp, t: 0, max: 1, size: 1 });
   }
-  function shockRing(pos, size, dur) {
+  function shockRing(pos, size, dur, color) {
     let r = rings[0];
     for (let i = 0; i < rings.length; i++) if (rings[i].t <= 0) { r = rings[i]; break; }
+    r.s.material.color.set(color || 0xffd8a0);
     r.s.position.set(pos.x, pos.y, pos.z);
     r.t = dur; r.max = dur; r.size = size;
     r.s.scale.setScalar(size * 0.1);
@@ -1564,10 +1577,10 @@
           break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
         case 'bossWarp':
-          // ワープ明け: 青白い閃光・大きな衝撃波・揺れ・轟音
-          flash(e.pos, 1100, 0.7, 0xcfe6ff);
-          shockRing(e.pos, 1600, 1.0);
-          shake(2.2);
+          // 光の中から出はじめる瞬間: 赤い閃光・大きな衝撃波・揺れ・轟音
+          flash(e.pos, 900, 0.7, 0xff5040);
+          shockRing(e.pos, 1400, 1.0, 0xff6050);
+          shake(2.0);
           audio.warp();
           break;
         case 'bossLand': shake(1.0); audio.explode(3); break;
@@ -1631,32 +1644,35 @@
     // 戦艦
     const b = game.boss;
     if (b && b.phase !== 'dead') {
-      if (!bossObj) { bossObj = makeBossModel(); scene.add(bossObj); }
+      if (!bossObj) { bossObj = makeBossModel(); clipBoss(bossObj); scene.add(bossObj); }
       const u = bossObj.userData;
-      // ワープの登場: カットインの間は隠れていて、現れる所に青い光が集まる。現れたら艦首の向きに
-      // 長く引き伸ばされた姿で飛び込み、止まると元の長さに戻る
-      bossObj.visible = b.phase !== 'arrive' || b.shown;
+      // ワープの登場: カットインの間に右側 (+x) に赤い光が開き、艦はその光の中から艦首を先にゆっくり出てくる。
+      // 光の面より向こうにある部分は描かない (bossClip)
+      const arriving = b.phase === 'arrive';
+      bossObj.visible = !arriving || b.shown;
       bossObj.position.set(b.pos.x, b.pos.y, b.pos.z);
-      const stretch = b.phase === 'arrive' && b.shown ? Math.pow(1 - (b.warp || 0), 2) : 0;
-      bossObj.scale.set(1 + 5 * stretch, 1, 1);
-      if (b.phase === 'arrive' && !b.shown) {
-        const k = Math.min(1, b.arriveT / C.BOSS_TIMING.delay);
-        warpGlow.visible = true;
-        warpGlow.position.set(b.at.x, b.at.y, b.at.z);
-        // 機体より大きく広がる青い光と、だんだん強くなる白い芯 (力が集まっていく)
-        const flick = 0.85 + 0.15 * Math.sin(b.arriveT * 40);
-        warpGlow.scale.setScalar(120 + 780 * k * k);
-        warpGlow.material.opacity = (0.35 + 0.65 * k) * flick;
-        warpCore.scale.setScalar(0.08 + 0.17 * k);
-        warpCore.material.opacity = k * k * flick;
-      } else warpGlow.visible = false;
-      if (stretch > 0.02) {
-        // 飛び込みの光の筋: 艦の後ろ (+x) に、引き伸ばした長さぶん光の粒を残す
-        for (let i = 0; i < 6; i++) {
-          const along = rnd(300, 300 + 1800 * stretch);
-          spawnParticle(b.pos.x + along, b.pos.y + rnd(-60, 60), b.pos.z + rnd(-110, 110), 0, 0, 0, rnd(0.2, 0.45), rnd(8, 16), 1, [0.75, 0.9, 1], [0.2, 0.4, 1]);
+      bossClip.constant = arriving ? b.portal.x : 1e9;
+      const TM = C.BOSS_TIMING;
+      if (arriving) {
+        const open = Math.min(1, b.arriveT / TM.delay);                                        // 開いていく
+        const close = Math.max(0, (b.arriveT - TM.delay - TM.emerge) / (TM.arrive - TM.delay - TM.emerge)); // 出きったら閉じる
+        const flick = 0.85 + 0.15 * Math.sin(b.arriveT * 37);
+        const size = (160 + 640 * open * open) * (1 - close);
+        warpGlow.visible = size > 1;
+        warpGlow.position.set(b.portal.x, b.portal.y, b.portal.z);
+        warpGlow.scale.setScalar(Math.max(1, size));
+        warpGlow.material.opacity = (0.4 + 0.6 * open) * flick;
+        warpCore.scale.setScalar(0.1 + 0.12 * open);
+        warpCore.material.opacity = open * open * flick;
+        warpRing.scale.setScalar(0.55 + 0.08 * Math.sin(b.arriveT * 6));
+        warpRing.material.opacity = 0.8 * open * flick;
+        if (b.shown && b.emerge < 1) {
+          // 艦が光の面をくぐる所に、赤い火花がこぼれる
+          for (let i = 0; i < 5; i++) {
+            spawnParticle(b.portal.x, b.portal.y + rnd(-70, 70), b.portal.z + rnd(-120, 120), rnd(-60, -10), rnd(-15, 15), rnd(-15, 15), rnd(0.3, 0.7), rnd(6, 12), 1, [1, 0.6, 0.5], [0.8, 0.08, 0.05], 1);
+          }
         }
-      }
+      } else warpGlow.visible = false;
       u.armor.visible = b.armor;
       b.parts.forEach(function (p, i) {
         const o = u.parts[i];
@@ -2456,6 +2472,7 @@
         }).length;
       },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
+      bossClipX: function () { return bossClip.constant; },
       jetLength: function () { return shipObj.userData.jets[0].scale.z; },
       // 膨らみながら消える大きな粒 (煙の玉に見える) の数
       growingParticles: function () {

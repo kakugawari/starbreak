@@ -563,36 +563,39 @@ test('成績: 勝てばランクが付き、負ければ付かない', () => {
   assert.strictEqual(C.result(lose).cleared, false);
 });
 
-test('ボスはカットインのあいだ隠れていて、自機の近くにワープして現れる', () => {
+test('ボスはカットインのあいだ光の向こうにいて、そのあと光の中から艦首を先にゆっくり出てくる', () => {
   const BT = C.BOSS_TIMING;
-  for (let seed = 1; seed <= 8; seed++) {
-    const g = C.createGame({ seed });
-    // 第 1・2 波を自動操縦で片づけ、ボスが来るまで進める
-    run(g, 80, (gg) => { gg.events.length = 0; return gg.boss ? {} : C.autopilot(gg, 0.7); }, 1 / 30);
-    assert.ok(g.boss, `seed ${seed}: ボスが来ている`);
-  }
   const g = C.createGame({ seed: 3 });
   for (let i = 0; i < 80 * 30 && !g.boss; i++) { C.step(g, C.autopilot(g, 0.7), 1 / 30); g.events.length = 0; }
   const b = g.boss;
-  // 来たばかり: まだ見えず、狙えない
+  assert.ok(b, 'ボスが来ている');
+  // 来たばかり: まだ見えず、狙えない。艦全体が光の向こう (+x) にある
   assert.ok(!b.shown && C.targets(g).every((t) => t.kind === 'fighter'), 'カットインの間は隠れていて狙えない');
-  let warp = null, land = null, scrape = 0, battleAt = null, t = b.arriveT;
+  assert.ok(b.pos.x + BT.bow >= b.portal.x - 0.5, '艦首が光の面より向こうにある');
+  assert.ok(b.portal.x > b.at.x + BT.stern, '光は止まる所の右 (+x)。止まったとき艦尾まで光の外に出ている');
+  let warp = null, land = null, scrape = 0, battleAt = null, t = b.arriveT, half = null, lastX = b.pos.x, back = 0;
   const pAtWarn = Object.assign({}, g.player.pos);
-  run(g, 6, (gg) => {
+  run(g, 8, (gg) => {
     for (const e of gg.events) {
-      if (e.type === 'bossWarp') warp = { t: t, pos: e.pos, pl: Object.assign({}, gg.player.pos) };
+      if (e.type === 'bossWarp') warp = { t: t, pos: e.pos };
       if (e.type === 'bossLand') land = t;
       if (e.type === 'scrape') scrape++;
       if (e.type === 'bossPhase' && e.phase === 'battle' && battleAt === null) battleAt = t;
     }
     gg.events.length = 0; t += 1 / 30;
+    const bb = gg.boss;
+    if (bb.pos.x > lastX + 1e-6) back++;
+    lastX = bb.pos.x;
+    if (half === null && bb.emerge >= 0.5) half = { bow: bb.pos.x + BT.bow, stern: bb.pos.x + BT.stern, portal: bb.portal.x };
     return {};
   }, 1 / 30);
-  assert.ok(warp && Math.abs(warp.t - BT.delay) < 0.1, `カットインが終わる頃 (${BT.delay} 秒) に現れる: ${warp && warp.t.toFixed(2)}`);
-  const d = C.dist(warp.pos, pAtWarn);
-  assert.ok(d > 600 && d < 850, `近くに現れる (知らせの時の自機から ${d.toFixed(0)}m。前は約 2600m 先から来ていた)`);
-  assert.ok(pAtWarn.y - warp.pos.y >= BT.drop - 1, '自機より下に現れる (見下ろす形)');
-  assert.ok(land !== null && land - warp.t <= BT.warpIn + 0.1, '飛び込んで止まる');
+  assert.ok(warp && Math.abs(warp.t - BT.delay) < 0.1, `カットインが終わる頃 (${BT.delay} 秒) に出はじめる: ${warp && warp.t.toFixed(2)}`);
+  const d = C.dist(b.at, pAtWarn);
+  assert.ok(d > 600 && d < 850, `近くに止まる (知らせの時の自機から ${d.toFixed(0)}m。前は約 2600m 先から来ていた)`);
+  assert.ok(pAtWarn.y - b.at.y >= BT.drop - 1, '自機より下 (見下ろす形)');
+  assert.ok(half && half.bow < half.portal && half.stern > half.portal, '出ている途中は、艦首は光のこちら側・艦尾はまだ光の向こう (いきなり全体が出ない)');
+  assert.strictEqual(back, 0, '光から出る向き (-x) にだけ進む');
+  assert.ok(land !== null && Math.abs(land - warp.t - BT.emerge) < 0.1, `${BT.emerge} 秒かけて出てきて止まる`);
   assert.ok(battleAt !== null && battleAt <= BT.arrive + 0.1, `戦闘が ${BT.arrive} 秒で始まる (前は 13 秒): ${battleAt && battleAt.toFixed(2)}`);
   assert.strictEqual(scrape, 0, '登場の間に自機とぶつからない');
 });

@@ -571,7 +571,12 @@ async function run() {
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const boss0 = await page.evaluate(() => { const g = window.__app.game(), b = g.boss, p = g.player.pos; return { vis: window.__app.bossVisible(), d: Math.hypot(b.at.x - p.x, b.at.y - p.y, b.at.z - p.z) }; });
     ok(hiddenAtStart && boss0.vis && boss0.d < 900, `戦艦はカットインの間は隠れていて、近く (${boss0.d.toFixed(0)}m) にワープして現れる`);
+    // 出てくる途中は、光の面 (右側) より向こうの部分を描かない
+    const clip = await page.evaluate(() => { const b = window.__app.game().boss; return { clip: window.__app.bossClipX(), portal: b.portal.x, emerging: b.phase === 'arrive' && b.emerge < 1 }; });
+    ok(clip.emerging && Math.abs(clip.clip - clip.portal) < 0.01, '出てくる途中は、ワープの光の面で艦を切って描く (光の中から出てくる)');
     await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    ok(await page.evaluate(() => window.__app.bossClipX() > 1e8), '出きったら、艦を切らずに全部描く');
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
     const kill = async (kind) => {
       await page.evaluate((k) => {
