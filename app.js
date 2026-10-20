@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.4';
+  const VERSION = 'v0.6.5';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -129,6 +129,7 @@
     c.putImageData(img, 0, 0);
   });
 
+  const JET_ROOT = 0.65; // plume.png の根もとの光の幅 (絵の幅に対する割合、明るさ 15% 以上)
   const JET_MAT = new THREE.MeshBasicMaterial({
     map: jetTex, color: 0x8fd4ff, transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide
@@ -143,11 +144,13 @@
   function setThrust(ship, thrust) {
     const fl = 0.92 + Math.random() * 0.16;
     ship.userData.flames.forEach(function (f, i) {
-      const s = (i % 2 ? 2.6 + 1.2 * thrust : 1.6 + 0.7 * thrust) * fl;
+      const s = (i % 2 ? 2.2 + 0.8 * thrust : 1.5 + 0.5 * thrust) * fl;
       f.scale.set(s, s, 1);
     });
-    // 長さは送ってもらった絵に合わせて機体 (11m) の 0.9 倍ほど (ふだん 10m・ブースト約 17m)。幅は絵の縦横比から
-    const len = 10 * (0.5 + 0.5 * Math.pow(thrust, 1.4)) * fl, wid = 3.4 + 0.5 * thrust;
+    // 長さは送ってもらった絵に合わせて機体 (11m) の 0.9 倍ほど (ふだん 10m・ブースト約 17m)。
+    // 幅は、絵の根もとの光 (絵の幅の 65%) がエンジンの筒 (直径 1.6m) に収まるように決める
+    const len = 10 * (0.5 + 0.5 * Math.pow(thrust, 1.4)) * fl, wid = 2.3 + 0.1 * thrust;
+    ship.userData.jetRoot = wid * JET_ROOT;
     ship.userData.jets.forEach(function (j) { j.scale.set(wid, wid, len); });
     ship.userData.jetBase = len / fl; // ゆらぎを除いた長さ (見張り用)
   }
@@ -2480,6 +2483,7 @@
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       bossClipX: function () { return bossClip.constant; },
       jetLength: function () { return shipObj.userData.jetBase; },
+      jetRoot: function () { return shipObj.userData.jetRoot; },
       // 膨らみながら消える大きな粒 (煙の玉に見える) の数
       growingParticles: function () {
         return particles.list.filter(function (q) { return q.on && q.s1 > q.s0 * 1.2 && q.s1 >= 6; }).length;

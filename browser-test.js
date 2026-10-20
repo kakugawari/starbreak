@@ -270,10 +270,12 @@ async function run() {
     const jetNormal = await page.evaluate(() => window.__app.jetLength());
     await page.keyboard.down('Shift');
     await page.waitForTimeout(700);
-    const boostFx = await page.evaluate(() => ({ big: window.__app.bigParticlesNear(40, 2), jet: window.__app.jetLength(), boosting: window.__app.game().player.boosting }));
+    const boostFx = await page.evaluate(() => ({ big: window.__app.bigParticlesNear(40, 2), jet: window.__app.jetLength(), root: window.__app.jetRoot(), boosting: window.__app.game().player.boosting }));
     await page.keyboard.up('Shift');
     ok(boostFx.boosting && boostFx.big === 0, `ブーストで煙の玉を出さない (自機の 40m 以内の大きな粒 ${boostFx.big})`);
     ok(boostFx.jet > jetNormal * 1.6, `ブーストで噴射の光が延びる (${jetNormal.toFixed(1)} → ${boostFx.jet.toFixed(1)})`);
+    const rootN = await page.evaluate(() => window.__app.jetRoot());
+    ok(rootN <= 1.65 && boostFx.root <= 1.65, `噴射の根もとがエンジンの筒 (直径 1.6m) からはみ出さない (ふだん ${rootN.toFixed(2)}m・ブースト ${boostFx.root.toFixed(2)}m)`);
     ok(jetNormal >= 8.8, `ふだんの噴射は、送ってもらった絵と同じく機体 (11m) の 0.8 倍以上 (${jetNormal.toFixed(1)}m)`);
 
     // 撃墜の瞬間: タメ (時が止まる)・衝撃波の輪・遠くても画面で小さくならない・膨らむ煙の玉を出さない
