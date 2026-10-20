@@ -204,7 +204,8 @@ async function run() {
         buttons: [...document.querySelectorAll('#titleMenu button')].filter(vis).map((b) => b.id || b.textContent.trim()),
         toggles: [...document.querySelectorAll('#titleMenu input')].filter(vis).length,
         howto: vis(document.querySelector('#titleMenu .howto')),
-        top: panel.top,
+        top: panel.top, mid: Math.round(panel.top + panel.height / 2), bottom: panel.bottom, H: innerHeight,
+        subTop: Math.min(...['btnSettings', 'btnHowto'].map((id) => document.getElementById(id).getBoundingClientRect().top)),
         sub: ['btnSettings', 'btnHowto'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top); }).join(' '),
         invert: window.__app.settings.invert
       };
@@ -221,7 +222,9 @@ async function run() {
     await tapEl('#btnHowto');
     const mn2 = await menuState();
     ok(mn2.howto && mn2.toggles === 0, '遊び方を押すと、板の中が説明に替わる');
-    ok(mn0.top === mn1.top && mn1.top === mn2.top && mn0.sub === mn1.sub && mn1.sub === mn2.sub, `中身を替えても、板の上端と下の小さなボタンが動かない (上端 ${mn0.top}/${mn1.top}/${mn2.top})`);
+    ok(Math.abs(mn0.mid - mn0.H / 2) <= 12, `板は画面の上下の真ん中にある (板の真ん中 ${mn0.mid} / 画面 ${mn0.H / 2})`);
+    ok(mn0.mid === mn1.mid && mn1.mid === mn2.mid && mn0.sub === mn1.sub && mn1.sub === mn2.sub, `中身を替えても、板の真ん中と下の小さなボタンが動かない (真ん中 ${mn0.mid}/${mn1.mid}/${mn2.mid})`);
+    ok([mn0, mn1, mn2].every((m) => m.bottom <= m.subTop - 4), `いちばん背の高い中身でも、板が下の小さなボタンに重ならない (板の下 ${Math.round(Math.max(mn0.bottom, mn1.bottom, mn2.bottom))} / ボタンの上 ${Math.round(mn0.subTop)})`);
     await tapEl('#menuHowto [data-back]');
     const mn3 = await menuState();
     ok(mn3.buttons.join() === 'btnStart,btnBossOnly' && mn3.invert === mn0.invert, '戻るで始めるボタンの板に戻る');

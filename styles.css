@@ -241,9 +241,11 @@ body {
   border: 1px solid rgba(170, 205, 235, .55);
   border-radius: 6px;
 }
-/* 右の列は高さを決め打ち。板の中身を切り替えても、板の上端と下の小さなボタンが動かない */
-.title-right { display: flex; flex-direction: column; align-items: stretch; gap: 10px; height: 330px; }
-.title-right .menu-sub { margin-top: auto; }
+/* 右の列は画面の高さいっぱい。板は上下の真ん中、小さなボタンは下に留める。
+   板の中身を切り替えても、板の真ん中と小さなボタンの位置は動かない */
+.title-right { position: relative; align-self: stretch; width: 290px; }
+.title-right .title-menu { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); }
+.title-right .menu-sub { position: absolute; left: 0; right: 0; bottom: 12px; }
 .menu-view { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
 .sheet-head {
   margin: 0 0 2px;

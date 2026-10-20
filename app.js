@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.9';
+  const VERSION = 'v0.5.10';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
