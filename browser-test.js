@@ -154,6 +154,21 @@ async function run() {
     const tp = await page.evaluate(() => window.__app.titlePlanetInfo());
     ok(tp.shown && !tp.earth, `タイトルは大きな惑星だけを出し、ゲームの地球は出さない (惑星 ${tp.shown}・地球 ${tp.earth})`);
     ok(tp.edgeInside === 0, `惑星の絵の切れた下端は画面の外 (画面に入った点 ${tp.edgeInside}/41)`);
+    // 惑星はゆっくり動く (丸の真ん中を軸に回り、ふわりと漂う)。どの時刻でも切れた下端は画面に入らない
+    const motion = await page.evaluate(async () => {
+      const a = window.__app, P = a.titlePlanet, frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const at = async (t) => { a.setTitleTime(t); await frame(); return a.titlePlanetInfo(); };
+      let worst = 0;
+      for (let t = 0; t <= 140; t += 3.5) worst = Math.max(worst, (await at(t)).edgeInside);
+      const s0 = await at(0), s1 = await at(P.swingT / 4);
+      // 漂いを止めると、回しても丸の真ん中は動かない (軸が丸の真ん中にある)
+      const dx = P.driftX, dy = P.driftY; P.driftX = 0; P.driftY = 0;
+      const p0 = await at(0), p1 = await at(P.swingT / 4);
+      P.driftX = dx; P.driftY = dy;
+      return { worst, move: Math.hypot(s1.topX - s0.topX, s1.topY - s0.topY), pivot: Math.hypot(p1.cx - p0.cx, p1.cy - p0.cy) };
+    });
+    ok(motion.worst === 0, `惑星を動かしても、切れた下端は画面に入らない (40 時刻でいちばん多く入った点 ${motion.worst}/41)`);
+    ok(motion.move > 15 && motion.pivot < 1.5, `惑星は丸の真ん中を軸にゆっくり回る (絵の上のふちが ${motion.move.toFixed(0)}px 動き、丸の真ん中は ${motion.pivot.toFixed(1)}px)`);
     // ロゴ・左下のボタン・下の小さなボタンが重ならず、ロゴは機体 (画面の右下寄り) にかからない
     const titleRects = await page.evaluate(() => {
       const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };

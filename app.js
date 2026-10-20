@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.11';
+  const VERSION = 'v0.6.12';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -276,7 +276,11 @@
   // 画面に貼り付けた板として、機体より奥・空より手前に描く。置き場所は画面の高さを 1 とした割合で決める
   // (絵の下端は切れているので、画面の下より下に置く)
   const TITLE_SHIP = { a: -0.7, dist: 30, y0: 6, x: 0.74, y: 0.56 };
-  const TITLE_PLANET = { aspect: 1239 / 841, h: 1.5, cx: 0.21, cy: 0.5, rot: -0.3, dist: 600, shade: 0.62 };
+  const TITLE_PLANET = { aspect: 1239 / 841, h: 1.5, cx: 0.21, cy: 0.5, rot: -0.3, dist: 600, shade: 0.62,
+    // 惑星の丸の真ん中 (絵の中の位置。0〜1、上が 0)。ゆっくり回すときはここを軸にする
+    pu: 0.503, pv: 0.747,
+    // ゆっくり動かす: 丸の真ん中を軸に左右へ回る (振れ幅・周期) と、ふわりと漂う (横・縦の振れ幅と周期)
+    swing: 0.07, swingT: 70, driftX: 0.012, driftXT: 53, driftY: 0.015, driftYT: 41 };
   const titlePlanet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
     transparent: true, depthWrite: false, fog: false, toneMapped: false
   }));
@@ -294,10 +298,20 @@
     const fwd = camera.getWorldDirection(new THREE.Vector3());
     const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
     const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
-    // 画面の点 (左上 0,0 / 高さ 1) → 奥行き dist の位置
-    const sx = (P.cx * H - W / 2) / H, sy = (H / 2 - P.cy * H) / H;
+    // ゆっくり動かす。回すのは惑星の丸の真ん中を軸にする (絵の真ん中を軸にすると、丸ごと横へ流れて見える)
+    const t = titleT, TAU = Math.PI * 2;
+    const ang = P.rot + P.swing * Math.sin(t / P.swingT * TAU);
+    const w = P.h * P.aspect, h = P.h;
+    const ox = (P.pu - 0.5) * w, oy = (0.5 - P.pv) * h;             // 絵の真ん中 → 丸の真ん中 (板の上で、上が +)
+    const c0x = Math.cos(P.rot), s0x = Math.sin(P.rot);
+    // 止まっているとき (P.rot) の丸の真ん中を画面で決め、そこを漂わせ、そのまわりに板を回す
+    const icx = (P.cx * H - W / 2) / H, icy = (H / 2 - P.cy * H) / H;
+    const pcx = icx + c0x * ox - s0x * oy + P.driftX * Math.sin(t / P.driftXT * TAU);
+    const pcy = icy + s0x * ox + c0x * oy + P.driftY * Math.sin(t / P.driftYT * TAU);
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const sx = pcx - (ca * ox - sa * oy), sy = pcy - (sa * ox + ca * oy);
     titlePlanet.position.copy(camera.position).addScaledVector(fwd, P.dist).addScaledVector(right, sx * unit).addScaledVector(up, sy * unit);
-    titlePlanet.quaternion.copy(camera.quaternion).multiply(_tpQ.setFromAxisAngle(_tpZ, P.rot));
+    titlePlanet.quaternion.copy(camera.quaternion).multiply(_tpQ.setFromAxisAngle(_tpZ, ang));
     titlePlanet.scale.set(P.h * unit * P.aspect, P.h * unit, 1);
     titlePlanet.material.color.setScalar(P.shade);
     titlePlanet.visible = titlePlanet.userData.loaded;
@@ -2582,6 +2596,7 @@
         }).length;
       },
       titlePlanet: TITLE_PLANET, titleShip: TITLE_SHIP,
+      setTitleTime: function (v) { titleT = v; },
       // タイトルの惑星: 出ているか・ゲームの地球は隠れているか・絵の切れた下端が画面に入っていないか (下端の 41 点のうち画面の中の数)
       titlePlanetInfo: function () {
         let inside = 0;
@@ -2590,7 +2605,9 @@
           const s = toScreen(p);
           if (!s.behind && s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H) inside++;
         }
-        return { shown: titlePlanet.visible, earth: planet.visible, edgeInside: inside };
+        const c = toScreen(new THREE.Vector3(TITLE_PLANET.pu - 0.5, 0.5 - TITLE_PLANET.pv, 0).applyMatrix4(titlePlanet.matrixWorld));
+        const top = toScreen(new THREE.Vector3(0, 0.5, 0).applyMatrix4(titlePlanet.matrixWorld));
+        return { shown: titlePlanet.visible, earth: planet.visible, edgeInside: inside, cx: c.x, cy: c.y, topX: top.x, topY: top.y };
       },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
