@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.7';
+  const VERSION = 'v0.6.8';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -271,6 +271,37 @@
     planet.userData.offset = new THREE.Vector3(-3400, -5200, -9000);
     planet.userData.ball = m;
   })();
+
+  // タイトルの大きな惑星 (送ってもらった絵。マゼンタ地から切り抜いた title_planet.webp)。
+  // 画面に貼り付けた板として、機体より奥・空より手前に描く。置き場所は画面の高さを 1 とした割合で決める
+  // (絵の下端は切れているので、画面の下より下に置く)
+  const TITLE_SHIP = { a: -0.7, dist: 30, y0: 6, x: 0.74, y: 0.56 };
+  const TITLE_PLANET = { aspect: 1239 / 841, h: 1.5, cx: 0.21, cy: 0.5, rot: -0.3, dist: 600, shade: 0.62 };
+  const titlePlanet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+    transparent: true, depthWrite: false, fog: false, toneMapped: false
+  }));
+  titlePlanet.renderOrder = -7;
+  titlePlanet.visible = false;
+  titlePlanet.userData.loaded = false;
+  scene.add(titlePlanet);
+  loadTex('title_planet.webp', function (t) { titlePlanet.material.map = t; titlePlanet.material.needsUpdate = true; titlePlanet.userData.loaded = true; });
+  const _tpQ = new THREE.Quaternion(), _tpZ = new THREE.Vector3(0, 0, 1);
+  function placeTitlePlanet() {
+    camera.updateMatrixWorld();
+    const P = TITLE_PLANET;
+    const halfH = Math.tan(camera.fov * Math.PI / 360) * P.dist;     // 画面の高さの半分 (その奥行きでの長さ)
+    const unit = halfH * 2;                                            // 画面の高さ 1 ぶん
+    const fwd = camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    // 画面の点 (左上 0,0 / 高さ 1) → 奥行き dist の位置
+    const sx = (P.cx * H - W / 2) / H, sy = (H / 2 - P.cy * H) / H;
+    titlePlanet.position.copy(camera.position).addScaledVector(fwd, P.dist).addScaledVector(right, sx * unit).addScaledVector(up, sy * unit);
+    titlePlanet.quaternion.copy(camera.quaternion).multiply(_tpQ.setFromAxisAngle(_tpZ, P.rot));
+    titlePlanet.scale.set(P.h * unit * P.aspect, P.h * unit, 1);
+    titlePlanet.material.color.setScalar(P.shade);
+    titlePlanet.visible = titlePlanet.userData.loaded;
+  }
 
   // 宇宙のちり: 自分の動きが分かるよう、通り過ぎる細い筋を描く
   const DUST_N = 420, DUST_BOX = 260;
@@ -1419,16 +1450,17 @@
     consumeEvents();
   }
 
-  // タイトルの板の中身を切り替える (始めるボタン / 設定 / 遊び方)。もう一度押すと戻る
+  // 設定・遊び方の板を開く (もう一度押すと閉じる)。null で閉じる
   function showMenu(id) {
-    if (id !== 'menuMain' && !$(id).hidden) id = 'menuMain';
-    ['menuMain', 'menuSettings', 'menuHowto'].forEach(function (k) { $(k).hidden = k !== id; });
+    if (id && !$(id).hidden) id = null;
+    ['menuSettings', 'menuHowto'].forEach(function (k) { $(k).hidden = k !== id; });
+    $('titleMenu').hidden = !id;
     $('btnSettings').classList.toggle('on', id === 'menuSettings');
     $('btnHowto').classList.toggle('on', id === 'menuHowto');
   }
 
   function toTitle() {
-    showMenu('menuMain');
+    showMenu(null);
     clearWorld();
     game = null;
     setSkyDim(SKY_DIM.title);
@@ -1854,6 +1886,7 @@
     sky.position.copy(camera.position);
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
+    planet.visible = true; titlePlanet.visible = false;
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -1886,7 +1919,7 @@
     camera.up.set(v.up[0], v.up[1], v.up[2]);
     camera.fov = 30; camera.updateProjectionMatrix();
     camera.lookAt(center);
-    sky.visible = !!v.sky; planet.visible = !!v.planet; dust.lines.visible = false;
+    sky.visible = !!v.sky; planet.visible = !!v.planet; dust.lines.visible = false; titlePlanet.visible = false;
     if (v.sky) { sky.position.copy(camera.position); planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset); }
     if (v.thrust && obj === shipObj) setThrust(shipObj, v.thrust);
     inspectLight.visible = true;
@@ -1903,23 +1936,24 @@
     shipObj.rotation.order = 'YXZ';
     shipObj.rotation.set(0.05 * Math.sin(titleT * 0.7), -0.15, 0.12 * Math.sin(titleT * 0.5));
     setThrust(shipObj, 1);
-    // 斜め前の右から (日の当たる側)。ゆっくり少しだけ回り込む
-    const a = 2.3 + Math.sin(titleT * 0.12) * 0.2;
-    camera.position.set(Math.sin(a) * 24, 5 + Math.sin(titleT * 0.2) * 1.5, Math.cos(a) * 24);
+    // 斜め後ろの右上から (噴射の光が見える向き)。ゆっくり少しだけ回り込む
+    const TS = TITLE_SHIP;
+    const a = TS.a + Math.sin(titleT * 0.12) * 0.12;
+    camera.position.set(Math.sin(a) * TS.dist, TS.y0 + Math.sin(titleT * 0.2) * 1.2, Math.cos(a) * TS.dist);
     camera.up.set(0, 1, 0);
     camera.fov = 52; camera.updateProjectionMatrix();
-    // 機体がロゴとメニューの間の下 (画面の x 48%・y 74%) に来るよう、見る所をずらす
+    // 機体が画面の右下寄り (x・y は TITLE_SHIP) に来るよう、見る所をずらす
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
     const d = camera.position.length();
     const halfH = Math.tan(camera.fov * Math.PI / 360) * d, halfW = halfH * camera.aspect;
-    const sx = 0.48 * 2 - 1, sy = 1 - 0.74 * 2;
+    const sx = TS.x * 2 - 1, sy = 1 - TS.y * 2;
     const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
     const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
     camera.lookAt(right.multiplyScalar(-sx * halfW).add(up.multiplyScalar(-sy * halfH)));
     sky.position.copy(camera.position);
-    planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
-    planet.quaternion.copy(camera.quaternion);
+    planet.visible = false;   // タイトルは大きな惑星の絵だけ (ゲームの地球は出さない)
+    placeTitlePlanet();
     updateDust(camera.position, new THREE.Vector3(0, 0, -40));
   }
 
@@ -2497,7 +2531,7 @@
     $('btnBossOnly').addEventListener('click', function () { startGame({ start: 'boss' }); });
     $('btnSettings').addEventListener('click', function () { showMenu('menuSettings'); });
     $('btnHowto').addEventListener('click', function () { showMenu('menuHowto'); });
-    document.querySelectorAll('[data-back]').forEach(function (b) { b.addEventListener('click', function () { showMenu('menuMain'); }); });
+    document.querySelectorAll('[data-back]').forEach(function (b) { b.addEventListener('click', function () { showMenu(null); }); });
     $('btnResume').addEventListener('click', function () { setPaused(false); });
     $('btnRetry').addEventListener('click', function () { startGame({ start: lastStart }); });
     $('btnToTitle').addEventListener('click', toTitle);
@@ -2546,6 +2580,17 @@
         return particles.list.filter(function (q) {
           return q.on && Math.max(q.s0, q.s1) >= minSize && Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < r;
         }).length;
+      },
+      titlePlanet: TITLE_PLANET, titleShip: TITLE_SHIP,
+      // タイトルの惑星: 出ているか・ゲームの地球は隠れているか・絵の切れた下端が画面に入っていないか (下端の 41 点のうち画面の中の数)
+      titlePlanetInfo: function () {
+        let inside = 0;
+        for (let i = 0; i <= 40; i++) {
+          const p = new THREE.Vector3(i / 40 - 0.5, -0.5, 0).applyMatrix4(titlePlanet.matrixWorld);
+          const s = toScreen(p);
+          if (!s.behind && s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H) inside++;
+        }
+        return { shown: titlePlanet.visible, earth: planet.visible, edgeInside: inside };
       },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },

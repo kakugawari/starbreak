@@ -34,19 +34,35 @@
   <!-- ボス戦のカットイン。操作のボタンより上に出す (送ってもらった絵)。指の操作は下へ素通しする -->
   <div id="cutin" aria-hidden="true" hidden><img data-asset="cutin.png" alt="" width="1774" height="410"></div>
 
-  <!-- タイトル -->
+  <!-- タイトル: 後ろの宇宙はゲームの空、左の大きな惑星 (title_planet.webp) と右の機体は three.js で描く -->
   <section id="title" class="screen">
-    <div class="title-block">
-      <!-- ロゴと出撃ボタンは送ってもらった絵。src は app.js が入れる (1 枚版では埋め込んだ絵を使う) -->
-      <img class="logo" data-asset="logo.png" alt="STARBREAK スターブレイク" width="731" height="221">
+    <div class="title-logo">
+      <svg class="logo-arc" viewBox="0 0 520 70" aria-hidden="true">
+        <defs>
+          <linearGradient id="arcG" x1="0" x2="1">
+            <stop offset="0" stop-color="#7fb4ff" stop-opacity="0"/>
+            <stop offset=".62" stop-color="#e6f2ff" stop-opacity="1"/>
+            <stop offset="1" stop-color="#7fb4ff" stop-opacity="0"/>
+          </linearGradient>
+          <radialGradient id="arcS"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#bfe0ff" stop-opacity=".9"/><stop offset="1" stop-color="#4f8cff" stop-opacity="0"/></radialGradient>
+        </defs>
+        <path d="M 30 66 Q 270 -18 510 52" fill="none" stroke="url(#arcG)" stroke-width="2.2" stroke-linecap="round"/>
+        <ellipse cx="335" cy="21" rx="46" ry="9" fill="url(#arcS)"/>
+      </svg>
+      <h1 class="logo-text">STARBREAK</h1>
+      <p class="logo-sub">DEEP SPACE COMBAT</p>
     </div>
-    <div class="title-right">
-    <div class="title-menu" id="titleMenu">
-      <!-- 板の中は始めるボタン 2 つだけ。設定と遊び方は小さなボタンから同じ板に開く -->
-      <div class="menu-view" id="menuMain">
-        <button type="button" class="btn-start" id="btnStart" aria-label="出撃"><img data-asset="btn_start.png" alt="" width="427" height="105"><span>出撃</span></button>
-        <button type="button" class="btn btn-glass" id="btnBossOnly">巨大戦艦から</button>
-      </div>
+    <div class="title-actions">
+      <button type="button" class="title-btn title-btn-main" id="btnStart"><span>START</span><span class="title-arrow" aria-hidden="true">→</span></button>
+      <button type="button" class="title-btn" id="btnBossOnly"><span>BOSS BATTLE</span><span class="title-arrow" aria-hidden="true">→</span></button>
+    </div>
+    <nav class="title-links">
+      <button type="button" class="link-btn" id="btnSettings">SETTING</button>
+      <span class="title-slash" aria-hidden="true">/</span>
+      <button type="button" class="link-btn" id="btnHowto">HOW TO PLAY</button>
+    </nav>
+    <!-- 設定・遊び方: 右に開く板 (もう一度押すか、戻るで閉じる) -->
+    <div class="title-menu" id="titleMenu" hidden>
       <div class="menu-view" id="menuSettings" hidden>
         <p class="sheet-head">設定</p>
         <div class="toggles toggles-col">
@@ -67,11 +83,6 @@
         </dl>
         <button type="button" class="btn btn-glass btn-back" data-back>戻る</button>
       </div>
-    </div>
-    <div class="menu-sub" id="menuSub">
-      <button type="button" class="link-btn" id="btnSettings">⚙ 設定</button>
-      <button type="button" class="link-btn" id="btnHowto">? 遊び方</button>
-    </div>
     </div>
     <p class="version" id="version"></p>
   </section>

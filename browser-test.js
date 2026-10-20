@@ -146,36 +146,26 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg', 'logo.png', 'btn_start.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg', 'title_planet.webp'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
     ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・戦艦の装甲の絵が読み込まれる');
-    ok(assets['logo.png'] === true && assets['btn_start.png'] === true, 'タイトルのロゴと出撃ボタンの絵が読み込まれる');
-    // ロゴとメニューの板が重ならない (ロゴは左、板は右)
+    ok(assets['title_planet.webp'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const tp = await page.evaluate(() => window.__app.titlePlanetInfo());
+    ok(tp.shown && !tp.earth, `タイトルは大きな惑星だけを出し、ゲームの地球は出さない (惑星 ${tp.shown}・地球 ${tp.earth})`);
+    ok(tp.edgeInside === 0, `惑星の絵の切れた下端は画面の外 (画面に入った点 ${tp.edgeInside}/41)`);
+    // ロゴ・左下のボタン・下の小さなボタンが重ならず、ロゴは機体 (画面の右下寄り) にかからない
     const titleRects = await page.evaluate(() => {
       const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };
-      return { logo: r('#title .logo'), menu: r('.title-menu'), start: r('#btnStart'), tag: r('#title .title-block'), H: innerHeight };
+      return { logo: r('#title .logo-text'), sub: r('#title .logo-sub'), start: r('#btnStart'), boss: r('#btnBossOnly'), links: r('#title .title-links'), H: innerHeight, W: innerWidth,
+        ship: window.__app.titleShip };
     });
-    // タイトルの機体は画面の y 74% に映す (機体の上端はおよそ 63%)。ロゴの塊の下はそれより上に収める
-    ok(titleRects.tag.b <= titleRects.H * 0.6, `ロゴが機体に重ならない (ロゴの下 ${titleRects.tag.b.toFixed(0)} / 機体の上 約${(titleRects.H * 0.63).toFixed(0)})`);
-    ok(titleRects.logo.r <= titleRects.menu.l - 8 && titleRects.logo.w > 300, `ロゴとメニューが重ならない (ロゴの右 ${titleRects.logo.r.toFixed(0)} / 板の左 ${titleRects.menu.l.toFixed(0)})`);
-    // ロゴのふちは出撃ボタンの青緑 (送ってもらった絵ではマゼンタ)。紫〜マゼンタの色の画素が残っていない
-    const logoHue = await page.evaluate(() => {
-      const img = document.querySelector('#title .logo');
-      const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const x = c.getContext('2d'); x.drawImage(img, 0, 0);
-      const d = x.getImageData(0, 0, c.width, c.height).data;
-      let magenta = 0, teal = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i + 3] < 128) continue;
-        const r = d[i], g = d[i + 1], b = d[i + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-        if (mx - mn < 0.3 * mx) continue;
-        if (r > g + 30 && b > g + 30) magenta++;
-        else if (g > r + 30 && b > r + 30) teal++;
-      }
-      return { magenta, teal };
-    });
-    ok(logoHue.magenta < 50 && logoHue.teal > 3000, `ロゴのふちが青緑 (マゼンタ ${logoHue.magenta} / 青緑 ${logoHue.teal} 画素)`);
-    ok(titleRects.start.b - titleRects.start.t >= 44, `出撃ボタンは押せる高さ (${(titleRects.start.b - titleRects.start.t).toFixed(0)}pt)`);
+    ok(titleRects.sub.b <= titleRects.start.t - 20, `ロゴと START が重ならない (ロゴの下 ${titleRects.sub.b.toFixed(0)} / START の上 ${titleRects.start.t.toFixed(0)})`);
+    ok(titleRects.start.b <= titleRects.boss.t + 0.5 && titleRects.boss.b <= titleRects.links.t + 0.5, 'START・BOSS BATTLE・設定の並びが重ならない');
+    ok(titleRects.start.l < titleRects.W * 0.15 && titleRects.start.t > titleRects.H * 0.5, `START と BOSS BATTLE は左下 (START ${titleRects.start.l.toFixed(0)},${titleRects.start.t.toFixed(0)})`);
+    ok(titleRects.logo.r < titleRects.ship.x * titleRects.W - 90, `ロゴは機体にかからない (ロゴの右 ${titleRects.logo.r.toFixed(0)} / 機体の真ん中 ${(titleRects.ship.x * titleRects.W).toFixed(0)})`);
+    ok(titleRects.boss.b - titleRects.boss.t >= 44, `BOSS BATTLE は押せる高さ (${(titleRects.boss.b - titleRects.boss.t).toFixed(0)}pt)`);
+    ok(titleRects.start.b - titleRects.start.t >= 44, `START は押せる高さ (${(titleRects.start.b - titleRects.start.t).toFixed(0)}pt)`);
 
     // 安全域を差し込んで、ボタンが画面に収まるか (chromium の安全域は 0 なので、まねる)
     await page.evaluate(() => {
@@ -196,38 +186,38 @@ async function run() {
       im.src = l.href;
     }));
     ok(icon && /\.png$/.test(icon.href) && icon.w === 180 && icon.h === 180, `ホーム画面のアイコンが PNG で読める (${icon ? icon.href + ' ' + icon.w + 'x' + icon.h : 'なし'})`);
-    // タイトルの板: 中は始めるボタン 2 つだけ。設定・遊び方は下の小さなボタンから同じ板に開く
+    // 設定・遊び方: 下の小さなボタンで右に板が開く。もう一度押すか、戻るで閉じる
     const menuState = () => page.evaluate(() => {
       const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
       const panel = document.getElementById('titleMenu').getBoundingClientRect();
+      const st = document.getElementById('btnStart').getBoundingClientRect();
       return {
-        buttons: [...document.querySelectorAll('#titleMenu button')].filter(vis).map((b) => b.id || b.textContent.trim()),
+        open: vis(document.getElementById('titleMenu')),
         toggles: [...document.querySelectorAll('#titleMenu input')].filter(vis).length,
         howto: vis(document.querySelector('#titleMenu .howto')),
-        top: panel.top, mid: Math.round(panel.top + panel.height / 2), bottom: panel.bottom, H: innerHeight,
-        subTop: Math.min(...['btnSettings', 'btnHowto'].map((id) => document.getElementById(id).getBoundingClientRect().top)),
-        sub: ['btnSettings', 'btnHowto'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return Math.round(r.left) + ',' + Math.round(r.top); }).join(' '),
+        top: panel.top, bottom: panel.bottom, left: panel.left, H: innerHeight, startRight: st.right,
         invert: window.__app.settings.invert
       };
     });
     const mn0 = await menuState();
-    ok(mn0.buttons.join() === 'btnStart,btnBossOnly' && mn0.toggles === 0 && !mn0.howto, `タイトルの板は 出撃・巨大戦艦から の 2 つだけ (${mn0.buttons.join()} / スイッチ ${mn0.toggles})`);
+    ok(!mn0.open, 'はじめは設定・遊び方の板を出さない');
     const tapEl = async (sel) => { const r = await rectOf(page, sel); await page.touchscreen.tap(center(r).x, center(r).y); await page.waitForTimeout(120); };
     await tapEl('#btnSettings');
     const mn1 = await menuState();
-    ok(mn1.toggles === 3 && !mn1.buttons.includes('btnStart'), `設定を押すと、板の中がスイッチ 3 つに替わる (${mn1.toggles})`);
+    ok(mn1.open && mn1.toggles === 3, `SETTING を押すと、スイッチ 3 つの板が開く (${mn1.toggles})`);
     await tapEl('#optInvert');
     ok((await menuState()).invert === !mn0.invert, '設定のスイッチを指で押すと切り替わる (上下反転)');
     await tapEl('#optInvert');
     await tapEl('#btnHowto');
     const mn2 = await menuState();
-    ok(mn2.howto && mn2.toggles === 0, '遊び方を押すと、板の中が説明に替わる');
-    ok(Math.abs(mn0.mid - mn0.H / 2) <= 12, `板は画面の上下の真ん中にある (板の真ん中 ${mn0.mid} / 画面 ${mn0.H / 2})`);
-    ok(mn0.mid === mn1.mid && mn1.mid === mn2.mid && mn0.sub === mn1.sub && mn1.sub === mn2.sub, `中身を替えても、板の真ん中と下の小さなボタンが動かない (真ん中 ${mn0.mid}/${mn1.mid}/${mn2.mid})`);
-    ok([mn0, mn1, mn2].every((m) => m.bottom <= m.subTop - 4), `いちばん背の高い中身でも、板が下の小さなボタンに重ならない (板の下 ${Math.round(Math.max(mn0.bottom, mn1.bottom, mn2.bottom))} / ボタンの上 ${Math.round(mn0.subTop)})`);
-    await tapEl('#menuHowto [data-back]');
+    ok(mn2.howto && mn2.toggles === 0, 'HOW TO PLAY を押すと、板の中が説明に替わる');
+    ok([mn1, mn2].every((m) => m.top >= 0 && m.bottom <= m.H && m.left > m.startRight + 20), `板は画面に収まり、左下のボタンにかからない (板 ${Math.round(mn2.top)}〜${Math.round(mn2.bottom)})`);
+    await tapEl('#btnHowto');
+    ok(!(await menuState()).open, 'もう一度押すと閉じる');
+    await tapEl('#btnSettings');
+    await tapEl('#menuSettings [data-back]');
     const mn3 = await menuState();
-    ok(mn3.buttons.join() === 'btnStart,btnBossOnly' && mn3.invert === mn0.invert, '戻るで始めるボタンの板に戻る');
+    ok(!mn3.open && mn3.invert === mn0.invert, '戻るで閉じる');
 
     // 機体の面: 鏡にした翼が片側だけ黒く見えた不具合の見張り
     const faces = await page.evaluate(() => window.__app.flippedFaces());
@@ -247,6 +237,9 @@ async function run() {
     ok(playing.controls && playing.title, '操作の部品が出て、タイトルが消える');
     ok(playing.fighters === 3, `第1波は 3 機 (${playing.fighters})`);
     ok(await page.evaluate(() => window.__app.skyDim() < 0.7), '遊んでいる間は背景を沈める (敵や印が埋もれないように)');
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const tp2 = await page.evaluate(() => window.__app.titlePlanetInfo());
+    ok(!tp2.shown && tp2.earth, `遊んでいる間はタイトルの惑星を消し、ゲームの地球を出す (惑星 ${tp2.shown}・地球 ${tp2.earth})`);
 
     // 操作の部品: 安全域の内側に収まり、重ならず、指で押せる大きさ
     const layout = await page.evaluate(() => {
@@ -665,9 +658,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.webp', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・ロゴ・出撃ボタン・カットイン・噴射)');
+    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.webp', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth
