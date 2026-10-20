@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.1';
+  const VERSION = 'v0.6.2';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1044,6 +1044,13 @@
     c.fillStyle = g;
     c.fillRect(0, 0, w, w);
   });
+  // ボスが現れる所に集まる青い光 (カットインの間)
+  const warpGlow = glowSprite(0x8fcaff, 1, 0);
+  const warpCore = glowSprite(0xffffff, 1, 0);
+  warpGlow.add(warpCore);
+  warpGlow.visible = false;
+  scene.add(warpGlow);
+
   const rings = [];
   for (let i = 0; i < 8; i++) {
     const m = new THREE.SpriteMaterial({ map: ringTex, color: 0xffd8a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
@@ -1184,6 +1191,8 @@
         tone('sine', 120, 30, 0.35 + size * 0.1, Math.min(0.8, 0.3 + size * 0.1));
       },
       big: function () { noise(2.4, 1, 1800, 40); tone('sine', 80, 20, 2.0, 0.9); },
+      // ワープ明け: 上がっていく唸りから、重い轟音へ
+      warp: function () { tone('sawtooth', 120, 1400, 0.35, 0.12, 3000); noise(1.6, 0.9, 3500, 60); tone('sine', 70, 24, 1.8, 0.9); },
       // 撃墜: 重い爆発 + はじける高い音。コンボが続くほど高くなる (2 半音ずつ、8 段まで)
       kill: function (combo, size) {
         const r = Math.pow(2, Math.min(combo - 1, 8) * 2 / 12);
@@ -1344,6 +1353,7 @@
     flashes.forEach(function (f) { f.t = 0; f.s.visible = false; });
     if (cutinAnim) { cutinAnim.cancel(); cutinAnim = null; }
     $('cutin').hidden = true;
+    warpGlow.visible = false;
     fx.banners.length = 0; fx.popups.length = 0; fx.hurt.length = 0;
   }
 
@@ -1553,6 +1563,14 @@
           if (e.phase === 'dying') { fx.slowT = 1.2; shake(2); }
           break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
+        case 'bossWarp':
+          // ワープ明け: 青白い閃光・大きな衝撃波・揺れ・轟音
+          flash(e.pos, 1100, 0.7, 0xcfe6ff);
+          shockRing(e.pos, 1600, 1.0);
+          shake(2.2);
+          audio.warp();
+          break;
+        case 'bossLand': shake(1.0); audio.explode(3); break;
         case 'cannonCharge': audio.charge(); break;
         case 'cannonLock': audio.alarm(); break;
         case 'cannonFire': audio.beam(); shake(1.2); break;
@@ -1615,8 +1633,30 @@
     if (b && b.phase !== 'dead') {
       if (!bossObj) { bossObj = makeBossModel(); scene.add(bossObj); }
       const u = bossObj.userData;
-      bossObj.visible = true;
+      // ワープの登場: カットインの間は隠れていて、現れる所に青い光が集まる。現れたら艦首の向きに
+      // 長く引き伸ばされた姿で飛び込み、止まると元の長さに戻る
+      bossObj.visible = b.phase !== 'arrive' || b.shown;
       bossObj.position.set(b.pos.x, b.pos.y, b.pos.z);
+      const stretch = b.phase === 'arrive' && b.shown ? Math.pow(1 - (b.warp || 0), 2) : 0;
+      bossObj.scale.set(1 + 5 * stretch, 1, 1);
+      if (b.phase === 'arrive' && !b.shown) {
+        const k = Math.min(1, b.arriveT / C.BOSS_TIMING.delay);
+        warpGlow.visible = true;
+        warpGlow.position.set(b.at.x, b.at.y, b.at.z);
+        // 機体より大きく広がる青い光と、だんだん強くなる白い芯 (力が集まっていく)
+        const flick = 0.85 + 0.15 * Math.sin(b.arriveT * 40);
+        warpGlow.scale.setScalar(120 + 780 * k * k);
+        warpGlow.material.opacity = (0.35 + 0.65 * k) * flick;
+        warpCore.scale.setScalar(0.08 + 0.17 * k);
+        warpCore.material.opacity = k * k * flick;
+      } else warpGlow.visible = false;
+      if (stretch > 0.02) {
+        // 飛び込みの光の筋: 艦の後ろ (+x) に、引き伸ばした長さぶん光の粒を残す
+        for (let i = 0; i < 6; i++) {
+          const along = rnd(300, 300 + 1800 * stretch);
+          spawnParticle(b.pos.x + along, b.pos.y + rnd(-60, 60), b.pos.z + rnd(-110, 110), 0, 0, 0, rnd(0.2, 0.45), rnd(8, 16), 1, [0.75, 0.9, 1], [0.2, 0.4, 1]);
+        }
+      }
       u.armor.visible = b.armor;
       b.parts.forEach(function (p, i) {
         const o = u.parts[i];
@@ -1756,8 +1796,9 @@
     _look.set(pl.pos.x, pl.pos.y, pl.pos.z).addScaledVector(cam.dir, 40).addScaledVector(camUp, height * 0.35);
     // 戦艦の登場: 大きさが分かるよう、そちらを少し見る
     if (bossK > 0 && game.boss) {
-      _tmp.set(game.boss.pos.x, game.boss.pos.y, game.boss.pos.z);
-      _look.lerp(_tmp, 0.25 * bossK);
+      const bp = game.boss.phase === 'arrive' ? game.boss.at : game.boss.pos; // 登場の間は現れる所を見る
+      _tmp.set(bp.x, bp.y, bp.z);
+      _look.lerp(_tmp, (game.boss.phase === 'arrive' ? 0.4 : 0.25) * bossK);
     }
     camera.position.copy(cam.pos);
     // 傾き: 機体の傾きを少しだけ
@@ -2414,6 +2455,7 @@
           return q.on && Math.max(q.s0, q.s1) >= minSize && Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < r;
         }).length;
       },
+      bossVisible: function () { return !!(bossObj && bossObj.visible); },
       jetLength: function () { return shipObj.userData.jets[0].scale.z; },
       // 膨らみながら消える大きな粒 (煙の玉に見える) の数
       growingParticles: function () {

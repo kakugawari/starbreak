@@ -547,6 +547,8 @@ async function run() {
     const bossBtn = center(await rectOf(page, '#btnBossOnly'));
     await page.touchscreen.tap(bossBtn.x, bossBtn.y);
     await page.waitForFunction(() => window.__app.game() && window.__app.game().boss);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const hiddenAtStart = await page.evaluate(() => window.__app.game().boss.phase === 'arrive' && !window.__app.bossVisible());
     // ボス戦のカットイン: 出る・操作のボタンへの指は素通しする・終わると消える
     await page.waitForFunction(() => document.getElementById('cutin').getAnimations().length > 0, null, { timeout: 5000 });
     const cut = await page.evaluate(() => {
@@ -565,7 +567,11 @@ async function run() {
     ok(cut.overFire && cut.hitFire, `カットインが重なっていても、その下のボタン (ミサイル) を押せる (重なり ${cut.overFire}・押せる ${cut.hitFire})`);
     await page.waitForFunction(() => document.getElementById('cutin').hidden, null, { timeout: 6000 });
     ok(true, 'カットインは終わると消える');
-    await page.evaluate(() => { window.__app.game().boss.arriveT = 12.9; });
+    await page.waitForFunction(() => window.__app.game().boss.shown, null, { timeout: 15000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const boss0 = await page.evaluate(() => { const g = window.__app.game(), b = g.boss, p = g.player.pos; return { vis: window.__app.bossVisible(), d: Math.hypot(b.at.x - p.x, b.at.y - p.y, b.at.z - p.z) }; });
+    ok(hiddenAtStart && boss0.vis && boss0.d < 900, `戦艦はカットインの間は隠れていて、近く (${boss0.d.toFixed(0)}m) にワープして現れる`);
+    await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
     const kill = async (kind) => {
       await page.evaluate((k) => {

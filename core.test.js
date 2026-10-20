@@ -562,3 +562,49 @@ test('成績: 勝てばランクが付き、負ければ付かない', () => {
   assert.strictEqual(lose.state, 'over');
   assert.strictEqual(C.result(lose).cleared, false);
 });
+
+test('ボスはカットインのあいだ隠れていて、自機の近くにワープして現れる', () => {
+  const BT = C.BOSS_TIMING;
+  for (let seed = 1; seed <= 8; seed++) {
+    const g = C.createGame({ seed });
+    // 第 1・2 波を自動操縦で片づけ、ボスが来るまで進める
+    run(g, 80, (gg) => { gg.events.length = 0; return gg.boss ? {} : C.autopilot(gg, 0.7); }, 1 / 30);
+    assert.ok(g.boss, `seed ${seed}: ボスが来ている`);
+  }
+  const g = C.createGame({ seed: 3 });
+  for (let i = 0; i < 80 * 30 && !g.boss; i++) { C.step(g, C.autopilot(g, 0.7), 1 / 30); g.events.length = 0; }
+  const b = g.boss;
+  // 来たばかり: まだ見えず、狙えない
+  assert.ok(!b.shown && C.targets(g).every((t) => t.kind === 'fighter'), 'カットインの間は隠れていて狙えない');
+  let warp = null, land = null, scrape = 0, battleAt = null, t = b.arriveT;
+  const pAtWarn = Object.assign({}, g.player.pos);
+  run(g, 6, (gg) => {
+    for (const e of gg.events) {
+      if (e.type === 'bossWarp') warp = { t: t, pos: e.pos, pl: Object.assign({}, gg.player.pos) };
+      if (e.type === 'bossLand') land = t;
+      if (e.type === 'scrape') scrape++;
+      if (e.type === 'bossPhase' && e.phase === 'battle' && battleAt === null) battleAt = t;
+    }
+    gg.events.length = 0; t += 1 / 30;
+    return {};
+  }, 1 / 30);
+  assert.ok(warp && Math.abs(warp.t - BT.delay) < 0.1, `カットインが終わる頃 (${BT.delay} 秒) に現れる: ${warp && warp.t.toFixed(2)}`);
+  const d = C.dist(warp.pos, pAtWarn);
+  assert.ok(d > 600 && d < 850, `近くに現れる (知らせの時の自機から ${d.toFixed(0)}m。前は約 2600m 先から来ていた)`);
+  assert.ok(pAtWarn.y - warp.pos.y >= BT.drop - 1, '自機より下に現れる (見下ろす形)');
+  assert.ok(land !== null && land - warp.t <= BT.warpIn + 0.1, '飛び込んで止まる');
+  assert.ok(battleAt !== null && battleAt <= BT.arrive + 0.1, `戦闘が ${BT.arrive} 秒で始まる (前は 13 秒): ${battleAt && battleAt.toFixed(2)}`);
+  assert.strictEqual(scrape, 0, '登場の間に自機とぶつからない');
+});
+
+test('ボスのワープ先は、戦う場所の外へはみ出さない', () => {
+  const g = C.createGame({ seed: 1 });
+  const c = T.arenaCenter;
+  // 戦う場所のふちで、外を向いている
+  g.player.pos = C.vec(c.x + T.arenaRadius - 100, 0, c.z);
+  g.player.dir = C.vec(1, 0, 0);
+  g.player.yaw = -Math.PI / 2;
+  const b = C.makeBoss(g);
+  const r = Math.hypot(b.at.x - c.x, b.at.z - c.z);
+  assert.ok(r <= T.arenaRadius - 800 + 1, `中心から ${r.toFixed(0)}m (上限 ${T.arenaRadius - 800})`);
+});
