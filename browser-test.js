@@ -276,6 +276,20 @@ async function run() {
     ok(boostFx.jet > jetNormal * 1.6, `ブーストで噴射の光が延びる (${jetNormal.toFixed(1)} → ${boostFx.jet.toFixed(1)})`);
     const rootN = await page.evaluate(() => window.__app.jetRoot());
     ok(rootN <= 1.65 && boostFx.root <= 1.65, `噴射の根もとがエンジンの筒 (直径 1.6m) からはみ出さない (ふだん ${rootN.toFixed(2)}m・ブースト ${boostFx.root.toFixed(2)}m)`);
+    // 噴射の絵は、光の中心が絵の真ん中にある (ずれていると、板の上で噴射口からずれて見える)
+    const plumeC = await page.evaluate(() => new Promise((res) => {
+      const im = new Image();
+      im.onload = () => {
+        const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+        const x = c.getContext('2d'); x.drawImage(im, 0, 0);
+        const d = x.getImageData(0, 0, c.width, 60).data;
+        let sw = 0, sx = 0;
+        for (let i = 0; i < d.length; i += 4) { const a = d[i + 3], px = (i / 4) % c.width; sw += a; sx += a * px; }
+        res({ off: Math.abs(sx / sw - c.width / 2) / c.width });
+      };
+      im.src = (window.__ASSETS && window.__ASSETS['plume.png']) || './plume.png';
+    }));
+    ok(plumeC.off < 0.03, `噴射の絵の光の中心が真ん中にある (ずれ ${(plumeC.off * 100).toFixed(1)}%)`);
     ok(jetNormal >= 8.8, `ふだんの噴射は、送ってもらった絵と同じく機体 (11m) の 0.8 倍以上 (${jetNormal.toFixed(1)}m)`);
 
     // 撃墜の瞬間: タメ (時が止まる)・衝撃波の輪・遠くても画面で小さくならない・膨らむ煙の玉を出さない

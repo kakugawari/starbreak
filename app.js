@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.5';
+  const VERSION = 'v0.6.6';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -129,7 +129,7 @@
     c.putImageData(img, 0, 0);
   });
 
-  const JET_ROOT = 0.65; // plume.png の根もとの光の幅 (絵の幅に対する割合、明るさ 15% 以上)
+  const JET_ROOT = 0.53; // plume.png の根もとの光の幅 (絵の幅に対する割合、明るさ 15% 以上)
   const JET_MAT = new THREE.MeshBasicMaterial({
     map: jetTex, color: 0x8fd4ff, transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide
@@ -148,8 +148,8 @@
       f.scale.set(s, s, 1);
     });
     // 長さは送ってもらった絵に合わせて機体 (11m) の 0.9 倍ほど (ふだん 10m・ブースト約 17m)。
-    // 幅は、絵の根もとの光 (絵の幅の 65%) がエンジンの筒 (直径 1.6m) に収まるように決める
-    const len = 10 * (0.5 + 0.5 * Math.pow(thrust, 1.4)) * fl, wid = 2.3 + 0.1 * thrust;
+    // 幅は、絵の根もとの光 (絵の幅の 53%) がエンジンの筒 (直径 1.6m) に収まるように決める
+    const len = 10 * (0.5 + 0.5 * Math.pow(thrust, 1.4)) * fl, wid = 2.85 + 0.1 * thrust;
     ship.userData.jetRoot = wid * JET_ROOT;
     ship.userData.jets.forEach(function (j) { j.scale.set(wid, wid, len); });
     ship.userData.jetBase = len / fl; // ゆらぎを除いた長さ (見張り用)
