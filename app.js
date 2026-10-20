@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.13';
+  const VERSION = 'v0.6.14';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -186,7 +186,7 @@
 
   // 背景の明るさ。1 だと絵のまま。遊んでいる間は、敵や赤い印が明るい星雲に埋もれないよう沈める
   // (星雲のいちばん明るい所 上位10% の輝度: 1.0 で 69 → 0.55 で 51)。タイトルでは絵を見せる
-  const SKY_DIM = { play: 0.55, title: 0.9 };
+  const SKY_DIM = { play: 0.55, title: 0.5 };
   let skyDim = SKY_DIM.title;
   function setSkyDim(v) {
     skyDim = v;
@@ -277,8 +277,8 @@
   // 惑星はゆっくり回し続け (円の中心が軸)、大気のふちと太陽の光は止めたまま別の板に描く
   // (絵に焼き込まれていた太陽の光は、切り出すときに消してある)
   const TITLE_SHIP = { a: -0.7, dist: 30, y0: 6, x: 0.74, y: 0.56 };
-  const TITLE_PLANET = { cx: 0.107, cy: 0.856, r: 1.061, dist: 600, shade: 0.62,
-    ang0: -0.09, spinT: 330,                 // はじめの向き (rad) と、1 周の秒数 (時計回り)
+  const TITLE_PLANET = { cx: 0.107, cy: 0.856, r: 1.061, dist: 600, shade: 0.32,
+    ang0: -0.09, spinT: 600,                 // はじめの向き (rad) と、1 周の秒数 (時計回り)
     flare: 28 * Math.PI / 180,               // 太陽の光を置くふちの向き (右から上へ)
     driftX: 0.012, driftXT: 53, driftY: 0.015, driftYT: 41 };
   const titlePlanet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
@@ -308,8 +308,8 @@
       'float w = r > 1.0 ? 0.045 : 0.015; float rim = exp(-pow((r - 1.0) / w, 2.0)) * (0.3 + 0.5 * lit);' +
       'vec3 rimC = mix(vec3(0.18, 0.45, 1.0), vec3(0.7, 0.9, 1.0), lit);' +
       'vec2 d = p - flare; float dl = length(d);' +
-      'float core = exp(-pow(dl / 0.022, 2.0)) * 1.3 + exp(-pow(dl / 0.07, 2.0)) * 0.35 + exp(-pow(dl / 0.2, 2.0)) * 0.07;' +
-      'float streak = exp(-pow(d.y / 0.004, 2.0)) * exp(-abs(d.x) / 0.28) * 0.55;' +
+      'float core = exp(-pow(dl / 0.026, 2.0)) * 2.2 + exp(-pow(dl / 0.085, 2.0)) * 0.6 + exp(-pow(dl / 0.26, 2.0)) * 0.14;' +
+      'float streak = exp(-pow(d.y / 0.005, 2.0)) * exp(-abs(d.x) / 0.36) * 0.85;' +
       'vec3 col = rimC * rim + vec3(1.0, 0.95, 0.86) * (core + streak);' +
       'gl_FragColor = vec4(col, 1.0); }',
     transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending
