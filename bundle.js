@@ -25,7 +25,6 @@ const page = [
   // 絵は data URI にして埋め込む (app.js の loadTex が window.__ASSETS を先に見る)
   '<script>window.__ASSETS = ' + JSON.stringify(Object.fromEntries(ASSETS.map((f) =>
     [f, 'data:image/' + (f.endsWith('.png') ? 'png' : f.endsWith('.webp') ? 'webp' : 'jpeg') + ';base64,' + fs.readFileSync(path.join(__dirname, f)).toString('base64')]))) + ';</script>',
-  '<script>', safe(read('stars.js')), '</script>',
   '<script>', safe(read('core.js')), '</script>',
   '<script>', safe(read('app.js')), '</script>'
 ].join('\n');

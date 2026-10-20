@@ -150,29 +150,6 @@ async function run() {
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
     ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・戦艦の装甲の絵が読み込まれる');
     ok(assets['title_planet.webp'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
-    // 空の絵は画面で 2.6〜3.4 倍に引き伸ばされるので、星は絵から消して点で描き直す (ぼやけた玉に見えた)
-    const starCheck = await page.evaluate(async () => {
-      const count = (src) => new Promise((res) => {
-        const im = new Image();
-        im.onload = () => {
-          const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
-          const x = c.getContext('2d'); x.drawImage(im, 0, 0);
-          const d = x.getImageData(0, 0, c.width, c.height).data, W = c.width, H = c.height;
-          const L = (i, j) => { const o = (j * W + i) * 4; return (d[o] + d[o + 1] + d[o + 2]) / 3; };
-          let n = 0;
-          // まわり (半径 4 の 8 点) より 40 以上明るい点 = 絵に残った星
-          for (let j = 4; j < H - 4; j += 1) for (let i = 4; i < W - 4; i += 1) {
-            const v = L(i, j); if (v < 60) continue;
-            const m = (L(i + 4, j) + L(i - 4, j) + L(i, j + 4) + L(i, j - 4) + L(i + 3, j + 3) + L(i - 3, j - 3) + L(i + 3, j - 3) + L(i - 3, j + 3)) / 8;
-            if (v - m > 40) n++;
-          }
-          res(n);
-        };
-        im.src = src;
-      });
-      return { src: await count('./space-src.jpg'), now: await count('./space.jpg'), points: window.__app.skyStars() };
-    });
-    ok(starCheck.now < starCheck.src * 0.25 && starCheck.points > 10000, `空の絵から星を消し、点で描き直している (絵に残った星の画素 元 ${starCheck.src} → ${starCheck.now}・点 ${starCheck.points})`);
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const tp = await page.evaluate(() => window.__app.titlePlanetInfo());
     ok(tp.shown && !tp.earth, `タイトルは大きな惑星だけを出し、ゲームの地球は出さない (惑星 ${tp.shown}・地球 ${tp.earth})`);
