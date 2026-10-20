@@ -634,8 +634,9 @@ async function run() {
     ok(await page.evaluate(() => window.__app.bossClipX() > 1e8), '出きったら、艦を切らずに全部描く');
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
     // 何も当たらない時間が続くと、迎撃機が来る (知らせが出て、小さめに描かれる)
-    await page.evaluate(() => { const g = window.__app.game(); g.fighters = []; g.lastHitT = g.t - 10; g.boss.droneCd = 0; });
-    await page.waitForFunction(() => window.__app.game().fighters.some((f) => f.drone), null, { timeout: 10000 });
+    // (戦闘が始まった時刻も「10 秒前」にずらす。始まってすぐは迎撃機を出さないので、遅い機械では 10 秒で間に合わなかった)
+    await page.evaluate(() => { const g = window.__app.game(); g.fighters = []; g.lastHitT = g.t - 10; g.boss.battleT = g.t - 10; g.boss.droneCd = 0; });
+    await page.waitForFunction(() => window.__app.game().fighters.some((f) => f.drone), null, { timeout: 30000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const dr = await page.evaluate(() => { const fs = window.__app.game().fighters.filter((f) => f.drone); return { n: fs.length, scale: window.__app.enemyScale(fs[0].id), banner: window.__app.banners().indexOf('迎撃機 接近') >= 0 }; });
     ok(dr.n === 4 && dr.banner && Math.abs(dr.scale - 0.6) < 0.01, `ボス戦の空き時間に迎撃機が ${dr.n} 機来る (知らせ ${dr.banner}・大きさ ${dr.scale})`);
@@ -651,6 +652,20 @@ async function run() {
     await kill('engine');
     ok(await page.evaluate(() => window.__app.game().boss.phase === 'core'), 'エンジンをこわすと、装甲が外れる');
     await kill('core');
+    // 1 面の戦艦を沈めると、結果ではなく 2 面へ進む
+    await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 60000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), banner: window.__app.banners().some((t) => t.indexOf('STAGE 2') === 0), boss: window.__app.bossVisible(), hull: window.__app.game().player.hull }));
+    ok(st2.screen === 'play' && st2.banner && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2」の知らせ ${st2.banner}・前の戦艦は消える)`);
+    // 2 面の戦艦まで飛ばす: 蛍光緑に塗った艦が来る
+    await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
+    await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const look = await page.evaluate(() => window.__app.bossLook());
+    ok(look && look.level === 2 && look.color === '9dff7a' && look.emissive === '39ff14', `2 面の戦艦は蛍光緑 (面 ${look && look.level}・色 #${look && look.color}・光 #${look && look.emissive})`);
+    await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });
+    await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
+    await kill('turret'); await kill('engine'); await kill('core');
     await page.waitForFunction(() => window.__app.screen() === 'result', null, { timeout: 120000 });
     const won = await page.evaluate(() => ({ head: document.getElementById('resultHead').textContent, rank: document.getElementById('resultRank').textContent }));
     ok(won.head === 'MISSION CLEAR' && /^[SABC]$/.test(won.rank), `勝ちの結果とランクが出る (${won.head} / ${won.rank})`);

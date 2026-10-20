@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.14';
+  const VERSION = 'v0.7.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -777,7 +777,23 @@
     return true;
   }
 
-  function makeBossModel() {
+  // 2 面の戦艦: 同じ形を蛍光緑に塗る (装甲の絵に緑を掛け、少し自ら光らせて蛍光に見せる)
+  let hullMatGreen = null;
+  function bossHullMat(level) {
+    if (level !== 2) return hullMat;
+    if (!hullMatGreen) {
+      hullMatGreen = hullMat.clone();
+      hullMatGreen.color.set(0x9dff7a);
+      hullMatGreen.emissive = new THREE.Color(0x39ff14);
+      hullMatGreen.emissiveIntensity = 0.5;
+    }
+    hullMatGreen.map = hullMat.map;       // 装甲の絵は読み込みが遅れることがあるので、使うたびに合わせる
+    hullMatGreen.emissiveMap = hullMat.map;
+    return hullMatGreen;
+  }
+
+  function makeBossModel(level) {
+    const mat = bossHullMat(level || 1);
     const group = new THREE.Group();
     const rng = C.mulberry32(1234);
     const hull = { pos: [], nor: [], col: [], uv: [] };
@@ -829,7 +845,7 @@
         }
       }
     });
-    const hullMesh = new THREE.Mesh(geoFrom(hull), hullMat);
+    const hullMesh = new THREE.Mesh(geoFrom(hull), mat);
     const lightMesh = new THREE.Mesh(geoFrom(lights), new THREE.MeshBasicMaterial({ vertexColors: true }));
     group.add(hullMesh, lightMesh);
 
@@ -872,7 +888,7 @@
     const ab = C.BOSS_SOLIDS.filter(function (sd) { return sd.armor; })[0];
     const armorGeo = { pos: [], nor: [], col: [], uv: [] };
     prismGeo(ab, [0.85, 0.85, 0.9], armorGeo);
-    const armor = new THREE.Mesh(geoFrom(armorGeo), hullMat);
+    const armor = new THREE.Mesh(geoFrom(armorGeo), mat);
     group.add(armor);
 
     // 部位
@@ -1660,6 +1676,7 @@
         }
         case 'scrape': sparks(e.pos, 16, [1, 0.8, 0.4]); break;
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
+        case 'stageStart': banner('STAGE 2  深宇宙', 3.2, '#cfe8ff', true); audio.lock(); break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
           showCutin();
@@ -1740,7 +1757,7 @@
     // 戦艦
     const b = game.boss;
     if (b && b.phase !== 'dead') {
-      if (!bossObj) { bossObj = makeBossModel(); clipBoss(bossObj); scene.add(bossObj); }
+      if (!bossObj) { bossObj = makeBossModel(b.level); bossObj.userData.level = b.level; clipBoss(bossObj); scene.add(bossObj); }
       const u = bossObj.userData;
       // ワープの登場: カットインの間に右側 (+x) に赤い光が開き、艦はその光の中から艦首を先にゆっくり出てくる。
       // 光の面より向こうにある部分は描かない (bossClip)
@@ -1865,7 +1882,7 @@
       } else {
         u.beamOuter.visible = false; u.beamCore.visible = false;
       }
-    } else if (bossObj && b && b.phase === 'dead') {
+    } else if (bossObj && (!b || b.phase === 'dead')) {
       scene.remove(bossObj);
       ['beamOuter', 'beamCore', 'guide'].forEach(function (k) { scene.remove(bossObj.userData[k]); });
       bossObj = null;
@@ -2632,6 +2649,8 @@
         const rr = toScreen(new THREE.Vector3(0.5, 0, 0).applyMatrix4(titlePlanet.matrixWorld));
         return { shown: titlePlanet.visible, glow: titleGlow.visible, earth: planet.visible, cx: c.x, cy: c.y, radius: Math.hypot(rr.x - c.x, rr.y - c.y), flareX: f.x, flareY: f.y, ang: titlePlanetAngle() };
       },
+      // 戦艦の装甲の色 (2 面は蛍光緑) と、いまの面
+      bossLook: function () { if (!bossObj) return null; const m = bossObj.children[0].material; return { level: bossObj.userData.level, color: m.color.getHexString(), emissive: m.emissive ? m.emissive.getHexString() : '000000' }; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
       enemyScale: function (id) { const o = enemyObjs.get(id); return o ? o.scale.x : 0; },
