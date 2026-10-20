@@ -212,6 +212,8 @@
     // ミサイル
     lockCone: 15 * DEG, lockRange: 950, lockTime: 0.6,
     missileMax: 4, missileReload: 4, missileDamage: 8,
+    // マルチロック: MSL を押している間、照準のまわりの敵を 1 つずつ捕まえ、離すと捕まえた数だけ一斉に撃つ
+    multiCone: 22 * DEG, multiLockTime: 0.28, multiFan: 9 * DEG,
     missileSpeed0: 110, missileSpeed1: 330, missileTurn: 210 * DEG, missileLife: 6,
     // 敵戦闘機
     // 敵は自機 (ふだん 60m/s・約70°/秒) より遅く、小回りも利かない。追えば背後を取れる
@@ -221,6 +223,10 @@
     maxBursting: 2,
     // 巨大戦艦
     turretHp: 14, engineHp: 30, coreHp: 50,
+    // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
+    // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
+    // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
+    droneLull: 4, droneGap: 7, droneCount: 4, droneHp: 1, droneSpeed: 45, droneLife: 7, droneAhead: 420, droneSpan: 230, droneMode: 'oncoming',
     turretShotDamage: 6, turretRange: 1150, turretShotSpeed: 240,
     cannonCharge: 2.8, cannonLockBefore: 1.0, cannonFire: 1.0,
     cannonRadius: 12, cannonDamage: 45, cannonLength: 3200,
@@ -408,6 +414,7 @@
         laserCd: 0, gun: 0,
         missiles: T.missileMax, missileCd: 0,
         focus: null, assist: null, lockId: 0, lockT: 0, locked: false,
+        mlock: [], mlockT: 0, mlockCand: 0,
         targetId: 0, tracking: false,
         aimDir: vec(0, 0, -1), alive: true, outside: false
       },
@@ -727,6 +734,51 @@
     emit(g, 'laser', { pos: muzzle, side: side });
   }
 
+  /**
+   * マルチロック: input.missileHold (MSL を押している間) に、照準のまわり (multiCone) の敵を
+   * multiLockTime ごとに 1 つずつ捕まえる。同じ的は「残り体力を落とすのに要る数」まで重ねて捕まえる
+   * (敵機は 1 発、砲台は 2 発…)。捕まえられる数は残りのミサイルまで。離すと (input.missile) 一斉に撃つ
+   */
+  function updateMultiLock(g, input, dt) {
+    const pl = g.player;
+    pl.mlock = pl.mlock.filter(function (id) { const t = findById(g, id); return t && t.alive; });
+    if (!input.missileHold || !pl.alive) { pl.mlockT = 0; pl.mlockCand = 0; if (!input.missile) pl.mlock.length = 0; return; }
+    const cap = Math.min(pl.missiles, T.missileMax);
+    if (pl.mlock.length >= cap) { pl.mlockT = 0; pl.mlockCand = 0; return; }
+    const ts = targets(g);
+    let cand = null, candKey = 1e9;
+    for (let i = 0; i < ts.length; i++) {
+      const t = ts[i];
+      const d = dist(t.pos, pl.pos);
+      if (d > T.lockRange) continue;
+      const ang = angleBetween(pl.dir, sub(t.pos, pl.pos));
+      if (ang > T.multiCone) continue;
+      const have = pl.mlock.filter(function (id) { return id === t.id; }).length;
+      if (have >= Math.ceil(t.hp / T.missileDamage)) continue;
+      const key = have * 10 + ang; // まだ捕まえていない的を先に、その中で照準に近い順
+      if (key < candKey) { candKey = key; cand = t; }
+    }
+    if (!cand) { pl.mlockT = 0; pl.mlockCand = 0; return; }
+    if (cand.id !== pl.mlockCand) { pl.mlockCand = cand.id; pl.mlockT = 0; }
+    pl.mlockT += dt;
+    if (pl.mlockT >= T.multiLockTime) {
+      pl.mlock.push(cand.id);
+      pl.mlockT = 0;
+      emit(g, 'lock', { id: cand.id, n: pl.mlock.length, multi: true });
+    }
+  }
+
+  function launchMissile(g, tgt, dir) {
+    const pl = g.player;
+    pl.missiles--;
+    const pos = addScaled(pl.pos, vec(0, -1, 0), 1.5);
+    g.missiles.push({
+      id: g.nextId++, pos: pos, prev: copy(pos), dir: dir,
+      speed: Math.max(T.missileSpeed0, pl.speed), target: tgt, life: T.missileLife, age: 0, dead: false
+    });
+    return pos;
+  }
+
   function fireMissile(g, input, dt) {
     const pl = g.player;
     if (pl.missiles < T.missileMax) {
@@ -735,15 +787,26 @@
     } else {
       pl.missileCd = 0;
     }
+    updateMultiLock(g, input, dt);
     if (!input.missile || pl.missiles <= 0) return;
-    pl.missiles--;
+    // マルチロックで捕まえていれば、その数だけ扇に広げて一斉に撃つ
+    if (pl.mlock.length > 0) {
+      const n = Math.min(pl.mlock.length, pl.missiles);
+      const right = norm(cross(pl.dir, vec(0, 1, 0)));
+      let pos = null;
+      for (let i = 0; i < n; i++) {
+        const a = (i - (n - 1) / 2) * T.multiFan;
+        const dir = norm(add(scale(pl.dir, Math.cos(a)), addScaled(scale(right, Math.sin(a)), vec(0, 1, 0), 0.08)));
+        pos = launchMissile(g, pl.mlock[i], dir);
+      }
+      emit(g, 'missile', { pos: pos, locked: true, salvo: n });
+      pl.mlock.length = 0; pl.mlockT = 0; pl.mlockCand = 0;
+      pl.lockT = 0; pl.locked = false; pl.lockId = 0;
+      return;
+    }
     const tgt = pl.locked ? pl.lockId : 0;
-    const pos = addScaled(pl.pos, vec(0, -1, 0), 1.5);
-    g.missiles.push({
-      id: g.nextId++, pos: pos, prev: copy(pos), dir: copy(pl.dir),
-      speed: Math.max(T.missileSpeed0, pl.speed), target: tgt, life: T.missileLife, age: 0, dead: false
-    });
-    emit(g, 'missile', { pos: pos, locked: !!tgt });
+    const pos = launchMissile(g, tgt, copy(pl.dir));
+    emit(g, 'missile', { pos: pos, locked: !!tgt, salvo: 1 });
     if (tgt) { pl.lockT = 0; pl.locked = false; pl.lockId = 0; }
   }
 
@@ -821,6 +884,7 @@
     t.hp -= amount;
     t.flash = 1;
     emit(g, 'hit', { pos: point, id: t.id, kind: t.kind, by: by, hp: t.hp, maxHp: t.maxHp });
+    g.lastHitT = g.t;
     if (t.hp > 0) return;
     t.hp = 0;
     t.alive = false;
@@ -879,6 +943,14 @@
       const f = g.fighters[i];
       if (!f.alive) continue;
       f.flash = Math.max(0, f.flash - dt * 5);
+      if (f.drone) {
+        // まっすぐ横切るだけ。撃たない。時間が来たら (撃墜にはならずに) 飛び去る
+        f.life -= dt;
+        if (f.life <= 0) { f.alive = false; f.escaped = true; continue; }
+        f.pos = addScaled(f.pos, f.vel, dt);
+        f.bank = Math.sin(f.life * 3) * 0.3;
+        continue;
+      }
       const toP = sub(pl.pos, f.pos);
       const d = len(toP);
       const ic = intercept(f.pos, pl.pos, pl.vel, T.enemyShotSpeed);
@@ -971,6 +1043,35 @@
     return n;
   }
 
+  /**
+   * ドローン: 自機の前 (水平の向き) を横切る、撃ち返さない小さな的。1 発で落ち、droneLife 秒で飛び去る
+   */
+  function launchDrones(g) {
+    const pl = g.player;
+    let f = vec(pl.dir.x, 0, pl.dir.z); f = len(f) > 1e-3 ? norm(f) : vec(0, 0, -1);
+    const side = vec(-f.z, 0, f.x);
+    const s0 = g.rng() < 0.5 ? -1 : 1;
+    for (let i = 0; i < T.droneCount; i++) {
+      let start, v;
+      if (T.droneMode === 'cross') {
+        // 前を横切る
+        const base = add(addScaled(pl.pos, f, T.droneAhead), vec(0, rand(g, -30, 40), 0));
+        start = addScaled(addScaled(base, side, -s0 * (T.droneSpan + i * 28)), f, i * 12);
+        v = scale(side, s0 * T.droneSpeed);
+      } else {
+        // 正面の少し先から、少しずつ横へずれながらこちらへ来る (照準の前を長く通る)
+        start = add(addScaled(addScaled(pl.pos, f, T.droneAhead + i * 40), side, s0 * (25 + i * 18)), vec(0, rand(g, -12, 18), 0));
+        v = add(scale(f, -T.droneSpeed), scale(side, -s0 * 14));
+      }
+      const d = makeFighter(g, start, v);
+      d.drone = true; d.life = T.droneLife;
+      d.hp = d.maxHp = T.droneHp; d.radius = 6;
+      d.speed = len(v); d.vel = v;
+      g.fighters.push(d);
+    }
+    emit(g, 'drones', { n: T.droneCount });
+  }
+
   function launchEscorts(g, n) {
     const b = g.boss;
     for (let i = 0; i < n; i++) {
@@ -1002,6 +1103,7 @@
       b.emerge = w;
       if (k >= 1) {
         b.phase = 'battle';
+        b.battleT = g.t;
         b.vel = vec();
         emit(g, 'bossPhase', { phase: 'battle', text: '砲台を破壊せよ' });
         launchEscorts(g, 3);
@@ -1030,6 +1132,15 @@
       return;
     }
     if (b.phase === 'arrive' || b.phase === 'dead') return;
+    // 何も当たらない時間を埋める: 戦闘中にしばらく当てていなくて、敵機も場にいなければ、ドローンを横切らせる
+    if (b.phase !== 'dying') {
+      b.droneCd = Math.max(0, (b.droneCd || 0) - dt);
+      const since = g.t - Math.max(g.lastHitT || 0, b.battleT || 0);
+      if (b.droneCd === 0 && g.fighters.length === 0 && since > T.droneLull) {
+        launchDrones(g);
+        b.droneCd = T.droneGap;
+      }
+    }
 
     // 段階を進める
     const turrets = aliveParts(b, 'turret');
@@ -1208,8 +1319,9 @@
   }
 
   /**
-   * 1ステップ進める。input = { stickX, stickY, throttle, fire, boost, missile, select, track }
-   * missile と select (ロックオンボタンのタップ) は「押した瞬間」だけ true にする。
+   * 1ステップ進める。input = { stickX, stickY, throttle, fire, boost, missile, missileHold, select, track }
+   * missile (MSL を離した瞬間) と select (ロックオンボタンのタップ) は、その瞬間だけ true にする。
+   * missileHold は MSL を押している間 true (マルチロック)。
    * track はロックオンボタンを押している間 true (狙う相手へ機首を向ける)。
    */
   function step(g, input, dt) {
@@ -1224,7 +1336,7 @@
     return g;
   }
   function withoutEdge(input) {
-    return { stickX: input.stickX, stickY: input.stickY, throttle: input.throttle, fire: input.fire, boost: input.boost, missile: false, track: input.track, select: false };
+    return { stickX: input.stickX, stickY: input.stickY, throttle: input.throttle, fire: input.fire, boost: input.boost, missile: false, missileHold: input.missileHold, track: input.track, select: false };
   }
 
   function stepOnce(g, input, dt) {
@@ -1300,6 +1412,8 @@
     const ts = targets(g);
     let tgt = null, best = 1e9;
     for (let i = 0; i < ts.length; i++) {
+      // ドローン (横切る的) は狙いに行かない。照準の前に来たときだけ撃つ (人と同じく、ボスへの攻めを続ける)
+      if (ts[i].drone) continue;
       const d = dist(ts[i].pos, pl.pos) * (ts[i].kind === 'fighter' ? 0.7 : 1);
       if (d < best) { best = d; tgt = ts[i]; }
     }

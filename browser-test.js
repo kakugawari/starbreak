@@ -414,11 +414,44 @@ async function run() {
     await f.down(5, mBtn.x, mBtn.y);
     await waitGameTime(page, 0.1);
     await f.up(5);
+    await waitGameTime(page, 0.05);
     const m1 = await page.evaluate(() => ({ n: window.__app.game().player.missiles, shown: document.getElementById('missileCount').textContent }));
     ok(m1.n === m0 - 1, `ミサイルを1発撃つ (${m0} → ${m1.n})`);
     await waitGameTime(page, 0.1);
     const shown = await page.evaluate(() => document.getElementById('missileCount').textContent);
     ok(shown === String(m1.n), `残りの数の表示も変わる (${shown})`);
+
+    // マルチロック: 押している間にロックが増え、離すと一斉に撃つ
+    await page.evaluate(() => {
+      const g = window.__app.game(), C = window.Core, pl = g.player;
+      window.__savedFighters = g.fighters; // あとのテストは第1波の敵を使うので、とっておいて戻す
+      g.fighters = []; g.missiles = []; pl.missiles = 4; pl.mlock = [];
+      const right = C.norm(C.cross(pl.dir, C.vec(0, 1, 0)));
+      [-0.14, 0, 0.15].forEach((a) => {
+        const dir = C.norm(C.add(C.scale(pl.dir, Math.cos(a)), C.scale(right, Math.sin(a))));
+        const fi = C.makeFighter(g, C.add(pl.pos, C.scale(dir, 340)), C.vec(0, 0, 1));
+        fi.vel = C.vec(); fi.speed = 0; fi.mode = 'test'; fi.hp = 1;
+        g.fighters.push(fi);
+      });
+    });
+    await f.down(5, mBtn.x, mBtn.y);
+    await waitGameTime(page, 1.3);
+    const ml = await page.evaluate(() => ({
+      n: window.__app.game().player.mlock.length, marks: window.__app.hudInfo.mlock.length, ring: window.__app.hudInfo.mlockRing,
+      label: document.getElementById('missileCount').textContent, red: document.getElementById('btnMissile').classList.contains('locked'),
+      fired: window.__app.game().missiles.length
+    }));
+    ok(ml.n === 3 && ml.fired === 0, `MSL を押している間に 3 機をロックし、まだ撃たない (ロック ${ml.n}・飛んでいる ${ml.fired})`);
+    ok(ml.marks === 3 && ml.ring > 40, `ロックした敵に印が出て、捕まえる範囲の輪が出る (印 ${ml.marks}・輪 ${ml.ring && ml.ring.toFixed(0)}px)`);
+    ok(ml.label === '3/4' && ml.red, `ボタンにロックの数が出る (${ml.label})`);
+    await f.up(5);
+    await waitGameTime(page, 0.05);
+    const sv = await page.evaluate(() => ({ left: window.__app.game().player.missiles, fired: window.__app.game().missiles.map((m) => m.target), lock: window.__app.game().player.mlock.length, label: document.getElementById('missileCount').textContent }));
+    ok(sv.left === 1 && new Set(sv.fired).size === 3 && sv.lock === 0, `離すと 3 発を別々の敵へ一斉に撃つ (残り ${sv.left}・的 ${new Set(sv.fired).size})`);
+    await waitGameTime(page, 0.1);
+    const lb = await page.evaluate(() => document.getElementById('missileCount').textContent);
+    ok(lb === '1', `撃ったらボタンは残りの数に戻る (${lb})`);
+    await page.evaluate(() => { const g = window.__app.game(); g.fighters = window.__savedFighters; g.missiles = []; g.player.missiles = 4; });
 
     // ------------------------------------------------ ゲージ (送ってもらった絵)
     section('左上のゲージ');
@@ -595,6 +628,12 @@ async function run() {
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     ok(await page.evaluate(() => window.__app.bossClipX() > 1e8), '出きったら、艦を切らずに全部描く');
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
+    // 何も当たらない時間が続くと、迎撃機が来る (知らせが出て、小さめに描かれる)
+    await page.evaluate(() => { const g = window.__app.game(); g.fighters = []; g.lastHitT = g.t - 10; g.boss.droneCd = 0; });
+    await page.waitForFunction(() => window.__app.game().fighters.some((f) => f.drone), null, { timeout: 10000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const dr = await page.evaluate(() => { const fs = window.__app.game().fighters.filter((f) => f.drone); return { n: fs.length, scale: window.__app.enemyScale(fs[0].id), banner: window.__app.banners().indexOf('迎撃機 接近') >= 0 }; });
+    ok(dr.n === 4 && dr.banner && Math.abs(dr.scale - 0.6) < 0.01, `ボス戦の空き時間に迎撃機が ${dr.n} 機来る (知らせ ${dr.banner}・大きさ ${dr.scale})`);
     const kill = async (kind) => {
       await page.evaluate((k) => {
         window.__app.game().boss.parts.forEach((p) => { if (p.kind === k) { p.hp = 0; p.alive = false; } });

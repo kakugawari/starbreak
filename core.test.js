@@ -233,6 +233,52 @@ test('ロックオンしたミサイルは、動く敵を追って当たる', ()
   assert.strictEqual(f.alive, false, 'ミサイルで撃墜');
 });
 
+test('マルチロック: MSL を押している間に照準のまわりの敵を別々にロックし、離すと同じ数を一斉に撃つ', () => {
+  const g = quietGame();
+  const fs = [-8, 0, 9, 45].map((a) => { const f = fighterAhead(g, a, 320); f.hp = 1; f.mode = 'test'; return f; });
+  const locks = [];
+  run(g, 1.4, (gg) => { for (const e of gg.events) if (e.type === 'lock' && e.multi) locks.push(e); gg.events.length = 0; return { missileHold: true }; });
+  const ids = g.player.mlock.slice().sort();
+  assert.deepStrictEqual(ids, [fs[0].id, fs[1].id, fs[2].id].sort(), '範囲の 3 機を 1 回ずつ。45° 先の 1 機は範囲の外');
+  assert.deepStrictEqual(locks.map((e) => e.n), [1, 2, 3], 'ロックの知らせは数つき');
+  C.step(g, { missile: true }, 1 / 60);
+  assert.strictEqual(g.player.missiles, T.missileMax - 3);
+  assert.deepStrictEqual(g.missiles.map((m) => m.target).sort(), ids, '1 発ずつ別の敵へ');
+  assert.strictEqual(g.player.mlock.length, 0, '撃ったらロックは空');
+  const salvo = g.events.find((e) => e.type === 'missile');
+  assert.strictEqual(salvo.salvo, 3);
+  run(g, 4, {});
+  assert.ok(fs.slice(0, 3).every((f) => !f.alive), '3 機とも落ちる');
+});
+
+test('マルチロック: 硬い敵には要る数だけ重ねてロックし、残り弾数より多くはロックしない', () => {
+  const g = quietGame();
+  const big = fighterAhead(g, 0, 320); big.hp = T.missileDamage * 2; big.mode = 'test';
+  run(g, 2, { missileHold: true });
+  assert.deepStrictEqual(g.player.mlock, [big.id, big.id], '2 発で落ちる敵には 2 つまで');
+  const h = quietGame();
+  [-6, 0, 6].forEach((a) => { const f = fighterAhead(h, a, 320); f.hp = 1; f.mode = 'test'; });
+  h.player.missiles = 2;
+  run(h, 2, { missileHold: true });
+  assert.strictEqual(h.player.mlock.length, 2, '残り 2 発なら 2 つまで');
+});
+
+test('マルチロック: ロックせずに離せば (タップ) 1 発だけ撃つ。押したまま外へ逃げられた敵は外れる', () => {
+  const g = quietGame();
+  [-6, 0, 6].forEach((a) => { const f = fighterAhead(g, a, 320); f.hp = 1; f.mode = 'test'; });
+  C.step(g, { missileHold: true }, 1 / 60);
+  C.step(g, { missile: true }, 1 / 60);
+  assert.strictEqual(g.player.missiles, T.missileMax - 1);
+  assert.strictEqual(g.missiles.length, 1);
+  const h = quietGame();
+  const f = fighterAhead(h, 0, 320); f.hp = 1; f.mode = 'test';
+  run(h, 0.5, { missileHold: true });
+  assert.strictEqual(h.player.mlock.length, 1);
+  f.alive = false;
+  run(h, 1 / 60, { missileHold: true });
+  assert.strictEqual(h.player.mlock.length, 0, '落ちた敵のロックは消える');
+});
+
 // ------------------------------------------------------------ ロックオンボタン (狙う相手)
 
 test('ロックオンボタン: タップで照準にいちばん近い敵を選び、もう一度で次へ切り替わる', () => {
@@ -561,6 +607,40 @@ test('成績: 勝てばランクが付き、負ければ付かない', () => {
   run(lose, 0.5, {});
   assert.strictEqual(lose.state, 'over');
   assert.strictEqual(C.result(lose).cleared, false);
+});
+
+test('ボス戦で何も当たらない時間が続くと、撃てる迎撃機が正面から来る。撃ってこず、しばらくで去る', () => {
+  const g = C.createGame({ seed: 5, start: 'boss' });
+  run(g, 1 / 60, {});
+  run(g, C.BOSS_TIMING.arrive + 0.5, (gg) => { gg.fighters = []; gg.events.length = 0; return {}; });
+  const b = g.boss;
+  assert.notStrictEqual(b.phase, 'arrive', '戦闘が始まっている');
+  g.fighters = []; g.shots = [];
+  let at = null;
+  run(g, T.droneLull + 0.5, (gg) => { if (at === null && gg.events.some((e) => e.type === 'drones')) at = gg.t; gg.events.length = 0; return {}; });
+  assert.ok(at !== null, '迎撃機が出た');
+  assert.ok(at - Math.max(b.battleT, g.lastHitT || 0) >= T.droneLull - 0.05, '当てない時間が ' + T.droneLull + ' 秒続いてから');
+  const ds = g.fighters.filter((f) => f.drone);
+  assert.strictEqual(ds.length, T.droneCount);
+  const pl = g.player;
+  for (const d of ds) {
+    assert.ok(C.angleBetween(pl.dir, C.sub(d.pos, pl.pos)) < 30 * DEG, '自機の前に出る');
+    assert.ok(C.dot(d.vel, pl.dir) < 0, 'こちらへ向かってくる');
+  }
+  const ids = new Set(ds.map((d) => d.id));
+  // 迎撃機のすぐそばで生まれた敵の弾を数える (砲台の弾は除く)
+  let shot = 0;
+  const seen = new Set(g.shots);
+  run(g, T.droneLife + 0.5, (gg) => {
+    for (const s of gg.shots) {
+      if (seen.has(s)) continue;
+      seen.add(s);
+      if (s.owner !== 'player' && gg.fighters.some((f) => ids.has(f.id) && C.dist(f.pos, s.pos) < 20)) shot++;
+    }
+    gg.events.length = 0; return {};
+  });
+  assert.ok(!g.fighters.some((f) => ids.has(f.id)), '時間が来たら去る');
+  assert.strictEqual(shot, 0, '撃ってこない');
 });
 
 test('ボスはカットインのあいだ光の向こうにいて、そのあと光の中から艦首を先にゆっくり出てくる', () => {

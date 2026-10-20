@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.6';
+  const VERSION = 'v0.6.7';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1223,7 +1223,13 @@
         tone('square', 1320 * r, 660 * r, 0.12, 0.09);
         tone('triangle', 1980 * r, 1980 * r, 0.18, 0.07);
       },
-      missile: function () { noise(0.6, 0.3, 800, 3000, 'bandpass', 1.2); },
+      missile: function (n) {
+        noise(0.6, 0.3, 800, 3000, 'bandpass', 1.2);
+        // 一斉発射は少しずつずらして重ねる (数だけシュッと鳴る)
+        for (let i = 1; i < (n || 1); i++) setTimeout(function () { noise(0.45, 0.25, 900 + i * 150, 3200, 'bandpass', 1.2); }, i * 55);
+      },
+      // マルチロック: 捕まえるたびに短く、数が増えるほど高く
+      mlock: function (n) { const f = 1320 * Math.pow(1.19, n - 1); tone('square', f, f, 0.05, 0.055); },
       lock: function () { tone('square', 1760, 1760, 0.05, 0.06); setTimeout(function () { tone('square', 2350, 2350, 0.07, 0.06); }, 70); },
       boost: function () { noise(0.7, 0.35, 300, 4000, 'bandpass', 1); },
       hurt: function (big) { noise(0.25, big ? 0.6 : 0.35, 900, 200); tone('square', 200, 90, 0.18, 0.12); },
@@ -1288,7 +1294,7 @@
   els.stickZone.addEventListener('pointerup', endStick);
   els.stickZone.addEventListener('pointercancel', endStick);
 
-  function holdButton(el, set, onDown) {
+  function holdButton(el, set, onDown, onRelease) {
     el.addEventListener('pointerdown', function (e) {
       e.preventDefault();
       el.setPointerCapture(e.pointerId);
@@ -1297,8 +1303,9 @@
       if (onDown) onDown();
     });
     const up = function (e) {
+      if (!set.has(e.pointerId)) return;
       set.delete(e.pointerId);
-      if (set.size === 0) el.classList.remove('on');
+      if (set.size === 0) { el.classList.remove('on'); if (onRelease && e.type === 'pointerup') onRelease(); }
     };
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
@@ -1307,7 +1314,8 @@
   holdButton(els.btnFire, touch.fireIds);
   holdButton(els.btnBoost, touch.boostIds);
   const missileIds = new Set();
-  holdButton(els.btnMissile, missileIds, function () { input.missile = true; });
+  // ミサイル: 押している間に照準の近くの敵を次々ロックし、離したら一斉に撃つ (ロックが無ければ 1 発)
+  holdButton(els.btnMissile, missileIds, null, function () { input.missile = true; });
   // ロックオン: 押した瞬間に敵を選ぶ (2 回目からは次の敵へ)。押している間はその敵へ機首を向ける
   holdButton(els.btnTarget, touch.trackIds, function () { input.select = true; });
   // 指を置いた瞬間に止める (遊んでいる間は touchend を打ち消すので click が来ない)
@@ -1329,20 +1337,25 @@
   window.addEventListener('keydown', function (e) {
     if (e.repeat) { if (e.code !== 'Space') return; }
     keys[e.code] = true;
-    if (e.code === 'KeyE' || e.code === 'KeyM') input.missile = true;
     if (e.code === 'KeyQ' || e.code === 'KeyT') input.select = true;
     if ((e.code === 'Escape' || e.code === 'KeyP') && screen === 'play') setPaused(!paused);
     if (e.code === 'Space' || e.code.indexOf('Arrow') === 0) e.preventDefault();
   });
-  window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+  window.addEventListener('keyup', function (e) {
+    keys[e.code] = false;
+    if ((e.code === 'KeyE' || e.code === 'KeyM') && !keys.KeyE && !keys.KeyM) input.missile = true;
+  });
   window.addEventListener('blur', function () { for (const k in keys) keys[k] = false; });
+
+  function missileHeld() { return missileIds.size > 0 || !!(keys.KeyE || keys.KeyM); }
 
   function readKeys(dt) {
     const kx = (keys.ArrowRight || keys.KeyD ? 1 : 0) - (keys.ArrowLeft || keys.KeyA ? 1 : 0);
     const ky = (keys.ArrowUp || keys.KeyW ? 1 : 0) - (keys.ArrowDown || keys.KeyS ? 1 : 0);
     return {
       kx: kx, ky: ky * (settings.invert ? -1 : 1), fire: !!(keys.Space || keys.KeyJ),
-      boost: !!(keys.ShiftLeft || keys.ShiftRight || keys.KeyK), track: !!(keys.KeyQ || keys.KeyT)
+      boost: !!(keys.ShiftLeft || keys.ShiftRight || keys.KeyK), track: !!(keys.KeyQ || keys.KeyT),
+      missileHold: !!(keys.KeyE || keys.KeyM)
     };
   }
 
@@ -1389,8 +1402,8 @@
     shipObj = makePlayerShip();
     scene.add(shipObj);
     input.stickX = 0; input.stickY = 0; input.missile = false;
-    touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear();
-    els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on');
+    touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear(); missileIds.clear();
+    els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on'); els.btnMissile.classList.remove('on');
     setStickVisual(0, 0, false);
     cam.dir.set(0, 0, -1);
     fx.timeScale = 1; fx.slowT = 0; fx.stopT = 0; fx.bossCam = 0;
@@ -1431,8 +1444,8 @@
     paused = on;
     els.pause.hidden = !on;
     if (on) {
-      touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear();
-      els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on');
+      touch.fireIds.clear(); touch.boostIds.clear(); touch.trackIds.clear(); missileIds.clear();
+      els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on'); els.btnMissile.classList.remove('on');
       input.stickX = 0; input.stickY = 0; touch.stickId = null; setStickVisual(0, 0, false);
       els.diag.textContent = VERSION + ' · ' + fps.toFixed(0) + 'fps · 画素 x' + pixelRatio.toFixed(2) + ' · ' + W + 'x' + H;
       audio.suspend();
@@ -1560,8 +1573,8 @@
         case 'score':
           fx.popups.push({ text: '+' + e.pts + (e.combo > 1 ? '  x' + e.combo : ''), pos: e.pos, t: 1.2 });
           break;
-        case 'missile': audio.missile(); break;
-        case 'lock': audio.lock(); break;
+        case 'missile': audio.missile(e.salvo); break;
+        case 'lock': if (e.multi) audio.mlock(e.n); else audio.lock(); break;
         case 'target': audio.ui(); break;
         case 'boost': audio.boost(); fx.fovKick = 1; break;
         case 'playerHit': {
@@ -1585,6 +1598,7 @@
           if (e.phase === 'dying') { fx.slowT = 1.2; shake(2); }
           break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
+        case 'drones': banner('迎撃機 接近', 1.4, '#ff8a7a'); break;
         case 'bossWarp':
           // 光の中から出はじめる瞬間: 赤い閃光・大きな衝撃波・揺れ・轟音
           flash(e.pos, 900, 0.7, 0xff5040);
@@ -1632,7 +1646,7 @@
     game.fighters.forEach(function (f) {
       seen.add(f.id);
       let o = enemyObjs.get(f.id);
-      if (!o) { o = makeEnemyShip(); enemyObjs.set(f.id, o); scene.add(o); }
+      if (!o) { o = makeEnemyShip(); if (f.drone) o.scale.setScalar(0.6); enemyObjs.set(f.id, o); scene.add(o); } // ドローンは小さく
       o.position.set(f.pos.x, f.pos.y, f.pos.z);
       const yp = C.yawPitchOf(f.dir);
       o.rotation.order = 'YXZ';
@@ -2050,7 +2064,7 @@
       }
 
       // ロックオン
-      if (pl.lockId && pl.lockT > 0) {
+      if (pl.lockId && pl.lockT > 0 && !missileHeld() && pl.mlock.length === 0) {
         const t = C.targets(game).find(function (x) { return x.id === pl.lockId; });
         if (t) {
           const s = toScreen(t.pos);
@@ -2072,6 +2086,55 @@
             }
           }
         }
+      }
+
+      // マルチロック: 押している間は捕まえる範囲の輪、捕まえた敵には数つきの赤い菱形、捕まえかけの敵には縮む枠
+      hudInfo.mlock = [];
+      if (missileHeld() || pl.mlock.length > 0) {
+        const ts = C.targets(game);
+        if (missileHeld()) {
+          const ap = toScreen({ x: pl.pos.x + pl.dir.x * 300, y: pl.pos.y + pl.dir.y * 300, z: pl.pos.z + pl.dir.z * 300 });
+          if (!ap.behind) {
+            const rr = (H / 2) * Math.tan(K.multiCone) / Math.tan(camera.fov * Math.PI / 360);
+            hudInfo.mlockRing = rr;
+            c.strokeStyle = 'rgba(255,90,100,.35)'; c.lineWidth = 1.2;
+            c.setLineDash([6, 8]);
+            c.beginPath(); c.arc(ap.x, ap.y, rr, 0, Math.PI * 2); c.stroke();
+            c.setLineDash([]);
+          }
+          if (pl.mlockCand && pl.mlockT > 0) {
+            const t = ts.find(function (x) { return x.id === pl.mlockCand; });
+            const s = t && toScreen(t.pos);
+            if (s && !s.behind) {
+              const k = Math.min(1, pl.mlockT / K.multiLockTime);
+              const r = 34 - k * 18;
+              c.save(); c.translate(s.x, s.y); c.rotate(Math.PI / 4 * (1 - k));
+              c.strokeStyle = 'rgba(255,120,120,' + (0.4 + k * 0.5) + ')'; c.lineWidth = 1.6;
+              c.strokeRect(-r, -r, r * 2, r * 2);
+              c.restore();
+            }
+          }
+        }
+        const counts = new Map();
+        pl.mlock.forEach(function (id) { counts.set(id, (counts.get(id) || 0) + 1); });
+        counts.forEach(function (n, id) {
+          const t = ts.find(function (x) { return x.id === id; });
+          const s = t && toScreen(t.pos);
+          if (!s || s.behind) return;
+          hudInfo.mlock.push({ id: id, n: n, x: s.x, y: s.y });
+          const r = 15;
+          c.save(); c.translate(s.x, s.y); c.rotate(game.t * 2.5);
+          c.strokeStyle = 'rgba(255,60,70,1)'; c.lineWidth = 2.4;
+          c.beginPath(); c.moveTo(0, -r); c.lineTo(r, 0); c.lineTo(0, r); c.lineTo(-r, 0); c.closePath(); c.stroke();
+          c.restore();
+          // 字は重なりやすいので、同じ敵に 2 発以上のときだけ数を添える
+          if (n > 1) {
+            c.fillStyle = 'rgba(255,70,80,1)';
+            c.font = '800 12px -apple-system, sans-serif';
+            c.textAlign = 'left';
+            c.fillText('x' + n, s.x + 17, s.y - 10);
+          }
+        });
       }
 
       // 照準 (機首の先)
@@ -2291,10 +2354,13 @@
     const pl = game.player;
     if (shown.missiles !== pl.missiles) {
       shown.missiles = pl.missiles;
-      els.missileCount.textContent = String(pl.missiles);
       els.btnMissile.classList.toggle('empty', pl.missiles === 0);
     }
-    if (shown.locked !== pl.locked) { shown.locked = pl.locked; els.btnMissile.classList.toggle('locked', pl.locked); }
+    const lockedNow = pl.locked || pl.mlock.length > 0;
+    if (shown.locked !== lockedNow) { shown.locked = lockedNow; els.btnMissile.classList.toggle('locked', lockedNow); }
+    // ロックした数をボタンに出す (残り弾数の代わりに「n/残り」)
+    const mtext = pl.mlock.length > 0 ? pl.mlock.length + '/' + pl.missiles : String(pl.missiles);
+    if (shown.mtext !== mtext) { shown.mtext = mtext; els.missileCount.textContent = mtext; }
     const hasTarget = !!pl.targetId;
     if (shown.hasTarget !== hasTarget) { shown.hasTarget = hasTarget; els.btnTarget.classList.toggle('has-target', hasTarget); }
     const be = pl.boost < 5 && !pl.boosting;
@@ -2355,6 +2421,7 @@
         fire: touch.fireIds.size > 0 || kb.fire,
         boost: touch.boostIds.size > 0 || kb.boost,
         missile: input.missile,
+        missileHold: missileIds.size > 0 || kb.missileHold,
         select: input.select,
         track: touch.trackIds.size > 0 || kb.track
       };
@@ -2481,6 +2548,8 @@
         }).length;
       },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
+      banners: function () { return fx.banners.map(function (b) { return b.text; }); },
+      enemyScale: function (id) { const o = enemyObjs.get(id); return o ? o.scale.x : 0; },
       bossClipX: function () { return bossClip.constant; },
       jetLength: function () { return shipObj.userData.jetBase; },
       jetRoot: function () { return shipObj.userData.jetRoot; },
