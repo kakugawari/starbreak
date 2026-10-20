@@ -146,29 +146,26 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg', 'title_planet.webp'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
     ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・戦艦の装甲の絵が読み込まれる');
-    ok(assets['title_planet.webp'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
+    ok(assets['title_planet.jpg'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const tp = await page.evaluate(() => window.__app.titlePlanetInfo());
-    ok(tp.shown && !tp.earth, `タイトルは大きな惑星だけを出し、ゲームの地球は出さない (惑星 ${tp.shown}・地球 ${tp.earth})`);
-    ok(tp.edgeInside === 0, `惑星の絵の切れた下端は画面の外 (画面に入った点 ${tp.edgeInside}/41)`);
-    // 惑星はゆっくり動く (丸の真ん中を軸に回り、ふわりと漂う)。どの時刻でも切れた下端は画面に入らない
-    const motion = await page.evaluate(async () => {
+    ok(tp.shown && tp.glow && !tp.earth, `タイトルは大きな惑星 (と大気・太陽の光) だけを出し、ゲームの地球は出さない (惑星 ${tp.shown}・地球 ${tp.earth})`);
+    // 惑星は円の中心を軸に回り続ける。太陽の光は回さない (惑星のふちに留まる)
+    const spin = await page.evaluate(async () => {
       const a = window.__app, P = a.titlePlanet, frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const at = async (t) => { a.setTitleTime(t); await frame(); return a.titlePlanetInfo(); };
-      let worst = 0;
-      for (let t = 0; t <= 140; t += 3.5) worst = Math.max(worst, (await at(t)).edgeInside);
-      const s0 = await at(0), s1 = await at(P.swingT / 4);
-      // 漂いを止めると、回しても丸の真ん中は動かない (軸が丸の真ん中にある)
       const dx = P.driftX, dy = P.driftY; P.driftX = 0; P.driftY = 0;
-      const p0 = await at(0), p1 = await at(P.swingT / 4);
+      a.setTitleTime(0); await frame(); const s0 = a.titlePlanetInfo();
+      a.setTitleTime(P.spinT / 4); await frame(); const s1 = a.titlePlanetInfo();
       P.driftX = dx; P.driftY = dy;
-      return { worst, move: Math.hypot(s1.topX - s0.topX, s1.topY - s0.topY), pivot: Math.hypot(p1.cx - p0.cx, p1.cy - p0.cy) };
+      return { turn: (s0.ang - s1.ang) / (Math.PI * 2), center: Math.hypot(s1.cx - s0.cx, s1.cy - s0.cy), flare: Math.hypot(s1.flareX - s0.flareX, s1.flareY - s0.flareY),
+        onRim: Math.abs(Math.hypot(s0.flareX - s0.cx, s0.flareY - s0.cy) - s0.radius), flareX: s0.flareX, flareY: s0.flareY, W: innerWidth, H: innerHeight };
     });
-    ok(motion.worst === 0, `惑星を動かしても、切れた下端は画面に入らない (40 時刻でいちばん多く入った点 ${motion.worst}/41)`);
-    ok(motion.move > 15 && motion.pivot < 1.5, `惑星は丸の真ん中を軸にゆっくり回る (絵の上のふちが ${motion.move.toFixed(0)}px 動き、丸の真ん中は ${motion.pivot.toFixed(1)}px)`);
+    ok(Math.abs(spin.turn - 0.25) < 0.01 && spin.center < 0.5, `惑星は円の中心を軸に回り続ける (1 周の 4 分の 1 の時間で ${spin.turn.toFixed(2)} 周・中心のずれ ${spin.center.toFixed(1)}px)`);
+    ok(spin.flare < 0.5 && spin.onRim < 2 && spin.flareX > 0 && spin.flareX < spin.W && spin.flareY > 0 && spin.flareY < spin.H,
+      `太陽の光は回らず、惑星のふちの画面の中に留まる (動き ${spin.flare.toFixed(1)}px・ふちからのずれ ${spin.onRim.toFixed(1)}px・位置 ${Math.round(spin.flareX)},${Math.round(spin.flareY)})`);
     // ロゴ・左下のボタン・下の小さなボタンが重ならず、ロゴは機体 (画面の右下寄り) にかからない
     const titleRects = await page.evaluate(() => {
       const r = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };
@@ -254,7 +251,7 @@ async function run() {
     ok(await page.evaluate(() => window.__app.skyDim() < 0.7), '遊んでいる間は背景を沈める (敵や印が埋もれないように)');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const tp2 = await page.evaluate(() => window.__app.titlePlanetInfo());
-    ok(!tp2.shown && tp2.earth, `遊んでいる間はタイトルの惑星を消し、ゲームの地球を出す (惑星 ${tp2.shown}・地球 ${tp2.earth})`);
+    ok(!tp2.shown && !tp2.glow && tp2.earth, `遊んでいる間はタイトルの惑星を消し、ゲームの地球を出す (惑星 ${tp2.shown}・地球 ${tp2.earth})`);
 
     // 操作の部品: 安全域の内側に収まり、重ならず、指で押せる大きさ
     const layout = await page.evaluate(() => {
@@ -673,9 +670,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.webp', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.webp', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
+    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth

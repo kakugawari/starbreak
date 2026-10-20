@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.12';
+  const VERSION = 'v0.6.13';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -272,24 +272,52 @@
     planet.userData.ball = m;
   })();
 
-  // タイトルの大きな惑星 (送ってもらった絵。マゼンタ地から切り抜いた title_planet.webp)。
-  // 画面に貼り付けた板として、機体より奥・空より手前に描く。置き場所は画面の高さを 1 とした割合で決める
-  // (絵の下端は切れているので、画面の下より下に置く)
+  // タイトルの大きな惑星 (送ってもらった絵の円の中だけを切り出した title_planet.jpg)。
+  // 画面に貼り付けた板として、機体より奥・空より手前に描く。置き場所と大きさは画面の高さを 1 とした割合。
+  // 惑星はゆっくり回し続け (円の中心が軸)、大気のふちと太陽の光は止めたまま別の板に描く
+  // (絵に焼き込まれていた太陽の光は、切り出すときに消してある)
   const TITLE_SHIP = { a: -0.7, dist: 30, y0: 6, x: 0.74, y: 0.56 };
-  const TITLE_PLANET = { aspect: 1239 / 841, h: 1.5, cx: 0.21, cy: 0.5, rot: -0.3, dist: 600, shade: 0.62,
-    // 惑星の丸の真ん中 (絵の中の位置。0〜1、上が 0)。ゆっくり回すときはここを軸にする
-    pu: 0.503, pv: 0.747,
-    // ゆっくり動かす: 丸の真ん中を軸に左右へ回る (振れ幅・周期) と、ふわりと漂う (横・縦の振れ幅と周期)
-    swing: 0.07, swingT: 70, driftX: 0.012, driftXT: 53, driftY: 0.015, driftYT: 41 };
-  const titlePlanet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
-    transparent: true, depthWrite: false, fog: false, toneMapped: false
+  const TITLE_PLANET = { cx: 0.107, cy: 0.856, r: 1.061, dist: 600, shade: 0.62,
+    ang0: -0.09, spinT: 330,                 // はじめの向き (rad) と、1 周の秒数 (時計回り)
+    flare: 28 * Math.PI / 180,               // 太陽の光を置くふちの向き (右から上へ)
+    driftX: 0.012, driftXT: 53, driftY: 0.015, driftYT: 41 };
+  const titlePlanet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
+    uniforms: { map: { value: null }, ang: { value: 0 }, shade: { value: 1 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    // 円の中だけ描き、絵は円の中心のまわりに回して読む (回しても半径は変わらないので、ふちの外は読まない)
+    fragmentShader: 'uniform sampler2D map; uniform float ang; uniform float shade; varying vec2 vUv;' +
+      'void main(){ vec2 p = (vUv - 0.5) * 2.0; float r = length(p); float a = 1.0 - smoothstep(0.986, 1.0, r); if (a <= 0.0) discard;' +
+      'float c = cos(ang), s = sin(ang); vec2 q = vec2(c * p.x + s * p.y, -s * p.x + c * p.y);' +
+      'vec4 t = texture2D(map, q * 0.497 + 0.5); gl_FragColor = vec4(t.rgb * shade, a);' +
+      '\n#include <colorspace_fragment>\n}',
+    transparent: true, depthWrite: false, fog: false
   }));
   titlePlanet.renderOrder = -7;
   titlePlanet.visible = false;
   titlePlanet.userData.loaded = false;
   scene.add(titlePlanet);
-  loadTex('title_planet.webp', function (t) { titlePlanet.material.map = t; titlePlanet.material.needsUpdate = true; titlePlanet.userData.loaded = true; });
-  const _tpQ = new THREE.Quaternion(), _tpZ = new THREE.Vector3(0, 0, 1);
+  loadTex('title_planet.jpg', function (t) { titlePlanet.material.uniforms.map.value = t; titlePlanet.userData.loaded = true; });
+  // 大気のふち (日の当たる側ほど明るい) と太陽の光。回さない。惑星の半径を 1 として、板は半径 1.6 ぶん
+  const TP_GLOW = 1.6;
+  const titleGlow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
+    uniforms: { flare: { value: new THREE.Vector2(1, 0) }, k: { value: TP_GLOW } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'uniform vec2 flare; uniform float k; varying vec2 vUv;' +
+      'void main(){ vec2 p = (vUv - 0.5) * 2.0 * k; float r = length(p);' +
+      'float lit = 0.3 + 0.7 * max(0.0, dot(p / max(r, 1e-4), flare));' +
+      'float w = r > 1.0 ? 0.045 : 0.015; float rim = exp(-pow((r - 1.0) / w, 2.0)) * (0.3 + 0.5 * lit);' +
+      'vec3 rimC = mix(vec3(0.18, 0.45, 1.0), vec3(0.7, 0.9, 1.0), lit);' +
+      'vec2 d = p - flare; float dl = length(d);' +
+      'float core = exp(-pow(dl / 0.022, 2.0)) * 1.3 + exp(-pow(dl / 0.07, 2.0)) * 0.35 + exp(-pow(dl / 0.2, 2.0)) * 0.07;' +
+      'float streak = exp(-pow(d.y / 0.004, 2.0)) * exp(-abs(d.x) / 0.28) * 0.55;' +
+      'vec3 col = rimC * rim + vec3(1.0, 0.95, 0.86) * (core + streak);' +
+      'gl_FragColor = vec4(col, 1.0); }',
+    transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending
+  }));
+  titleGlow.renderOrder = -6;
+  titleGlow.visible = false;
+  scene.add(titleGlow);
+  function titlePlanetAngle() { return TITLE_PLANET.ang0 - titleT / TITLE_PLANET.spinT * Math.PI * 2; }
   function placeTitlePlanet() {
     camera.updateMatrixWorld();
     const P = TITLE_PLANET;
@@ -298,23 +326,22 @@
     const fwd = camera.getWorldDirection(new THREE.Vector3());
     const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
     const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
-    // ゆっくり動かす。回すのは惑星の丸の真ん中を軸にする (絵の真ん中を軸にすると、丸ごと横へ流れて見える)
+    // 円の中心を画面で決めて、ふわりと漂わせる
     const t = titleT, TAU = Math.PI * 2;
-    const ang = P.rot + P.swing * Math.sin(t / P.swingT * TAU);
-    const w = P.h * P.aspect, h = P.h;
-    const ox = (P.pu - 0.5) * w, oy = (0.5 - P.pv) * h;             // 絵の真ん中 → 丸の真ん中 (板の上で、上が +)
-    const c0x = Math.cos(P.rot), s0x = Math.sin(P.rot);
-    // 止まっているとき (P.rot) の丸の真ん中を画面で決め、そこを漂わせ、そのまわりに板を回す
-    const icx = (P.cx * H - W / 2) / H, icy = (H / 2 - P.cy * H) / H;
-    const pcx = icx + c0x * ox - s0x * oy + P.driftX * Math.sin(t / P.driftXT * TAU);
-    const pcy = icy + s0x * ox + c0x * oy + P.driftY * Math.sin(t / P.driftYT * TAU);
-    const ca = Math.cos(ang), sa = Math.sin(ang);
-    const sx = pcx - (ca * ox - sa * oy), sy = pcy - (sa * ox + ca * oy);
+    const sx = (P.cx * H - W / 2) / H + P.driftX * Math.sin(t / P.driftXT * TAU);
+    const sy = (H / 2 - P.cy * H) / H + P.driftY * Math.sin(t / P.driftYT * TAU);
     titlePlanet.position.copy(camera.position).addScaledVector(fwd, P.dist).addScaledVector(right, sx * unit).addScaledVector(up, sy * unit);
-    titlePlanet.quaternion.copy(camera.quaternion).multiply(_tpQ.setFromAxisAngle(_tpZ, ang));
-    titlePlanet.scale.set(P.h * unit * P.aspect, P.h * unit, 1);
-    titlePlanet.material.color.setScalar(P.shade);
+    titlePlanet.quaternion.copy(camera.quaternion);
+    titlePlanet.scale.set(P.r * 2 * unit, P.r * 2 * unit, 1);
+    titlePlanet.material.uniforms.ang.value = titlePlanetAngle();
+    titlePlanet.material.uniforms.shade.value = P.shade;
     titlePlanet.visible = titlePlanet.userData.loaded;
+    // 大気と太陽の光: 同じ所に、回さずに (手前に少しだけ寄せて重ねる)
+    titleGlow.position.copy(titlePlanet.position).addScaledVector(fwd, -1);
+    titleGlow.quaternion.copy(camera.quaternion);
+    titleGlow.scale.set(P.r * 2 * TP_GLOW * unit, P.r * 2 * TP_GLOW * unit, 1);
+    titleGlow.material.uniforms.flare.value.set(Math.cos(P.flare), Math.sin(P.flare));
+    titleGlow.visible = titlePlanet.visible;
   }
 
   // 宇宙のちり: 自分の動きが分かるよう、通り過ぎる細い筋を描く
@@ -1900,7 +1927,7 @@
     sky.position.copy(camera.position);
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
-    planet.visible = true; titlePlanet.visible = false;
+    planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -1933,7 +1960,7 @@
     camera.up.set(v.up[0], v.up[1], v.up[2]);
     camera.fov = 30; camera.updateProjectionMatrix();
     camera.lookAt(center);
-    sky.visible = !!v.sky; planet.visible = !!v.planet; dust.lines.visible = false; titlePlanet.visible = false;
+    sky.visible = !!v.sky; planet.visible = !!v.planet; dust.lines.visible = false; titlePlanet.visible = false; titleGlow.visible = false;
     if (v.sky) { sky.position.copy(camera.position); planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset); }
     if (v.thrust && obj === shipObj) setThrust(shipObj, v.thrust);
     inspectLight.visible = true;
@@ -2597,17 +2624,13 @@
       },
       titlePlanet: TITLE_PLANET, titleShip: TITLE_SHIP,
       setTitleTime: function (v) { titleT = v; },
-      // タイトルの惑星: 出ているか・ゲームの地球は隠れているか・絵の切れた下端が画面に入っていないか (下端の 41 点のうち画面の中の数)
+      // タイトルの惑星: 出ているか・ゲームの地球は隠れているか・円の中心と太陽の光の画面の位置・いまの向き
       titlePlanetInfo: function () {
-        let inside = 0;
-        for (let i = 0; i <= 40; i++) {
-          const p = new THREE.Vector3(i / 40 - 0.5, -0.5, 0).applyMatrix4(titlePlanet.matrixWorld);
-          const s = toScreen(p);
-          if (!s.behind && s.x >= 0 && s.x <= W && s.y >= 0 && s.y <= H) inside++;
-        }
-        const c = toScreen(new THREE.Vector3(TITLE_PLANET.pu - 0.5, 0.5 - TITLE_PLANET.pv, 0).applyMatrix4(titlePlanet.matrixWorld));
-        const top = toScreen(new THREE.Vector3(0, 0.5, 0).applyMatrix4(titlePlanet.matrixWorld));
-        return { shown: titlePlanet.visible, earth: planet.visible, edgeInside: inside, cx: c.x, cy: c.y, topX: top.x, topY: top.y };
+        const c = toScreen(titlePlanet.position);
+        const P = TITLE_PLANET, R = 0.5 / TP_GLOW;
+        const f = toScreen(new THREE.Vector3(Math.cos(P.flare) * R, Math.sin(P.flare) * R, 0).applyMatrix4(titleGlow.matrixWorld));
+        const rr = toScreen(new THREE.Vector3(0.5, 0, 0).applyMatrix4(titlePlanet.matrixWorld));
+        return { shown: titlePlanet.visible, glow: titleGlow.visible, earth: planet.visible, cx: c.x, cy: c.y, radius: Math.hypot(rr.x - c.x, rr.y - c.y), flareX: f.x, flareY: f.y, ang: titlePlanetAngle() };
       },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
