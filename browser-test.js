@@ -275,6 +275,26 @@ async function run() {
     ok(boostFx.boosting && boostFx.big === 0, `ブーストで煙の玉を出さない (自機の 40m 以内の大きな粒 ${boostFx.big})`);
     ok(boostFx.jet > jetNormal * 1.6, `ブーストで噴射の光が延びる (${jetNormal.toFixed(1)} → ${boostFx.jet.toFixed(1)})`);
 
+    // 撃墜の瞬間: タメ (時が止まる)・衝撃波の輪・遠くても画面で小さくならない・膨らむ煙の玉を出さない
+    const killAt = (dist) => page.evaluate((dist) => {
+      const g = window.__app.game(), pl = g.player;
+      g.events.push({ type: 'explode', kind: 'fighter', size: 1.4, pos: { x: pl.pos.x + pl.dir.x * dist, y: pl.pos.y + pl.dir.y * dist, z: pl.pos.z + pl.dir.z * dist }, vel: { x: 0, y: 0, z: 0 } });
+      return g.t;
+    }, dist);
+    await killAt(300);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const kf = await page.evaluate(() => Object.assign(window.__app.killFx(), { grow: window.__app.growingParticles() }));
+    ok(kf.last && kf.last.kind === 'fighter' && kf.ringOn, '撃墜すると衝撃波の輪が出る');
+    await page.waitForTimeout(250);
+    const kfStop = await page.evaluate(() => window.__app.killFx().last);
+    ok(kfStop.frozen >= 1 && kfStop.tFrozen === kfStop.tAt, `撃墜の瞬間は一瞬だけ時が止まる (止まった描画 ${kfStop.frozen} 回・その間に進んだ時間 ${((kfStop.tFrozen - kfStop.tAt) * 1000).toFixed(0)}ms)`);
+    ok(kf.grow === 0, `撃墜の爆発に、膨らみながら消える大きな粒 (煙の玉) が無い (${kf.grow})`);
+    await page.waitForTimeout(350);
+    await killAt(700);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const kfFar = await page.evaluate(() => window.__app.killFx());
+    ok(kf.ringPx >= 100 && kfFar.ringPx >= 100, `遠くの撃墜でも、衝撃波は画面で十分な大きさ (300m: ${kf.ringPx.toFixed(0)}px / 700m: ${kfFar.ringPx.toFixed(0)}px)`);
+
     const cdp = await ctx.newCDPSession(page);
     const f = fingers(cdp, page);
     const cdp0Tap = async (x, y) => {

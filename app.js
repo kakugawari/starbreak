@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.5.10';
+  const VERSION = 'v0.6.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -969,7 +969,7 @@
     return n;
   }
 
-  const FIRE = [1.0, 0.85, 0.5], EMBER = [0.9, 0.25, 0.05], SMOKE = [0.12, 0.1, 0.1], SPARK = [0.7, 0.9, 1.0];
+  const FIRE = [1.0, 0.85, 0.5], EMBER = [0.9, 0.25, 0.05], SPARK = [0.7, 0.9, 1.0];
 
   function rnd(a, b) { return a + Math.random() * (b - a); }
   function rndDir() {
@@ -1005,29 +1005,93 @@
     }
   }
 
-  function explosion(pos, size, vel) {
+  /**
+   * 爆発。k は見せる大きさの倍率 (粒の数は変えず、大きさと広がりだけ拡げる)。
+   * 遠くの撃墜でも画面で小さくなりすぎないよう、撃墜では距離に応じて k を上げる (killBurst)。
+   * 宇宙なので煙は出さない: 火の玉・燃えさし・飛び散る光のかけらだけ
+   */
+  function explosion(pos, size, vel, k) {
     const v = vel || { x: 0, y: 0, z: 0 };
+    k = k || 1;
     const n = Math.round(26 * Math.min(size, 6));
+    // 火の玉: 大きく明るく始まり、縮みながら消える (膨らむと煙の玉に見える)
+    const kk = Math.sqrt(k);
     for (let i = 0; i < n; i++) {
-      const d = rndDir(), sp = rnd(10, 46) * size;
+      const d = rndDir(), sp = rnd(10, 46) * size * k;
       spawnParticle(pos.x, pos.y, pos.z, d[0] * sp + v.x * 0.6, d[1] * sp + v.y * 0.6, d[2] * sp + v.z * 0.6,
-        rnd(0.4, 0.9) * Math.sqrt(size), 4 * size, 12 * size, FIRE, EMBER, 2.2);
-    }
-    for (let i = 0; i < n * 0.6; i++) {
-      const d = rndDir(), sp = rnd(4, 18) * size;
-      spawnParticle(pos.x, pos.y, pos.z, d[0] * sp + v.x * 0.4, d[1] * sp + v.y * 0.4, d[2] * sp + v.z * 0.4,
-        rnd(1.0, 2.2) * Math.sqrt(size), 6 * size, 22 * size, [0.35, 0.22, 0.15], SMOKE, 1.4);
+        rnd(0.25, 0.55) * Math.sqrt(size), 9 * size * kk, 1.5 * size * kk, FIRE, EMBER, 2.2);
     }
     // 飛び散るかけら (速い光の粒)
-    for (let i = 0; i < n * 0.8; i++) {
-      const d = rndDir(), sp = rnd(60, 160) * Math.sqrt(size);
+    for (let i = 0; i < n * 1.2; i++) {
+      const d = rndDir(), sp = rnd(60, 160) * Math.sqrt(size) * k;
       spawnParticle(pos.x, pos.y, pos.z, d[0] * sp + v.x, d[1] * sp + v.y, d[2] * sp + v.z,
-        rnd(0.3, 0.9), 1.2, 0.4, [1, 0.9, 0.6], [1, 0.3, 0.05], 1.5);
+        rnd(0.3, 0.9), 1.2 * k, 0.4 * k, [1, 0.9, 0.6], [1, 0.3, 0.05], 1.5);
     }
-    flash(pos, 30 * size, 0.35 + size * 0.05);
+    flash(pos, 30 * size * k, 0.35 + size * 0.05);
     flashLight.position.set(pos.x, pos.y, pos.z);
     flashLight.intensity = Math.max(flashLight.intensity, 40 * size);
-    flashLight.distance = 120 * size;
+    flashLight.distance = 120 * size * k;
+  }
+
+  // 衝撃波の輪 (撃墜の瞬間に広がる)。いつもカメラを向く板
+  const ringTex = canvasTex(128, 128, function (c, w) {
+    const g = c.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.62, 'rgba(255,255,255,0)');
+    g.addColorStop(0.8, 'rgba(255,255,255,1)');
+    g.addColorStop(0.9, 'rgba(255,255,255,.35)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, w, w);
+  });
+  const rings = [];
+  for (let i = 0; i < 8; i++) {
+    const m = new THREE.SpriteMaterial({ map: ringTex, color: 0xffd8a0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
+    const sp = new THREE.Sprite(m);
+    sp.visible = false;
+    scene.add(sp);
+    rings.push({ s: sp, t: 0, max: 1, size: 1 });
+  }
+  function shockRing(pos, size, dur) {
+    let r = rings[0];
+    for (let i = 0; i < rings.length; i++) if (rings[i].t <= 0) { r = rings[i]; break; }
+    r.s.position.set(pos.x, pos.y, pos.z);
+    r.t = dur; r.max = dur; r.size = size;
+    r.s.scale.setScalar(size * 0.1);
+    r.s.material.opacity = 1;
+    r.s.visible = true;
+  }
+  function updateRings(dt) {
+    for (let i = 0; i < rings.length; i++) {
+      const r = rings[i];
+      if (r.t <= 0) continue;
+      r.t -= dt;
+      if (r.t <= 0) { r.s.visible = false; continue; }
+      const k = 1 - r.t / r.max;
+      r.s.scale.setScalar(r.size * (0.1 + 0.9 * (1 - Math.pow(1 - k, 3))));
+      r.s.material.opacity = Math.pow(1 - k, 1.5);
+    }
+  }
+
+  // 撃墜の瞬間: タメ (時を止める) ・白い閃光・衝撃波の輪・大きめの爆発。遠くても画面で小さくなりすぎない
+  const KILL = {
+    fighter: { stop: 0.06, ring: 40, shake: 0.5 },
+    turret: { stop: 0.08, ring: 34, shake: 0.7 },
+    engine: { stop: 0.1, ring: 34, shake: 0.9 },
+    core: { stop: 0.14, ring: 30, shake: 1.2 }
+  };
+  const KILL_NEAR = 140; // この距離より遠い撃墜は、見せる大きさを距離に比例して拡げる
+  let lastBurst = null;
+  function killBurst(e, d) {
+    const kd = KILL[e.kind];
+    const k = Math.max(1, d / KILL_NEAR);
+    explosion(e.pos, e.size, e.vel, k);
+    flash(e.pos, 55 * e.size * k, 0.14, 0xffffff);
+    shockRing(e.pos, kd.ring * e.size * k, 0.45);
+    fx.stopT = Math.max(fx.stopT, kd.stop);
+    shake(Math.max(kd.shake, Math.min(1.4, e.size * 60 / Math.max(60, d))));
+    audio.kill(game.stats.combo || 1, e.size);
+    lastBurst = { kind: e.kind, dist: d, k: k, ring: kd.ring * e.size * k, tAt: game.t, frozen: 0, tFrozen: game.t };
   }
 
   function sparks(pos, n, color) {
@@ -1120,6 +1184,14 @@
         tone('sine', 120, 30, 0.35 + size * 0.1, Math.min(0.8, 0.3 + size * 0.1));
       },
       big: function () { noise(2.4, 1, 1800, 40); tone('sine', 80, 20, 2.0, 0.9); },
+      // 撃墜: 重い爆発 + はじける高い音。コンボが続くほど高くなる (2 半音ずつ、8 段まで)
+      kill: function (combo, size) {
+        const r = Math.pow(2, Math.min(combo - 1, 8) * 2 / 12);
+        noise(0.6 + size * 0.15, Math.min(0.95, 0.5 + size * 0.1), 3000, 50);
+        tone('sine', 140, 28, 0.5 + size * 0.1, 0.9);
+        tone('square', 1320 * r, 660 * r, 0.12, 0.09);
+        tone('triangle', 1980 * r, 1980 * r, 0.18, 0.07);
+      },
       missile: function () { noise(0.6, 0.3, 800, 3000, 'bandpass', 1.2); },
       lock: function () { tone('square', 1760, 1760, 0.05, 0.06); setTimeout(function () { tone('square', 2350, 2350, 0.07, 0.06); }, 70); },
       boost: function () { noise(0.7, 0.35, 300, 4000, 'bandpass', 1); },
@@ -1253,7 +1325,7 @@
   let bossObj = null;
   const fx = {
     shake: 0, hitMarker: 0, killMarker: 0, hurt: [], banners: [], popups: [],
-    fovKick: 0, bossCam: 0, timeScale: 1, slowT: 0, lastHurt: 0, alarmT: 0
+    fovKick: 0, bossCam: 0, timeScale: 1, slowT: 0, stopT: 0, lastHurt: 0, alarmT: 0
   };
   const cam = { dir: new THREE.Vector3(0, 0, -1), pos: new THREE.Vector3(0, 6, 18), roll: 0, back: 16, fov: 68 };
   let titleT = 0;
@@ -1287,7 +1359,8 @@
     els.btnFire.classList.remove('on'); els.btnBoost.classList.remove('on'); els.btnTarget.classList.remove('on');
     setStickVisual(0, 0, false);
     cam.dir.set(0, 0, -1);
-    fx.timeScale = 1; fx.slowT = 0; fx.bossCam = 0;
+    fx.timeScale = 1; fx.slowT = 0; fx.stopT = 0; fx.bossCam = 0;
+    rings.forEach(function (r) { r.t = 0; r.s.visible = false; });
     resultShown = false;
     setSkyDim(SKY_DIM.play);
     screen = 'play';
@@ -1401,7 +1474,7 @@
           break;
         case 'explode': {
           const size = e.size;
-          explosion(e.pos, size, e.vel);
+          if (!KILL[e.kind]) explosion(e.pos, size, e.vel);
           const d = dist3(e.pos, pl.pos);
           if (e.kind === 'boss') {
             audio.big();
@@ -1412,11 +1485,13 @@
               const o = { x: e.pos.x + rnd(-300, 300), y: e.pos.y + rnd(-40, 60), z: e.pos.z + rnd(-60, 60) };
               setTimeout(function () { explosion(o, rnd(4, 8)); }, k * 120);
             }
+          } else if (KILL[e.kind]) {
+            killBurst(e, d);
           } else {
             audio.explode(size);
             shake(Math.min(1.4, size * 60 / Math.max(60, d)));
           }
-          if (e.kind === 'fighter' || e.kind === 'turret' || e.kind === 'engine' || e.kind === 'core') fx.killMarker = 0.35;
+          if (KILL[e.kind]) fx.killMarker = 0.35;
           break;
         }
         case 'score':
@@ -1530,8 +1605,9 @@
             o.userData.head.visible = false;
             o.userData.mat.color.setRGB(0.08, 0.07, 0.07);
           }
+          // 壊れた砲台: 煙ではなく、ときどき火花が噴き出す
           if (!p.alive && Math.random() < dt * 6) {
-            spawnParticle(p.pos.x + rnd(-4, 4), p.pos.y + rnd(-2, 2), p.pos.z + rnd(-4, 4), p.face.x * 8 + rnd(-2, 2), p.face.y * 8 + rnd(-2, 2), p.face.z * 8 + rnd(-2, 2), 2.0, 6, 20, [0.4, 0.25, 0.15], [0.05, 0.05, 0.05], 0.3);
+            spawnParticle(p.pos.x + rnd(-4, 4), p.pos.y + rnd(-2, 2), p.pos.z + rnd(-4, 4), p.face.x * 30 + rnd(-12, 12), p.face.y * 30 + rnd(-12, 12), p.face.z * 30 + rnd(-12, 12), rnd(0.3, 0.7), 2.2, 0.3, [1, 0.75, 0.4], [0.9, 0.2, 0.05], 1.5);
           }
         } else if (p.kind === 'engine') {
           const g = o.userData.glow;
@@ -2164,10 +2240,15 @@
       return;
     }
 
-    let dt = realDt;
+    let dt = realDt * (window.__timeScale || 1); // __timeScale: 演出を写すテスト用 (ゆっくり流す)
     if (paused) dt = 0;
     // 撃沈の瞬間はゆっくりに
     if (fx.slowT > 0) { fx.slowT = Math.max(0, fx.slowT - realDt); dt *= 0.35; }
+    // 撃墜のタメ: ほんの一瞬だけ時を止める (画面は描き続ける)
+    if (fx.stopT > 0 && !paused) {
+      fx.stopT = Math.max(0, fx.stopT - realDt); dt = 0;
+      if (lastBurst) { lastBurst.frozen++; lastBurst.tFrozen = game.t; }
+    }
 
     if (dt > 0 && screen === 'play') {
       const kb = readKeys(realDt);
@@ -2194,6 +2275,7 @@
       syncWorld(dt);
       updateParticles(dt);
       updateFlashes(dt);
+      updateRings(dt);
       flashLight.intensity *= Math.exp(-realDt * 9);
     }
     updateCamera(dt, paused ? 0 : realDt);
@@ -2302,6 +2384,10 @@
         }).length;
       },
       jetLength: function () { return shipObj.userData.jets[0].scale.z; },
+      // 膨らみながら消える大きな粒 (煙の玉に見える) の数
+      growingParticles: function () {
+        return particles.list.filter(function (q) { return q.on && q.s1 > q.s0 * 1.2 && q.s1 >= 6; }).length;
+      },
       setSkyDim: setSkyDim,
       // 面の表向き (頂点の並び) と、光の計算に使う向き (法線) が食い違う三角形の数。
       // 鏡にした板 (geometry.scale(-1)) はここが食い違い、片側だけ黒く見える
@@ -2343,6 +2429,12 @@
         els.title.hidden = !!view || screen !== 'title';
       },
       inspectViews: INSPECT,
+      // 撃墜の演出の見張り用: 最後の撃墜の大きさと、いまのタメ・輪
+      killFx: function () {
+        const r = rings.find(function (q) { return q.t > 0; });
+        const fpx = (els.gl.clientHeight / 2) / Math.tan(camera.fov * Math.PI / 360);
+        return { last: lastBurst, stopT: fx.stopT, ringOn: !!r, ringPx: lastBurst ? lastBurst.ring / Math.max(1, lastBurst.dist) * fpx : 0, gameT: game ? game.t : 0 };
+      },
       skyDim: function () { return skyDim; },
       renderInfo: function () { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }; }
     };
