@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.0';
+  const VERSION = 'v0.6.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1342,6 +1342,8 @@
     }
     particles.list.forEach(function (p) { p.on = false; });
     flashes.forEach(function (f) { f.t = 0; f.s.visible = false; });
+    if (cutinAnim) { cutinAnim.cancel(); cutinAnim = null; }
+    $('cutin').hidden = true;
     fx.banners.length = 0; fx.popups.length = 0; fx.hurt.length = 0;
   }
 
@@ -1367,7 +1369,8 @@
     paused = false;
     els.title.hidden = true; els.result.hidden = true; els.pause.hidden = true;
     els.controls.hidden = false;
-    banner(opts.start === 'boss' ? '巨大戦艦戦' : 'STAGE 1  惑星軌道', 2.4, '#cfe8ff');
+    // 巨大戦艦からのときは、すぐ出るカットインが知らせる
+    if (opts.start !== 'boss') banner('STAGE 1  惑星軌道', 2.4, '#cfe8ff');
     consumeEvents();
   }
 
@@ -1401,8 +1404,10 @@
       input.stickX = 0; input.stickY = 0; touch.stickId = null; setStickVisual(0, 0, false);
       els.diag.textContent = VERSION + ' · ' + fps.toFixed(0) + 'fps · 画素 x' + pixelRatio.toFixed(2) + ' · ' + W + 'x' + H;
       audio.suspend();
+      if (cutinAnim) cutinAnim.pause();
     } else {
       audio.resume();
+      if (cutinAnim) cutinAnim.play();
     }
   }
 
@@ -1433,6 +1438,32 @@
     els.result.hidden = false;
     els.controls.hidden = true;
     screen = 'result';
+  }
+
+  /**
+   * ボス戦のカットイン: 右から斜めに飛び込み、少し震えながら止まり、左へ抜ける (2.4 秒)。
+   * 位置は CSS で決め、動きは element.animate で付ける (同じコマで書き換えると動かないため)
+   */
+  const CUTIN_MS = 2400;
+  let cutinAnim = null;
+  function showCutin() {
+    const el = $('cutin');
+    el.hidden = false;
+    if (cutinAnim) cutinAnim.cancel();
+    cutinAnim = el.animate([
+      { transform: 'translateX(110%) skewX(-18deg)', opacity: 0, offset: 0 },
+      { transform: 'translateX(-4%) skewX(-6deg)', opacity: 1, offset: 0.07 },
+      { transform: 'translateX(1.5%) skewX(0deg)', opacity: 1, offset: 0.12 },
+      { transform: 'translateX(0) skewX(0deg)', opacity: 0.7, offset: 0.15 },
+      { transform: 'translateX(0) skewX(0deg)', opacity: 1, offset: 0.17 },
+      { transform: 'translate(-0.4%, 0.6%)', opacity: 1, offset: 0.45 },
+      { transform: 'translate(0.4%, -0.4%)', opacity: 0.85, offset: 0.47 },
+      { transform: 'translateX(0)', opacity: 1, offset: 0.49 },
+      { transform: 'translateX(-1%) skewX(4deg)', opacity: 1, offset: 0.86 },
+      { transform: 'translateX(-115%) skewX(18deg)', opacity: 0, offset: 1 }
+    ], { duration: CUTIN_MS, easing: 'linear' });
+    cutinAnim.onfinish = function () { el.hidden = true; cutinAnim = null; };
+    shake(1.0);
   }
 
   function banner(text, dur, color, big) {
@@ -1513,7 +1544,7 @@
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
-          banner(e.text, 4, '#ff5a5a', true);
+          showCutin();
           audio.alarm(); setTimeout(audio.alarm, 500); setTimeout(audio.alarm, 1000);
           fx.bossCam = 6;
           break;

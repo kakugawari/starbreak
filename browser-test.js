@@ -547,6 +547,24 @@ async function run() {
     const bossBtn = center(await rectOf(page, '#btnBossOnly'));
     await page.touchscreen.tap(bossBtn.x, bossBtn.y);
     await page.waitForFunction(() => window.__app.game() && window.__app.game().boss);
+    // ボス戦のカットイン: 出る・操作のボタンへの指は素通しする・終わると消える
+    await page.waitForFunction(() => document.getElementById('cutin').getAnimations().length > 0, null, { timeout: 5000 });
+    const cut = await page.evaluate(() => {
+      const el = document.getElementById('cutin');
+      const a = el.getAnimations()[0]; a.pause(); a.currentTime = 700; // 止まって見えている所で調べる
+      const r = el.getBoundingClientRect();
+      const fire = document.getElementById('btnMissile').getBoundingClientRect();
+      const fx = fire.left + fire.width / 2, fy = fire.top + fire.height / 2;
+      const img = el.querySelector('img');
+      const res = { shown: !el.hidden && r.width > 800, loaded: img.complete && img.naturalWidth > 0,
+        overFire: r.top < fy && r.bottom > fy && r.left < fx && r.right > fx, hitFire: !!(document.elementFromPoint(fx, fy) && document.elementFromPoint(fx, fy).closest('#btnMissile')) };
+      a.play();
+      return res;
+    });
+    ok(cut.shown && cut.loaded, 'ボス戦の始まりにカットインが出る (絵も読み込まれている)');
+    ok(cut.overFire && cut.hitFire, `カットインが重なっていても、その下のボタン (ミサイル) を押せる (重なり ${cut.overFire}・押せる ${cut.hitFire})`);
+    await page.waitForFunction(() => document.getElementById('cutin').hidden, null, { timeout: 6000 });
+    ok(true, 'カットインは終わると消える');
     await page.evaluate(() => { window.__app.game().boss.arriveT = 12.9; });
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
     const kill = async (kind) => {
@@ -580,9 +598,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・ロゴ・出撃ボタン)');
+    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・ロゴ・出撃ボタン・カットイン)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth

@@ -52,6 +52,23 @@ body {
 }
 #hud { pointer-events: none; }
 
+/* ボス戦のカットイン: 画面の幅いっぱい、上下の真ん中より少し上。押しても下の操作に届く */
+#cutin {
+  position: absolute;
+  left: 0; right: 0;
+  top: 24%;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+#cutin img { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 18px rgba(255, 40, 60, .55)); }
+#cutin::before {
+  /* 後ろに敷く暗い帯 (星雲の上でも字が埋もれないように) */
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 28%; bottom: 14%;
+  background: linear-gradient(90deg, rgba(20, 0, 6, 0), rgba(20, 0, 6, .55) 15%, rgba(20, 0, 6, .55) 85%, rgba(20, 0, 6, 0));
+}
+
 /* ------------------------------------------------------------ 操作 */
 
 #controls { position: absolute; inset: 0; pointer-events: none; }
