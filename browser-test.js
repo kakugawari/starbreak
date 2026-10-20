@@ -274,6 +274,7 @@ async function run() {
     await page.keyboard.up('Shift');
     ok(boostFx.boosting && boostFx.big === 0, `ブーストで煙の玉を出さない (自機の 40m 以内の大きな粒 ${boostFx.big})`);
     ok(boostFx.jet > jetNormal * 1.6, `ブーストで噴射の光が延びる (${jetNormal.toFixed(1)} → ${boostFx.jet.toFixed(1)})`);
+    ok(jetNormal >= 8.8, `ふだんの噴射は、送ってもらった絵と同じく機体 (11m) の 0.8 倍以上 (${jetNormal.toFixed(1)}m)`);
 
     // 撃墜の瞬間: タメ (時が止まる)・衝撃波の輪・遠くても画面で小さくならない・膨らむ煙の玉を出さない
     const killAt = (dist) => page.evaluate((dist) => {
@@ -609,9 +610,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・ロゴ・出撃ボタン・カットイン)');
+    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'logo.png', 'btn_start.png', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・ロゴ・出撃ボタン・カットイン・噴射)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth

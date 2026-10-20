@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.6.3';
+  const VERSION = 'v0.6.4';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -133,6 +133,8 @@
     map: jetTex, color: 0x8fd4ff, transparent: true, blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide
   });
+  // 噴射の光は送ってもらった絵 (plume.png: 横から見た噴射を切り出し、噴射口を上に向けたもの) を使う。
+  // 読めるまでは自前の jetTex で描く
 
   /**
    * 自機の噴射を推力に合わせる。光だけで見せる: 噴射口の白い芯・小さな青い光・後ろへ延びる光の筋。
@@ -144,8 +146,10 @@
       const s = (i % 2 ? 2.6 + 1.2 * thrust : 1.6 + 0.7 * thrust) * fl;
       f.scale.set(s, s, 1);
     });
-    const len = (1.5 + 3.5 * Math.pow(thrust, 1.5)) * fl, wid = 0.8 + 0.45 * thrust;
+    // 長さは送ってもらった絵に合わせて機体 (11m) の 0.9 倍ほど (ふだん 10m・ブースト約 17m)。幅は絵の縦横比から
+    const len = 10 * (0.5 + 0.5 * Math.pow(thrust, 1.4)) * fl, wid = 3.4 + 0.5 * thrust;
     ship.userData.jets.forEach(function (j) { j.scale.set(wid, wid, len); });
+    ship.userData.jetBase = len / fl; // ゆらぎを除いた長さ (見張り用)
   }
 
   function glowSprite(color, size, opacity) {
@@ -171,6 +175,8 @@
       assetsLoaded[name] = true;
     }, undefined, function () { assetsLoaded[name] = false; });
   }
+  loadTex('plume.png', function (t) { JET_MAT.map = t; JET_MAT.color.set(0xffffff); JET_MAT.needsUpdate = true; });
+
   const assetsLoaded = {};
 
   // ------------------------------------------------------------ 宇宙: 星雲・星・惑星・太陽
@@ -2473,7 +2479,7 @@
       },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       bossClipX: function () { return bossClip.constant; },
-      jetLength: function () { return shipObj.userData.jets[0].scale.z; },
+      jetLength: function () { return shipObj.userData.jetBase; },
       // 膨らみながら消える大きな粒 (煙の玉に見える) の数
       growingParticles: function () {
         return particles.list.filter(function (q) { return q.on && q.s1 > q.s0 * 1.2 && q.s1 >= 6; }).length;
