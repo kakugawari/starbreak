@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.7.1';
+  const VERSION = 'v0.7.2';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -202,14 +202,26 @@
     const m = new THREE.Mesh(new THREE.SphereGeometry(20000, 64, 32), mat);
     m.renderOrder = -10;
     sky.add(m);
-    loadTex('space.jpg', function (t) {
-      // 内側から見ると左右が反転するので戻す
-      t.wrapS = THREE.RepeatWrapping;
-      t.repeat.x = -1;
-      t.anisotropy = 4;
+    // 1 面は紫の星雲 (space.jpg)、2 面は琥珀色の星雲 (space2.jpg)。面が変わったら setSkyKind で替える
+    sky.userData.tex = {};
+    sky.userData.kind = 'space';
+    function useSky(name) {
+      const t = sky.userData.tex[name];
+      if (!t) return;
       mat.map = t;
       mat.color.setScalar(skyDim);
       mat.needsUpdate = true;
+    }
+    sky.userData.use = useSky;
+    ['space', 'space2'].forEach(function (name) {
+      loadTex(name + '.jpg', function (t) {
+        // 内側から見ると左右が反転するので戻す
+        t.wrapS = THREE.RepeatWrapping;
+        t.repeat.x = -1;
+        t.anisotropy = 4;
+        sky.userData.tex[name] = t;
+        if (sky.userData.kind === name) useSky(name);
+      });
     });
     sky.userData.mat = mat;
 
@@ -347,6 +359,13 @@
     titleGlow.scale.set(P.r * 2 * TP_GLOW * unit, P.r * 2 * TP_GLOW * unit, 1);
     titleGlow.material.uniforms.flare.value.set(Math.cos(P.flare), Math.sin(P.flare));
     titleGlow.visible = titlePlanet.visible;
+  }
+
+  /** 空の絵を面に合わせて替える (1 面 space / 2 面 space2)。 */
+  function setSkyKind(kind) {
+    if (sky.userData.kind === kind) return;
+    sky.userData.kind = kind;
+    sky.userData.use(kind);
   }
 
   /** ゲームの空の惑星を地球 / 火星に切り替える (面が変わったとき)。 */
@@ -1535,6 +1554,7 @@
     clearWorld();
     game = null;
     setSkyDim(SKY_DIM.title);
+    setSkyKind('space');
     screen = 'title';
     paused = false;
     els.title.hidden = false; els.result.hidden = true; els.pause.hidden = true; els.controls.hidden = true;
@@ -1960,6 +1980,7 @@
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
     setPlanetKind(game.level === 2 ? 'mars' : 'earth');
+    setSkyKind(game.level === 2 ? 'space2' : 'space');
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -2666,6 +2687,7 @@
       },
       // 戦艦の装甲の色 (2 面は蛍光緑) と、いまの面
       bossLook: function () { if (!bossObj) return null; const m = bossObj.children[0].material; return { level: bossObj.userData.level, color: m.color.getHexString(), emissive: m.emissive ? m.emissive.getHexString() : '000000' }; },
+      skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
