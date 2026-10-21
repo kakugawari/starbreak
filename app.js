@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.7.0';
+  const VERSION = 'v0.7.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -267,7 +267,12 @@
     m.renderOrder = -8;
     m.visible = false;
     planet.add(m);
-    loadTex('earth.jpg', function (t) { mat.uniforms.map.value = t; m.visible = true; });
+    // 1 面は地球、2 面は火星 (mars.jpg。地球の絵と同じ割合: 円の中心が真ん中・半径は幅の 0.44 になるよう切り出した)
+    planet.userData.tex = {};
+    planet.userData.kind = 'earth';
+    loadTex('earth.jpg', function (t) { planet.userData.tex.earth = t; if (planet.userData.kind === 'earth') { mat.uniforms.map.value = t; m.visible = true; } });
+    loadTex('mars.jpg', function (t) { planet.userData.tex.mars = t; if (planet.userData.kind === 'mars') { mat.uniforms.map.value = t; m.visible = true; } });
+    planet.userData.mat = mat;
     planet.userData.offset = new THREE.Vector3(-3400, -5200, -9000);
     planet.userData.ball = m;
   })();
@@ -342,6 +347,15 @@
     titleGlow.scale.set(P.r * 2 * TP_GLOW * unit, P.r * 2 * TP_GLOW * unit, 1);
     titleGlow.material.uniforms.flare.value.set(Math.cos(P.flare), Math.sin(P.flare));
     titleGlow.visible = titlePlanet.visible;
+  }
+
+  /** ゲームの空の惑星を地球 / 火星に切り替える (面が変わったとき)。 */
+  function setPlanetKind(kind) {
+    const u = planet.userData;
+    if (u.kind === kind) return;
+    u.kind = kind;
+    const t = u.tex[kind];
+    if (t) { u.mat.uniforms.map.value = t; u.ball.visible = true; }
   }
 
   // 宇宙のちり: 自分の動きが分かるよう、通り過ぎる細い筋を描く
@@ -1945,6 +1959,7 @@
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
+    setPlanetKind(game.level === 2 ? 'mars' : 'earth');
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -2651,6 +2666,7 @@
       },
       // 戦艦の装甲の色 (2 面は蛍光緑) と、いまの面
       bossLook: function () { if (!bossObj) return null; const m = bossObj.children[0].material; return { level: bossObj.userData.level, color: m.color.getHexString(), emissive: m.emissive ? m.emissive.getHexString() : '000000' }; },
+      planetKind: function () { return planet.userData.kind; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
       enemyScale: function (id) { const o = enemyObjs.get(id); return o ? o.scale.x : 0; },

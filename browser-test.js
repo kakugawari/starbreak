@@ -146,9 +146,9 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'earth.jpg', 'mars.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
-    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・戦艦の装甲の絵が読み込まれる');
+    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['mars.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・火星・戦艦の装甲の絵が読み込まれる');
     ok(assets['title_planet.jpg'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const tp = await page.evaluate(() => window.__app.titlePlanetInfo());
@@ -656,6 +656,8 @@ async function run() {
     await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), banner: window.__app.banners().some((t) => t.indexOf('STAGE 2') === 0), boss: window.__app.bossVisible(), hull: window.__app.game().player.hull }));
+    const kinds = await page.evaluate(() => window.__app.planetKind());
+    ok(kinds === 'mars', `2 面では空の惑星が火星になる (${kinds})`);
     ok(st2.screen === 'play' && st2.banner && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2」の知らせ ${st2.banner}・前の戦艦は消える)`);
     // 2 面の戦艦まで飛ばす: 蛍光緑に塗った艦が来る
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
@@ -685,9 +687,9 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'earth.jpg', 'mars.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'earth.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
+    ok(['space.jpg', 'earth.jpg', 'mars.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・火星・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth
