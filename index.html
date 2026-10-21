@@ -34,6 +34,31 @@
   <!-- ボス戦のカットイン。操作のボタンより上に出す (送ってもらった絵)。指の操作は下へ素通しする -->
   <div id="cutin" aria-hidden="true" hidden><img data-asset="cutin.png" alt="" width="1774" height="410"></div>
 
+  <!-- 面の始まりの札 (STAGE n)。数字と名前は app.js が入れる。枠の線・光は SVG、字は文字のまま (グラデーションの字) -->
+  <div id="stageCard" aria-hidden="true" hidden>
+    <div class="sc-frame"><div class="sc-in">
+      <svg class="sc-svg" viewBox="0 0 715 296" aria-hidden="true">
+        <defs>
+          <linearGradient id="scLine" x1="0" x2="1">
+            <stop offset="0" stop-color="#8ff5ee"/><stop offset=".55" stop-color="#9fc4ff"/><stop offset="1" stop-color="#b79cff"/>
+          </linearGradient>
+        </defs>
+        <polygon points="70,148 175,22 540,22 645,148 540,274 175,274" fill="rgba(2,5,16,.62)"/>
+        <g fill="none" stroke="url(#scLine)" stroke-linecap="round" stroke-linejoin="round">
+          <!-- 外の枠: 上と下の真ん中が切れている -->
+          <path d="M335,22 L175,22 L70,148 L175,274 L335,274" stroke-width="2.4"/>
+          <path d="M380,22 L540,22 L645,148 L540,274 L380,274" stroke-width="2.4"/>
+          <!-- 内の枠 -->
+          <path d="M300,40 L190,40 L96,148 L190,256 L300,256" stroke-width="1.6" opacity=".8"/>
+          <path d="M415,40 L525,40 L619,148 L525,256 L415,256" stroke-width="1.6" opacity=".8"/>
+        </g>
+      </svg>
+      <div class="sc-num" id="scNum">STAGE 1</div>
+      <div class="sc-en" id="scEn">PLANETARY ORBIT</div>
+      <div class="sc-ja" id="scJa">惑星軌道</div>
+    </div></div>
+  </div>
+
   <!-- タイトル: 後ろの宇宙はゲームの空、左の大きな惑星 (title_planet.jpg) と右の機体は three.js で描く -->
   <section id="title" class="screen">
     <div class="title-logo">

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.7.2';
+  const VERSION = 'v0.7.3';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1510,7 +1510,9 @@
     if (cutinAnim) { cutinAnim.cancel(); cutinAnim = null; }
     $('cutin').hidden = true;
     warpGlow.visible = false;
-    fx.banners.length = 0; fx.popups.length = 0; fx.hurt.length = 0;
+    fx.banners.length = 0; fx.popups.length = 0; fx.hurt.length = 0; fx.cardT = 0;
+    if (stageCardAnim) { stageCardAnim.cancel(); stageCardAnim = null; }
+    $('stageCard').hidden = true;
   }
 
   let lastStart;
@@ -1536,7 +1538,7 @@
     els.title.hidden = true; els.result.hidden = true; els.pause.hidden = true;
     els.controls.hidden = false;
     // 巨大戦艦からのときは、すぐ出るカットインが知らせる
-    if (opts.start !== 'boss') banner('STAGE 1  惑星軌道', 2.4, '#cfe8ff');
+    if (opts.start !== 'boss') showStageCard(1);
     consumeEvents();
   }
 
@@ -1634,8 +1636,34 @@
     shake(1.0);
   }
 
+  // 面の始まりの札 (STAGE n / 英名 / 日本語名)。3 秒。出ている間は、あとから来る知らせ (第1波) を札が消えるまで待たせる
+  const STAGE_CARD = {
+    1: { en: 'PLANETARY ORBIT', ja: '惑星軌道' },
+    2: { en: 'DEEP SPACE', ja: '深宇宙' }
+  };
+  const STAGE_CARD_MS = 3000;
+  let stageCardAnim = null;
+  function showStageCard(level) {
+    const el = $('stageCard'), d = STAGE_CARD[level] || STAGE_CARD[1];
+    $('scNum').textContent = 'STAGE ' + level;
+    $('scEn').textContent = d.en;
+    $('scJa').textContent = d.ja;
+    el.hidden = false;
+    if (stageCardAnim) stageCardAnim.cancel();
+    stageCardAnim = el.animate([
+      { opacity: 0, transform: 'scale(.9)', offset: 0 },
+      { opacity: 1, transform: 'scale(1)', offset: 0.1 },
+      { opacity: 1, transform: 'scale(1.015)', offset: 0.85 },
+      { opacity: 0, transform: 'scale(1.04)', offset: 1 }
+    ], { duration: STAGE_CARD_MS, easing: 'ease-out' });
+    stageCardAnim.onfinish = function () { el.hidden = true; stageCardAnim = null; };
+    fx.cardT = STAGE_CARD_MS / 1000;
+    audio.lock();
+  }
+
   function banner(text, dur, color, big) {
-    fx.banners.push({ text: text, t: dur, max: dur, color: color || '#fff', big: !!big });
+    // 札が出ている間に来た知らせは、札が消えてから出す
+    fx.banners.push({ text: text, t: dur, max: dur, color: color || '#fff', big: !!big, delay: fx.cardT > 0 ? fx.cardT : 0 });
     if (fx.banners.length > 3) fx.banners.shift();
   }
 
@@ -1710,7 +1738,7 @@
         }
         case 'scrape': sparks(e.pos, 16, [1, 0.8, 0.4]); break;
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
-        case 'stageStart': banner('STAGE 2  深宇宙', 3.2, '#cfe8ff', true); audio.lock(); break;
+        case 'stageStart': showStageCard(e.level); break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
           showCutin();
@@ -2388,8 +2416,10 @@
     }
 
     // 帯の文字 (段階・警告)
-    fx.banners = fx.banners.filter(function (bn) { return (bn.t -= dt) > 0; });
+    fx.cardT = Math.max(0, (fx.cardT || 0) - dt);
+    fx.banners = fx.banners.filter(function (bn) { if (bn.delay > 0) { bn.delay -= dt; return true; } return (bn.t -= dt) > 0; });
     fx.banners.forEach(function (bn, i) {
+      if (bn.delay > 0) return;
       const k = 1 - bn.t / bn.max;
       const a = Math.min(1, k * 6, bn.t * 2);
       const y = H * (bn.big ? 0.36 : 0.26) + i * 30;
@@ -2690,6 +2720,7 @@
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
+      stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
       enemyScale: function (id) { const o = enemyObjs.get(id); return o ? o.scale.x : 0; },
       bossClipX: function () { return bossClip.constant; },

@@ -655,11 +655,11 @@ async function run() {
     // 1 面の戦艦を沈めると、結果ではなく 2 面へ進む
     await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), banner: window.__app.banners().some((t) => t.indexOf('STAGE 2') === 0), boss: window.__app.bossVisible(), hull: window.__app.game().player.hull }));
+    const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), banner: window.__app.stageCard().shown && window.__app.stageCard().num === 'STAGE 2', boss: window.__app.bossVisible(), hull: window.__app.game().player.hull }));
     const kinds = await page.evaluate(() => window.__app.planetKind());
     const skyK = await page.evaluate(() => window.__app.skyKind());
     ok(kinds === 'mars' && skyK === 'space2', `2 面では空の惑星が火星に、空の絵が琥珀色の星雲になる (${kinds} / ${skyK})`);
-    ok(st2.screen === 'play' && st2.banner && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2」の知らせ ${st2.banner}・前の戦艦は消える)`);
+    ok(st2.screen === 'play' && st2.banner && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2」の札 ${st2.banner}・前の戦艦は消える)`);
     // 2 面の戦艦まで飛ばす: 蛍光緑に塗った艦が来る
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
