@@ -655,7 +655,7 @@ async function run() {
     // 1 面の戦艦を沈めると、結果ではなく 2 面へ進む
     await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), banner: window.__app.stageCard().shown && window.__app.stageCard().num === 'STAGE 2', boss: window.__app.bossVisible(), hull: window.__app.game().player.hull }));
+    const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), banner: window.__app.stageCard().shown && window.__app.stageCard().num === 'STAGE 2' && window.__app.stageCard().en === 'MARS ORBIT' && window.__app.stageCard().ja === '火星軌道', boss: window.__app.bossVisible(), hull: window.__app.game().player.hull }));
     const kinds = await page.evaluate(() => window.__app.planetKind());
     const skyK = await page.evaluate(() => window.__app.skyKind());
     ok(kinds === 'mars' && skyK === 'space2', `2 面では空の惑星が火星に、空の絵が琥珀色の星雲になる (${kinds} / ${skyK})`);

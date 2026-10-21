@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.7.3';
+  const VERSION = 'v0.7.4';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1639,7 +1639,7 @@
   // 面の始まりの札 (STAGE n / 英名 / 日本語名)。3 秒。出ている間は、あとから来る知らせ (第1波) を札が消えるまで待たせる
   const STAGE_CARD = {
     1: { en: 'PLANETARY ORBIT', ja: '惑星軌道' },
-    2: { en: 'DEEP SPACE', ja: '深宇宙' }
+    2: { en: 'MARS ORBIT', ja: '火星軌道' }
   };
   const STAGE_CARD_MS = 3000;
   let stageCardAnim = null;
