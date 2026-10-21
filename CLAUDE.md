@@ -13,7 +13,7 @@
 
 - **面の始まりの札** (`showStageCard`): 見本の画像 (六角の二重の枠・グラデーションの「STAGE n」・英名・日本語名) を、数字と名前を替えられるよう
   画像ではなく作り直した (index.html の `#stageCard`。枠と光は SVG、字は文字で、グラデーションは `background-clip: text`)。
-  名前は `STAGE_CARD` の表 (1 面 PLANETARY ORBIT / 惑星軌道、2 面 MARS ORBIT / 火星軌道)。3 秒出て、そのあいだに来る知らせ (第1波) は札が消えてから出す
+  名前は `STAGE_CARD` の表 (1 面 PLANETARY ORBIT / 惑星軌道、2 面 MARS ORBIT / 火星軌道)。細い字 (Avenir Next Light・字間を広げる) で、タイトルの字と同じ雰囲気。3 秒出て、そのあいだに来る知らせ (第1波) は札が消えてから出す
 - 企画書は Unity を第一候補にしていたが、このリポジトリの決めごと (ビルドなし・リンクで即テストプレイ) に
   合わせて **three.js (r158 の three.min.js を直下に同梱) + 素の JS** で作っている
 - ゲームの中身はすべて `core.js` (飛行・照準補助・敵AI・戦艦・当たり判定・進行・自動操縦)。
