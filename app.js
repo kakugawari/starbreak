@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.9';
+  const VERSION = 'v0.9.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1442,81 +1442,89 @@
     }
 
     // ---- 巨大戦艦戦の曲 (その場で合成) ----
-    // 小型機では太刀打ちできない巨大な敵と向き合う恐怖。105 BPM。はじめに 4 小節の低い不穏な空気 (1 回だけ)、そのあと 16 小節の戦いをくり返す。
-    // 深い唸り (E1)・重く遅い太鼓・低い金管のうねり (Em → F → Em → D)・暗い弦の低いオスティナート・金属の衝撃音・のぼっていく機械の雑音。
-    // 一定の強さにしない: 前半は静かに構え (太鼓は頭だけ)、8〜9 小節で張りつめ、10 小節目は一拍だけ全部止めて間をあけ、
-    // 11 小節目の頭の大きな一撃から強く攻め、最後の小節で引いて頭へ戻る。主砲の発射や爆発が聞こえるよう、高い音は削る
-    const BSS_BPM = 105, BSS_BEAT = 60 / BSS_BPM, BSS_BAR = BSS_BEAT * 4, BSS_S = BSS_BEAT / 4, BSS_VOL = 0.5, BSS_INTRO = 4;
-    const BSS_ROOT = [40, 41, 40, 38];                     // E2 F2 E2 D2
-    const BSS_OST = [0, 0, 1, 0, 3, 0, 1, 0];              // 半音 (E F) と短 3 度 (G) を行き来する 8 分の音列 (0=根音, 1=+1, 3=+3)
-    function bossHit(t, big) {                              // 金属の衝撃: 合わない倍音を重ね、高いところは削る
+    // 重厚感 (巨大戦艦の圧力) + ノリ (止まらない戦闘) + 盛り上がり (勝負の熱さ)。140 BPM・16 小節 (約 27 秒) をくり返す。前置きは無く、戦艦が現れた瞬間から刻み始める。
+    // 重い太鼓と強いキック (少しずらしたキック + 2・4 拍のタイトなスネア) / うなる低音の 16 分のパルス (のこぎり波・Em → C → D → B) /
+    // 速い弦の刻み (16 分・和音の音) / 低い金管の太い一撃 / 裏拍の金属の打音 / 主役の繰り返しのリフ (5〜8 小節目から。和音ごとに平行移動する 2 小節の形)。
+    // 8 小節目の頭に大きな一撃で爆発的に戻り、8 小節目の最後の 1 拍と 13 小節目の後半は太鼓を抜いて張りつめる (短い間)。16 小節目は連打で頭へ戻る。
+    // 高い音は削り (リフも 2.2kHz まで)、主砲や爆発の効果音が聞こえる中域の隙間を残す
+    const BSS_BPM = 140, BSS_BEAT = 60 / BSS_BPM, BSS_BAR = BSS_BEAT * 4, BSS_S = BSS_BEAT / 4, BSS_VOL = 0.7;
+    const BSS_ROOT = [40, 36, 38, 35];                          // E2 C2 D2 B1 (1 小節ごとに替わる)
+    const BSS_SHIFT = [0, -4, -2, -5];                          // リフの平行移動 (Em の形を C・D・B へ)
+    const BSS_CH = [[0, 3, 7, 12], [0, 4, 7, 12], [0, 4, 7, 12], [0, 3, 6, 11]];   // 弦の刻みに使う和音の音 (根音からの半音)
+    // リフ: [16 分の位置, 音 (E4=64 が基準), 長さ (16 分)] 2 小節 (問いと答え)。ずらした拍が「ノリ」の決め手
+    const BSS_RIFF = [
+      [[0, 64, 2], [3, 64, 1], [6, 67, 2], [8, 69, 2], [10, 67, 1], [12, 64, 2], [14, 62, 2]],
+      [[0, 60, 2], [3, 60, 1], [6, 64, 2], [8, 67, 3], [12, 69, 2], [14, 71, 2]]
+    ];
+    function bossHit(t, big) {                                   // 金属の衝撃: 合わない倍音を重ね、高いところは削る
       const base = 150;
       [1, 2.76, 5.4, 8.93].forEach(function (r, i) {
-        cTone(t, 'sine', base * r, base * r * 0.97, big ? 1.8 : 1.0, (big ? 0.11 : 0.07) / (1 + i * 0.7), 2600, 0);
+        cTone(t, 'sine', base * r, base * r * 0.97, big ? 1.4 : 0.7, (big ? 0.1 : 0.06) / (1 + i * 0.7), 2600, 0);
       });
-      cNoise(t, big ? 0.9 : 0.35, big ? 0.3 : 0.16, 'lowpass', big ? 1400 : 900, 0.7, 0);
-      cTone(t, 'sine', 70, 30, big ? 1.2 : 0.7, big ? 0.6 : 0.35, 0, 0);
+      cNoise(t, big ? 0.8 : 0.3, big ? 0.28 : 0.14, 'lowpass', big ? 1500 : 1000, 0.7, 0);
+      cTone(t, 'sine', 72, 30, big ? 1.1 : 0.6, big ? 0.55 : 0.32, 0, 0);
     }
     function scheduleBossBar(bar, t) {
-      if (mus.voices.length > 160) mus.voices = mus.voices.slice(-80);
-      const intro = bar < BSS_INTRO, k = intro ? bar : (bar - BSS_INTRO) % 16;
-      const root = BSS_ROOT[intro ? 0 : Math.floor(k / 4) % 4];
-      const bar4 = intro ? bar % 4 : k % 4;
-      // 低い金管のうねり: 2 小節ごと。はじめは遠く、攻めるほど近く
-      const brassOn = intro ? bar === 2 : k % 2 === 0 && k !== 10;
-      if (brassOn) {
-        const len = BSS_BAR * 2, pk = (intro ? 0.035 : (k >= 11 && k <= 14 ? 0.07 : 0.05));
-        [0, 7, 12].forEach(function (iv, i) {
-          [-9, 9].forEach(function (dt) {
-            const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = mtof(root + 12 + iv); o.detune.value = dt;
-            const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
-            lp.frequency.setValueAtTime(260, t); lp.frequency.linearRampToValueAtTime(760 + (k >= 11 ? 220 : 0), t + len * 0.55); lp.frequency.linearRampToValueAtTime(300, t + len);
-            const g = ctx.createGain();
-            g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(pk / (1 + i * 0.35), t + len * 0.5); g.gain.linearRampToValueAtTime(0.0001, t + len);
-            o.connect(lp); lp.connect(g); pan(g, (i - 1) * 0.25, mus.bus);
-            o.start(t); o.stop(t + len + 0.05); mus.voices.push(o);
+      if (mus.voices.length > 220) mus.voices = mus.voices.slice(-110);
+      const k = bar % 16, ci = k % 4, root = BSS_ROOT[ci], shift = BSS_SHIFT[ci];
+      const riffOn = k >= 4, full = k >= 8;
+      const brk = k === 7 ? 12 : k === 12 ? 8 : 99;              // この拍の位置から先は太鼓を抜く (張りつめる間)
+      const fillBar = k === 7 || k === 15;
+      // 8 小節目の頭: 大きな一撃 (爆発的な復帰)。1 小節目の頭は戦艦の登場に合わせた金属の一撃
+      if (k === 8 || k === 0) bossHit(t, true);
+      // 低い金管: 小節の頭に太い一撃 (根音 + 5 度 + オクターブ)。全開の小節は 3 拍目にも
+      [0, 7, 12].forEach(function (iv, i) {
+        [-8, 8].forEach(function (dt) {
+          const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = mtof(root + 12 + iv); o.detune.value = dt;
+          const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+          lp.frequency.setValueAtTime(320, t); lp.frequency.linearRampToValueAtTime(900, t + BSS_BEAT * 0.5); lp.frequency.linearRampToValueAtTime(380, t + BSS_BEAT * 3.2);
+          const g = ctx.createGain(), pk = (full ? 0.06 : 0.045) / (1 + i * 0.3);
+          g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(pk, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + BSS_BEAT * 3.2);
+          o.connect(lp); lp.connect(g); pan(g, (i - 1) * 0.25, mus.bus);
+          o.start(t); o.stop(t + BSS_BEAT * 3.3); mus.voices.push(o);
+        });
+      });
+      for (let st = 0; st < 16; st++) {
+        const at = t + st * BSS_S, drums = st < brk;
+        if (drums) {
+          // キック: 頭・拍・少しずらした位置。重く、太い
+          const kicks = (k % 2 === 1) ? [0, 4, 8, 10, 12, 14] : [0, 4, 8, 11, 12];
+          if (kicks.indexOf(st) >= 0) cTone(at, 'sine', 130, 40, 0.22, 0.55, 0, 0);
+          // スネア: 2・4 拍。タイトに
+          if (st === 4 || st === 12) { cNoise(at, 0.12, 0.22, 'bandpass', 1800, 0.8); cTone(at, 'triangle', 190, 140, 0.08, 0.1, 0, 0); }
+          // 重い太鼓 (低いタム): 小節の裏に
+          if (full && (st === 6 || st === 14)) cTone(at, 'sine', 95, 45, 0.35, 0.3, 0, 0);
+          // 裏拍の金属の打音: 短く、中低域
+          if (st % 4 === 2) cNoise(at, 0.05, 0.08, 'bandpass', 3200, 2.5, st % 8 === 2 ? -0.3 : 0.3);
+        }
+        // 小節の最後の連打 (k=7, 15 の最後の 1 拍): スネアとタムでたたみかける
+        if (fillBar && st >= 12) { cNoise(at, 0.08, 0.1 + 0.02 * (st - 12), 'bandpass', 1900, 0.8); if (st % 2 === 0) cTone(at, 'sine', 110 - (st - 12) * 6, 55, 0.2, 0.3, 0, 0); }
+        // うなる低音: 16 分のパルス (跳ねる形)。のこぎり波を丸め、音の頭だけ開く
+        if (drums && [0, 1, 3, 4, 6, 7, 8, 9, 11, 12, 14, 15].indexOf(st) >= 0) {
+          const m = root + (st === 7 || st === 15 ? 12 : 0);
+          cTone(at, 'sawtooth', mtof(m), mtof(m), BSS_S * 0.95, st % 4 === 0 ? 0.13 : 0.085, 330, 0);
+        }
+        // 速い弦の刻み: 16 分 (全開のあいだは強く)
+        if (drums || st < 15) {
+          const iv = BSS_CH[ci][[0, 2, 1, 3, 2, 1, 3, 2, 0, 2, 1, 3, 2, 3, 1, 2][st]];
+          if (st !== 15 || !fillBar) cTone(at, 'sawtooth', mtof(root + 24 + iv), mtof(root + 24 + iv), BSS_S * 0.8, (full ? 0.034 : 0.026) * (st % 4 === 0 ? 1.4 : 1), 1250, (st % 2 ? 0.35 : -0.35));
+        }
+      }
+      // 主役のリフ: 5 小節目から。2 小節で 1 つの形 (問い・答え) を、和音に合わせて平行移動
+      if (riffOn) {
+        const phrase = BSS_RIFF[k % 2];
+        phrase.forEach(function (n) {
+          const at = t + n[0] * BSS_S, f = mtof(n[1] + shift), len = n[2] * BSS_S * 0.98;
+          if (n[0] >= brk) return;
+          [-7, 7].forEach(function (dt) {
+            const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = dt;
+            const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200; lp.Q.value = 1;
+            const g = ctx.createGain(), pk = full ? 0.04 : 0.03;
+            g.gain.setValueAtTime(0.0001, at); g.gain.linearRampToValueAtTime(pk, at + 0.01); g.gain.setValueAtTime(pk, at + len * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, at + len + 0.08);
+            o.connect(lp); lp.connect(g); pan(g, dt > 0 ? 0.2 : -0.2, mus.bus);
+            o.start(at); o.stop(at + len + 0.12); mus.voices.push(o);
           });
         });
-      }
-      if (intro) {
-        // 太鼓 1 つだけ遠くで鳴る。最後の小節に、のぼる雑音
-        if (bar === 1 || bar === 3) cTone(t, 'sine', 80, 34, 0.9, 0.3, 0, 0);
-        if (bar === 3) {
-          const s2 = ctx.createBufferSource(); s2.buffer = noiseBuf;
-          const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 3;
-          f.frequency.setValueAtTime(150, t); f.frequency.exponentialRampToValueAtTime(1500, t + BSS_BAR);
-          const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.06, t + BSS_BAR * 0.9); g.gain.linearRampToValueAtTime(0.0001, t + BSS_BAR);
-          s2.connect(f); f.connect(g); g.connect(mus.bus); s2.start(t, Math.random()); s2.stop(t + BSS_BAR + 0.05);
-        }
-        return;
-      }
-      const hot = k >= 11 && k <= 14, surge = k === 8 || k === 9, quiet = k <= 3 || k === 15;
-      // 10 小節目: 一拍だけ全部止める (間)。最後の 2 拍に低い唸りだけ立ち上げて、次の一撃へ
-      if (k === 10) { cTone(t + BSS_BEAT * 2, 'sine', 41, 41, BSS_BEAT * 2, 0.16, 0, 0); return; }
-      // 11 小節目の頭: 大きな一撃 (主砲や爆発の隙間にならないよう、あとは引く)
-      if (k === 11) bossHit(t, true);
-      else if (bar4 === 0 && !quiet) bossHit(t, false);
-      for (let st = 0; st < 16; st++) {
-        const at = t + st * BSS_S;
-        // 重く遅い太鼓: 静かなときは頭だけ、構えのあとは 1 と 3 拍、攻めるときは裏も
-        const hits = quiet ? [0] : hot ? [0, 6, 8, 12] : [0, 8];
-        if (hits.indexOf(st) >= 0 && !(k === 11 && st === 0)) cTone(at, 'sine', 100, 36, 0.5, quiet ? 0.32 : 0.5, 0, 0);
-        if (!quiet && (st === 8 || (hot && st === 12))) cNoise(at, 0.22, hot ? 0.16 : 0.1, 'bandpass', 700, 0.9);
-        // 暗い弦のオスティナート: 8 分。低く、短く。攻めるほど大きく
-        if (!quiet && st % 2 === 0) {
-          const m = root + 12 + BSS_OST[(st / 2) % 8];
-          cTone(at, 'sawtooth', mtof(m), mtof(m), BSS_S * 1.7, hot ? 0.06 : 0.04, 650, st % 4 ? 0.3 : -0.3);
-        }
-        // 張りつめる 2 小節: 16 分の機械の刻み (低め)
-        if (surge && st % 2 === 1) cTone(at, 'square', mtof(root + 24), mtof(root + 24), BSS_S * 0.7, 0.018 + 0.006 * (k - 8), 900, st % 4 === 1 ? -0.4 : 0.4);
-      }
-      // のぼる機械の雑音: 8〜9 小節にかけて
-      if (surge) {
-        const s2 = ctx.createBufferSource(); s2.buffer = noiseBuf;
-        const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 4;
-        f.frequency.setValueAtTime(k === 8 ? 200 : 700, t); f.frequency.exponentialRampToValueAtTime(k === 8 ? 700 : 2000, t + BSS_BAR);
-        const g = ctx.createGain(); g.gain.setValueAtTime(0.01, t); g.gain.linearRampToValueAtTime(k === 8 ? 0.035 : 0.06, t + BSS_BAR * 0.95); g.gain.linearRampToValueAtTime(0.0001, t + BSS_BAR);
-        s2.connect(f); f.connect(g); g.connect(mus.bus); s2.start(t, Math.random()); s2.stop(t + BSS_BAR + 0.05);
       }
     }
     function startMusic(kind) {
@@ -1535,7 +1543,7 @@
       dly.connect(dlp); dlp.connect(fb); fb.connect(dly); dlp.connect(wet); wet.connect(bus);
       const send = ctx.createGain(); send.gain.value = 1; send.connect(dly);
       // 低い唸り: 深い正弦 (A1) + ほんの少しずらした 2 本ののこぎり波 (A2) を、ゆっくり開閉するフィルターへ
-      const dg = ctx.createGain(); dg.gain.value = combat ? 0 : bossK ? 0.09 : 0.13; dg.connect(bus);
+      const dg = ctx.createGain(); dg.gain.value = combat ? 0 : bossK ? 0.05 : 0.13; dg.connect(bus);
       const dlp2 = ctx.createBiquadFilter(); dlp2.type = 'lowpass'; dlp2.frequency.value = 200; dlp2.Q.value = 2;
       dlp2.connect(dg);
       const oscs = [];
