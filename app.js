@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.2';
+  const VERSION = 'v0.8.3';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -39,7 +39,7 @@
         settings[key] = el.checked;
         ids.forEach(function (o) { $(o).checked = settings[key]; });
         saveSettings();
-        if (key === 'sound') audio.setEnabled(settings.sound);
+        if (key === 'sound') { audio.setEnabled(settings.sound); syncMusic(); }
       });
     });
   }
@@ -1312,8 +1312,124 @@
       s.connect(f); f.connect(g); g.connect(master);
       s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.05);
     }
+    // ---- タイトルの曲 (その場で合成) ----
+    // 暗い宇宙を漂う孤独感。70 BPM・16 小節 (約 55 秒) をくり返す。ずっと鳴り続ける低い唸り + 4 小節ごとに替わる 4 つの和音のパッド
+    // (Am9 → Fmaj7 → Dm9 → Esus) + まばらな水晶のような音 (ペンタトニック、付点 8 分のこだま) + ときどき遠い電波のような信号。
+    // 小節の組み立ては先読みで 2 秒先まで予約する。盛り上がりは 12 小節かけて少しずつ、残り 4 小節でゆっくり戻る (つなぎ目なし)
+    const BPM = 70, BEAT = 60 / BPM, BAR = BEAT * 4;
+    const CHORDS = [[45, 52, 59, 60, 64], [41, 48, 52, 57, 64], [38, 45, 52, 57, 62], [40, 47, 52, 57, 59]];
+    const BELLS = [69, 72, 76, 79, 81, 84];   // A4 C5 E5 G5 A5 C6
+    const mtof = function (m) { return 440 * Math.pow(2, (m - 69) / 12); };
+    let mus = null;
+    function build(bar) {   // 0..1: 12 小節で上がり、4 小節で戻る
+      const k = bar % 16;
+      return k < 12 ? k / 12 : 1 - (k - 12) / 4;
+    }
+    function pan(node, p, dest) {
+      if (!ctx.createStereoPanner) { node.connect(dest); return; }
+      const sp = ctx.createStereoPanner(); sp.pan.value = p; node.connect(sp); sp.connect(dest);
+    }
+    function startMusic() {
+      if (!ctx || mus || !enabled) return;
+      const bus = ctx.createGain(); bus.gain.value = 0; bus.connect(master);
+      bus.gain.setTargetAtTime(0.55, ctx.currentTime, 1.6);   // ゆっくり入る
+      // こだま: 付点 8 分。戻りは暗く (高い音を削る)
+      const dly = ctx.createDelay(2); dly.delayTime.value = BEAT * 0.75;
+      const fb = ctx.createGain(); fb.gain.value = 0.5;
+      const dlp = ctx.createBiquadFilter(); dlp.type = 'lowpass'; dlp.frequency.value = 1800;
+      const wet = ctx.createGain(); wet.gain.value = 0.55;
+      dly.connect(dlp); dlp.connect(fb); fb.connect(dly); dlp.connect(wet); wet.connect(bus);
+      const send = ctx.createGain(); send.gain.value = 1; send.connect(dly);
+      // 低い唸り: 深い正弦 (A1) + ほんの少しずらした 2 本ののこぎり波 (A2) を、ゆっくり開閉するフィルターへ
+      const dg = ctx.createGain(); dg.gain.value = 0.13; dg.connect(bus);
+      const dlp2 = ctx.createBiquadFilter(); dlp2.type = 'lowpass'; dlp2.frequency.value = 200; dlp2.Q.value = 2;
+      dlp2.connect(dg);
+      const oscs = [];
+      [[55, 'sine', 0, 1], [110, 'sawtooth', -7, 0.35], [110, 'sawtooth', 7, 0.35]].forEach(function (d) {
+        const o = ctx.createOscillator(); o.type = d[1]; o.frequency.value = d[0]; o.detune.value = d[2];
+        const g = ctx.createGain(); g.gain.value = d[3]; o.connect(g); g.connect(dlp2); o.start(); oscs.push(o);
+      });
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.045;
+      const lg = ctx.createGain(); lg.gain.value = 90; lfo.connect(lg); lg.connect(dlp2.frequency); lfo.start(); oscs.push(lfo);
+      mus = { bus: bus, send: send, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
+      const tick = function () {
+        if (!mus) return;
+        while (mus.t < ctx.currentTime + 2) { scheduleBar(mus.bar, mus.t); mus.bar++; mus.t += BAR; }
+      };
+      tick();
+      mus.timer = setInterval(tick, 250);
+    }
+    function scheduleBar(bar, t) {
+      const lv = build(bar);
+      if (mus.voices.length > 80) mus.voices = mus.voices.slice(-40);   // 鳴り終えた音は覚えておかない
+      // 4 小節ごとに和音を替える。前の和音の余韻と重ねる
+      if (bar % 4 === 0) {
+        const ch = CHORDS[(bar / 4) % 4], len = BAR * 4;
+        const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
+        lp.frequency.setValueAtTime(600 + 500 * lv, t); lp.frequency.linearRampToValueAtTime(700 + 600 * lv, t + len);
+        const g = ctx.createGain(), peak = 0.026 + 0.012 * lv;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(peak, t + 3.2);
+        g.gain.setValueAtTime(peak, t + len - 0.4);
+        g.gain.linearRampToValueAtTime(0.0001, t + len + 3.4);
+        lp.connect(g); g.connect(mus.bus); g.connect(mus.send);
+        ch.forEach(function (m, i) {
+          [-9, 9].forEach(function (dt, j) {
+            const o = ctx.createOscillator(); o.type = i === 0 ? 'sawtooth' : 'triangle'; o.frequency.value = mtof(m); o.detune.value = dt + (i - 2) * 1.5;
+            const vg = ctx.createGain(); vg.gain.value = i === 0 ? 0.7 : 0.55;
+            o.connect(vg); pan(vg, (i % 2 ? 1 : -1) * (0.25 + 0.15 * j), lp);
+            o.start(t); o.stop(t + len + 3.6); mus.voices.push(o);
+          });
+        });
+      }
+      // 水晶のような音: まばら。盛り上がるほど少しだけ増える
+      for (let k = 0; k < 2; k++) {
+        if (Math.random() < 0.16 + 0.3 * lv) {
+          const bt = t + Math.floor(Math.random() * 8) * BEAT / 2 + k * BAR / 2;
+          const m = BELLS[Math.floor(Math.random() * BELLS.length)];
+          const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = mtof(m);
+          const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = mtof(m) * 2.76;   // 金属的な上の響き
+          const g = ctx.createGain(), g2 = ctx.createGain(), pk = 0.05 + 0.03 * Math.random();
+          g.gain.setValueAtTime(0.0001, bt); g.gain.linearRampToValueAtTime(pk, bt + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, bt + 3.4);
+          g2.gain.setValueAtTime(0.0001, bt); g2.gain.linearRampToValueAtTime(pk * 0.12, bt + 0.008); g2.gain.exponentialRampToValueAtTime(0.0001, bt + 0.9);
+          o.connect(g); o2.connect(g2);
+          const p = Math.random() * 1.2 - 0.6;
+          pan(g, p, mus.bus); pan(g2, p, mus.bus); g.connect(mus.send);
+          o.start(bt); o.stop(bt + 3.5); o2.start(bt); o2.stop(bt + 1); mus.voices.push(o, o2);
+        }
+      }
+      // 遠い電波のような信号: ときどき、ごく小さく。3 つの短い音が並ぶ
+      if (Math.random() < 0.08) {
+        const rt = t + Math.random() * BAR * 0.5, base = 1100 + Math.random() * 1400, p = Math.random() < 0.5 ? -0.8 : 0.8;
+        for (let i = 0; i < 3; i++) {
+          const nt = rt + i * 0.19;
+          const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+          const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = base * (1 + 0.12 * i); f.Q.value = 14;
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0.0001, nt); g.gain.linearRampToValueAtTime(0.05, nt + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, nt + 0.12);
+          s.connect(f); f.connect(g); pan(g, p, mus.bus); g.connect(mus.send);
+          s.start(nt, Math.random() * 1.5); s.stop(nt + 0.14);
+        }
+      }
+    }
+    function stopMusic(fade) {
+      if (!mus) return;
+      const m = mus; mus = null;
+      clearInterval(m.timer);
+      m.bus.gain.cancelScheduledValues(ctx.currentTime);
+      m.bus.gain.setTargetAtTime(0, ctx.currentTime, (fade || 1.2) / 3);
+      // 予約済みのパッドや水晶の音も、余韻が消えたら一緒に止める (鳴りっぱなしにすると、出撃直後の描画が遅くなった)
+      const end = ctx.currentTime + (fade || 1.2) + 0.15;
+      m.voices.forEach(function (o) { try { o.stop(end); } catch (e) { /* もう止まっている */ } });
+      m.oscs.forEach(function (o) { try { o.stop(end); } catch (e) { /* もう止まっている */ } });
+      setTimeout(function () { m.bus.disconnect(); }, ((fade || 1.2) + 0.3) * 1000);
+    }
     return {
       init: init,
+      music: startMusic,
+      stopMusic: stopMusic,
+      musicOn: function () { return !!mus; },
+      ready: function () { return !!ctx && ctx.state === 'running'; },
       setEnabled: function (on) {
         enabled = on;
         if (master) { master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setTargetAtTime(on ? 0.9 : 0, ctx.currentTime, 0.03); }
@@ -1517,11 +1633,25 @@
     $('stageCard').hidden = true;
   }
 
+  /** タイトルの間だけ曲を鳴らす (音の設定を切ったら止める)。 */
+  function syncMusic() {
+    if (screen === 'title' && settings.sound) audio.music(); else audio.stopMusic(0.6);
+  }
+  // 音は最初の指のあとでないと鳴らせない (iOS)。タイトルで最初に触れた瞬間に始める
+  ['pointerup', 'touchend'].forEach(function (type) {
+    document.addEventListener(type, function once() {
+      audio.init();
+      if (screen === 'title' && settings.sound) audio.music();
+      if (audio.ready()) { ['pointerup', 'touchend'].forEach(function (t) { document.removeEventListener(t, once, true); }); }
+    }, true);
+  });
+
   let lastStart;
   function startGame(opts) {
     opts = opts || {};
     lastStart = opts.start;
     audio.init();
+    audio.stopMusic(1.2);
     clearWorld();
     game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start });
     shipObj = makePlayerShip();
@@ -1561,6 +1691,7 @@
     setSkyKind('space');
     screen = 'title';
     paused = false;
+    audio.music();
     els.title.hidden = false; els.result.hidden = true; els.pause.hidden = true; els.controls.hidden = true;
     shipObj = makePlayerShip();
     scene.add(shipObj);
@@ -2730,6 +2861,7 @@
       setPaused: setPaused,
       toTitle: toTitle,
       audioLevel: function () { return audio.level(); },
+      musicOn: function () { return audio.musicOn(); },
       settings: settings,
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
       // 自機のまわり r m にある、大きな (煙の玉のような) 粒の数。ブーストで煙を出さない見張り用

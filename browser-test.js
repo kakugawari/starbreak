@@ -236,6 +236,18 @@ async function run() {
     ok(faces.player.bad === 0 && faces.enemy.bad === 0 && faces.boss.bad === 0,
       `機体の面の表向きと光の向きがそろっている (自機 ${faces.player.bad}/${faces.player.total}・敵機 ${faces.enemy.bad}/${faces.enemy.total}・戦艦 ${faces.boss.bad}/${faces.boss.total} 枚が逆)`);
 
+    // ------------------------------------------------ タイトルの曲
+    section('タイトルの曲');
+    // 最初に触れたあとから鳴る (ここまでに何度か触れている)。静かで、割れず、効果音より小さい
+    ok(await page.evaluate(() => window.__app.musicOn()), 'タイトルで触れたあと、曲が鳴っている');
+    const mlv = [];
+    for (let i = 0; i < 6; i++) { await page.waitForTimeout(500); mlv.push(await page.evaluate(() => window.__app.audioLevel())); }
+    if (!mlv[0]) skip('このブラウザでは音を測れない');
+    else {
+      const mavg = mlv.reduce((a, l) => a + l.avg, 0) / mlv.length, mmax = Math.max.apply(null, mlv.map((l) => l.max));
+      ok(mavg > 0.01 && mavg < 0.09 && mmax < 0.4, `曲は静かで割れない (平均 ${mavg.toFixed(3)}・最大 ${mmax.toFixed(3)})`);
+    }
+
     // ------------------------------------------------ 出撃
     section('出撃 (ボタンを指で押す)');
     const startBtn = await rectOf(page, '#btnStart');
@@ -247,6 +259,7 @@ async function run() {
       fighters: window.__app.game().fighters.length
     }));
     ok(playing.controls && playing.title, '操作の部品が出て、タイトルが消える');
+    ok(!(await page.evaluate(() => window.__app.musicOn())), '出撃すると、タイトルの曲は止まる');
     ok(playing.fighters === 3, `第1波は 3 機 (${playing.fighters})`);
     ok(await page.evaluate(() => window.__app.skyDim() < 0.7), '遊んでいる間は背景を沈める (敵や印が埋もれないように)');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -274,7 +287,9 @@ async function run() {
     await page.waitForTimeout(300);
     const jetNormal = await page.evaluate(() => window.__app.jetLength());
     await page.keyboard.down('Shift');
-    await page.waitForTimeout(700);
+    // 遅い機械では出撃直後のゲームが 1 秒で 0.1 秒ほどしか進まない。実時間 700ms ではなく、ゲームの時間で待つ
+    await page.waitForFunction(() => window.__app.game().player.boosting, null, { timeout: 30000 });
+    await waitGameTime(page, 0.6);
     const boostFx = await page.evaluate(() => ({ big: window.__app.bigParticlesNear(40, 2), jet: window.__app.jetLength(), root: window.__app.jetRoot(), boosting: window.__app.game().player.boosting }));
     await page.keyboard.up('Shift');
     ok(boostFx.boosting && boostFx.big === 0, `ブーストで煙の玉を出さない (自機の 40m 以内の大きな粒 ${boostFx.big})`);
