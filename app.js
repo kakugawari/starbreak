@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.7.5';
+  const VERSION = 'v0.8.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -202,7 +202,7 @@
     const m = new THREE.Mesh(new THREE.SphereGeometry(20000, 64, 32), mat);
     m.renderOrder = -10;
     sky.add(m);
-    // 1 面は紫の星雲 (space.jpg)、2 面は琥珀色の星雲 (space2.jpg)。面が変わったら setSkyKind で替える
+    // 1 面は紫の星雲 (space.jpg)、2 面は灰色の星雲 (space2.jpg)、3 面は琥珀色の星雲 (space3.jpg)。面が変わったら setSkyKind で替える
     sky.userData.tex = {};
     sky.userData.kind = 'space';
     function useSky(name) {
@@ -213,7 +213,7 @@
       mat.needsUpdate = true;
     }
     sky.userData.use = useSky;
-    ['space', 'space2'].forEach(function (name) {
+    ['space', 'space2', 'space3'].forEach(function (name) {
       loadTex(name + '.jpg', function (t) {
         // 内側から見ると左右が反転するので戻す
         t.wrapS = THREE.RepeatWrapping;
@@ -279,11 +279,12 @@
     m.renderOrder = -8;
     m.visible = false;
     planet.add(m);
-    // 1 面は地球、2 面は火星 (mars.jpg。地球の絵と同じ割合: 円の中心が真ん中・半径は幅の 0.44 になるよう切り出した)
+    // 1 面は地球、2 面は水星 (mercury.jpg)、3 面は火星 (mars.jpg。地球の絵と同じ割合: 円の中心が真ん中・半径は幅の 0.44 になるよう切り出した)
     planet.userData.tex = {};
     planet.userData.kind = 'earth';
     loadTex('earth.jpg', function (t) { planet.userData.tex.earth = t; if (planet.userData.kind === 'earth') { mat.uniforms.map.value = t; m.visible = true; } });
     loadTex('mars.jpg', function (t) { planet.userData.tex.mars = t; if (planet.userData.kind === 'mars') { mat.uniforms.map.value = t; m.visible = true; } });
+    loadTex('mercury.jpg', function (t) { planet.userData.tex.mercury = t; if (planet.userData.kind === 'mercury') { mat.uniforms.map.value = t; m.visible = true; } });
     planet.userData.mat = mat;
     planet.userData.offset = new THREE.Vector3(-3400, -5200, -9000);
     planet.userData.ball = m;
@@ -361,14 +362,14 @@
     titleGlow.visible = titlePlanet.visible;
   }
 
-  /** 空の絵を面に合わせて替える (1 面 space / 2 面 space2)。 */
+  /** 空の絵を面に合わせて替える (1 面 space / 2 面 space2 / 3 面 space3)。 */
   function setSkyKind(kind) {
     if (sky.userData.kind === kind) return;
     sky.userData.kind = kind;
     sky.userData.use(kind);
   }
 
-  /** ゲームの空の惑星を地球 / 火星に切り替える (面が変わったとき)。 */
+  /** ゲームの空の惑星を地球 / 水星 / 火星に切り替える (面が変わったとき)。 */
   function setPlanetKind(kind) {
     const u = planet.userData;
     if (u.kind === kind) return;
@@ -644,12 +645,13 @@
    * 角ばった機体、小さな赤いキャノピー、機首の横の前翼、後ろの大きなエンジン 1 基が赤く光る。
    * 色は暗い灰。赤いのは光る所 (キャノピー・ライト・吸気口・エンジン) だけ。
    */
-  function makeEnemyShip() {
+  function makeEnemyShip(red) {
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
     // 当たったときに白く光らせるので、機体ごとに材質を分ける
     const hull = ENEMY_MAT.hull.clone();
+    if (red) { hull.color.setHex(0xb02024); hull.specular.setHex(0xff8070); }
 
     // 胴体: 断面を 8 角にして、面で角ばった形に
     const fus = loftGeo([
@@ -813,7 +815,7 @@
   // 2 面の戦艦: 同じ形を蛍光緑に塗る (装甲の絵に緑を掛け、少し自ら光らせて蛍光に見せる)
   let hullMatGreen = null;
   function bossHullMat(level) {
-    if (level !== 2) return hullMat;
+    if (level !== 3) return hullMat;
     if (!hullMatGreen) {
       hullMatGreen = hullMat.clone();
       hullMatGreen.color.set(0x9dff7a);
@@ -1639,7 +1641,8 @@
   // 面の始まりの札 (STAGE n / 英名 / 日本語名)。3 秒。出ている間は、あとから来る知らせ (第1波) を札が消えるまで待たせる
   const STAGE_CARD = {
     1: { en: 'PLANETARY ORBIT', ja: '惑星軌道' },
-    2: { en: 'MARS ORBIT', ja: '火星軌道' }
+    2: { en: 'MERCURY ORBIT', ja: '水星軌道' },
+    3: { en: 'MARS ORBIT', ja: '火星軌道' }
   };
   const STAGE_CARD_MS = 3000;
   let stageCardAnim = null;
@@ -1749,6 +1752,11 @@
           banner(e.text, e.phase === 'dying' ? 3 : 3.2, e.phase === 'dying' ? '#ffd27a' : '#ffb26a', e.phase === 'dying');
           if (e.phase === 'dying') { fx.slowT = 1.2; shake(2); }
           break;
+        case 'aceWarning':
+          banner(e.text, 2.4, '#ff6a5a', true);
+          audio.alarm(); setTimeout(audio.alarm, 500);
+          break;
+        case 'aceDown': banner(e.text, 3, '#ffd27a', true); fx.slowT = 1.0; shake(1.5); break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
         case 'drones': banner('迎撃機 接近', 1.4, '#ff8a7a'); break;
         case 'bossWarp':
@@ -1798,12 +1806,18 @@
     game.fighters.forEach(function (f) {
       seen.add(f.id);
       let o = enemyObjs.get(f.id);
-      if (!o) { o = makeEnemyShip(); if (f.drone) o.scale.setScalar(0.6); enemyObjs.set(f.id, o); scene.add(o); } // ドローンは小さく
+      if (!o) {
+        o = makeEnemyShip(f.ace);
+        if (f.drone) o.scale.setScalar(0.6); // ドローンは小さく
+        if (f.ace) o.scale.setScalar(C.TUNING.aceScale); // エース機は大きく
+        enemyObjs.set(f.id, o); scene.add(o);
+      }
       o.position.set(f.pos.x, f.pos.y, f.pos.z);
       const yp = C.yawPitchOf(f.dir);
       o.rotation.order = 'YXZ';
       o.rotation.set(yp.pitch, yp.yaw, f.bank * 0.9);
-      o.userData.mats.forEach(function (m) { m.emissive.setRGB(f.flash * 1.2, f.flash * 0.9, f.flash * 0.7); });
+      const eb = f.ace ? 0.16 : 0; // エース機は赤い地の光を残す
+      o.userData.mats.forEach(function (m) { m.emissive.setRGB(eb + f.flash * 1.2, f.flash * 0.9, f.flash * 0.7); });
     });
     enemyObjs.forEach(function (o, id) {
       if (!seen.has(id)) { scene.remove(o); enemyObjs.delete(id); }
@@ -2007,8 +2021,8 @@
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
-    setPlanetKind(game.level === 2 ? 'mars' : 'earth');
-    setSkyKind(game.level === 2 ? 'space2' : 'space');
+    setPlanetKind(['earth', 'earth', 'mercury', 'mars'][game.level] || 'earth');
+    setSkyKind(['space', 'space', 'space2', 'space3'][game.level] || 'space');
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -2408,6 +2422,18 @@
         }
       }
     }
+    const ace = game.ace;
+    if (ace && ace.alive && !b) {
+      const bw = 200, bx = W / 2 - bw / 2;
+      c.textAlign = 'center';
+      c.font = '700 10px -apple-system, sans-serif';
+      c.fillStyle = 'rgba(255,190,170,.95)';
+      c.fillText('エース機', W / 2, 14);
+      c.fillStyle = 'rgba(0,0,0,.5)';
+      c.fillRect(bx, 19, bw, 5);
+      c.fillStyle = '#ff5a5a';
+      c.fillRect(bx, 19, bw * Math.max(0, ace.hp) / ace.maxHp, 5);
+    }
     if (pl.outside) {
       c.textAlign = 'center';
       c.font = '800 14px -apple-system, sans-serif';
@@ -2722,6 +2748,7 @@
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
+      aceLook: function () { const f = game.ace, o = f && enemyObjs.get(f.id); return o ? { scale: o.scale.x, color: o.userData.mats[0].color.getHexString() } : null; },
       enemyScale: function (id) { const o = enemyObjs.get(id); return o ? o.scale.x : 0; },
       bossClipX: function () { return bossClip.constant; },
       jetLength: function () { return shipObj.userData.jetBase; },

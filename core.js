@@ -223,8 +223,10 @@
     maxBursting: 2,
     // 巨大戦艦
     turretHp: 14, engineHp: 30, coreHp: 50,
-    // 2 面: 戦艦は同じ形で強くする (部位の耐久・砲台の撃つ間隔・主砲の間隔・護衛機の数)。2 面に入るとき機体を直す
-    boss2Hp: 1.3, boss2Fire: 0.8, boss2Cannon: 0.8, boss2Escorts: 4, stage2Intro: 3.5,
+    // 3 面 (最後): 戦艦は 1 面と同じ形で強くする (部位の耐久・砲台の撃つ間隔・主砲の間隔・護衛機の数)。面が変わるとき機体を直す
+    boss3Hp: 1.3, boss3Fire: 0.8, boss3Cannon: 0.8, boss3Escorts: 4, stageIntro: 3.5,
+    // 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。体力が多く、何発も当てないと落ちない。撃つ間隔が短く、5 連射
+    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
     // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
@@ -405,7 +407,7 @@
       state: 'play',          // play / ending / clear / over
       stage: opts.start === 'boss' ? 'bossIn' : 'wave1',
       stageTimer: 0,
-      level: 1,               // 面 (1 / 2)。1 面の戦艦を沈めると 2 面へ
+      level: 1,               // 面 (1 / 2 / 3)。1 面の戦艦を沈めると 2 面 (小ボス) へ、小ボスを落とすと 3 面 (蛍光緑の戦艦) へ
       nextId: 1,
       player: {
         pos: vec(0, 0, 0), yaw: 0, pitch: 0, roll: 0,
@@ -451,29 +453,50 @@
     };
   }
 
+  // 敵の編隊の置き方 (自機からの相対位置)。1 面の第1波だけ高さをばらけさせる
+  const WAVE_OFFS = {
+    1: [
+      [vec(-140, 0, -760), vec(0, 0, -800), vec(140, 0, -840)],
+      [vec(-260, 80, -720), vec(260, -40, -760), vec(-200, 30, 700), vec(220, 90, 680)]
+    ],
+    2: [
+      [vec(-210, -20, -760), vec(-70, 50, -800), vec(70, -30, -800), vec(210, 40, -760)],
+      [vec(-260, 80, -720), vec(260, -40, -760), vec(-200, 30, 700), vec(220, 90, 680)]
+    ],
+    3: [
+      [vec(-210, -20, -760), vec(-70, 50, -800), vec(70, -30, -800), vec(210, 40, -760)],
+      [vec(-260, 80, -720), vec(0, -60, -780), vec(260, -40, -760), vec(-200, 30, 700), vec(220, 90, 680)]
+    ]
+  };
+
   function spawnWave(g, n) {
     const p = g.player.pos;
-    const L = g.level === 2 ? '2面  ' : '';
-    let offs;
-    if (n === 1) {
-      offs = g.level === 2
-        ? [vec(-210, -20, -760), vec(-70, 50, -800), vec(70, -30, -800), vec(210, 40, -760)]
-        : [vec(-140, 0, -760), vec(0, 0, -800), vec(140, 0, -840)];
-      for (let i = 0; i < offs.length; i++) {
-        const pos = add(p, g.level === 2 ? offs[i] : vec(offs[i].x, rand(g, -40, 60), offs[i].z));
-        g.fighters.push(makeFighter(g, pos, sub(p, pos)));
-      }
-      emit(g, 'stage', { text: L + '第1波  敵戦闘機 ' + offs.length + '機' });
-    } else if (n === 2) {
-      offs = g.level === 2
-        ? [vec(-260, 80, -720), vec(0, -60, -780), vec(260, -40, -760), vec(-200, 30, 700), vec(220, 90, 680)]
-        : [vec(-260, 80, -720), vec(260, -40, -760), vec(-200, 30, 700), vec(220, 90, 680)];
-      for (let i = 0; i < offs.length; i++) {
-        const pos = add(p, offs[i]);
-        g.fighters.push(makeFighter(g, pos, sub(p, pos)));
-      }
-      emit(g, 'stage', { text: L + '第2波  ' + offs.length + '機  後方にも注意' });
+    const L = g.level > 1 ? g.level + '面  ' : '';
+    const offs = WAVE_OFFS[g.level][n - 1];
+    for (let i = 0; i < offs.length; i++) {
+      const o = offs[i];
+      const pos = add(p, g.level === 1 && n === 1 ? vec(o.x, rand(g, -40, 60), o.z) : o);
+      g.fighters.push(makeFighter(g, pos, sub(p, pos)));
     }
+    emit(g, 'stage', { text: L + (n === 1 ? '第1波  敵戦闘機 ' + offs.length + '機' : '第2波  ' + offs.length + '機' + (n === 2 && offs.some(function (o) { return o.z > 0; }) ? '  後方にも注意' : '')) });
+  }
+
+  /**
+   * 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。正面から来る。体力が多く、何発も当てないと落ちない。
+   * 落とすと、少し間をおいて 3 面へ進む。
+   */
+  function spawnAce(g) {
+    const p = g.player.pos;
+    const pos = add(p, vec(0, 20, -820));
+    const f = makeFighter(g, pos, sub(p, pos));
+    f.ace = true;
+    f.hp = f.maxHp = T.aceHp;
+    f.radius = T.aceRadius;
+    f.skill = T.aceSkill;
+    f.fireCd = 2.2;
+    g.fighters.push(f);
+    g.ace = f;
+    emit(g, 'aceWarning', { text: '警告  エース機 接近', id: f.id });
   }
 
   /** ワープして現れる所: 自機の前 (水平の向き) 700m・下 150m。戦う場所の外へはみ出さないよう、中心寄りに詰める */
@@ -493,7 +516,7 @@
     const portal = add(at, vec(BOSS_PORTAL, 0, 0));
     const from = add(portal, vec(-BOSS_BOW, 0, 0)); // 艦首がちょうど光の面にある所
     const parts = BOSS_PARTS.map(function (d) {
-      const hp = Math.round((d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp) * (g.level === 2 ? T.boss2Hp : 1));
+      const hp = Math.round((d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp) * (g.level === 3 ? T.boss3Hp : 1));
       return {
         id: g.nextId++, kind: d.kind, local: copy(d.at), face: copy(d.face),
         pos: add(from, d.at), vel: vec(),
@@ -901,8 +924,9 @@
     t.alive = false;
     if (t.kind === 'fighter') {
       g.stats.kills++;
-      emit(g, 'explode', { pos: t.pos, size: 1.4, vel: t.vel, kind: 'fighter' });
-      addScore(g, 100, t.pos);
+      emit(g, 'explode', { pos: t.pos, size: t.ace ? 3.6 : 1.4, vel: t.vel, kind: 'fighter' });
+      addScore(g, t.ace ? 2000 : 100, t.pos);
+      if (t.ace) emit(g, 'aceDown', { pos: t.pos, text: 'エース機 撃墜' });
     } else {
       emit(g, 'explode', { pos: t.pos, size: t.kind === 'core' ? 4 : 2.6, kind: t.kind });
       addScore(g, t.kind === 'turret' ? 300 : t.kind === 'engine' ? 600 : 3000, t.pos);
@@ -1034,15 +1058,15 @@
         f.burstCd -= dt;
         if (f.burstCd <= 0) {
           f.burst--; f.burstCd = 0.13;
-          const muzzle = addScaled(f.pos, f.dir, 7);
+          const muzzle = addScaled(f.pos, f.dir, f.ace ? 11 : 7);
           enemyShot(g, muzzle, scatter(g, sub(lead, muzzle), T.fighterAimError), T.fighterShotDamage, T.enemyShotSpeed);
           emit(g, 'enemyLaser', { pos: muzzle });
         }
       } else if (f.mode === 'attack' && f.fireCd <= 0 && pl.alive && g.state === 'play' &&
                  d < T.fighterFireRange && angleBetween(f.dir, sub(lead, f.pos)) < T.fighterFireCone &&
                  bursting < T.maxBursting) {
-        f.burst = 3; f.burstCd = 0; bursting++;
-        f.fireCd = rand(g, 1.6, 2.6);
+        f.burst = f.ace ? T.aceBurst : 3; f.burstCd = 0; bursting++;
+        f.fireCd = rand(g, 1.6, 2.6) * (f.ace ? T.aceFire : 1);
       }
     }
     g.fighters = g.fighters.filter(function (f) { return f.alive; });
@@ -1117,7 +1141,7 @@
         b.battleT = g.t;
         b.vel = vec();
         emit(g, 'bossPhase', { phase: 'battle', text: '砲台を破壊せよ' });
-        launchEscorts(g, b.level === 2 ? T.boss2Escorts : 3);
+        launchEscorts(g, b.level === 3 ? T.boss3Escorts : 3);
       }
     }
 
@@ -1172,7 +1196,7 @@
       const armorAt = BOSS_PARTS[BOSS_PARTS.length - 1].at;
       emit(g, 'explode', { pos: add(b.pos, vec(armorAt.x, armorAt.y + 6, armorAt.z)), size: 3, kind: 'armor' });
       emit(g, 'bossPhase', { phase: 'core', text: '装甲が吹き飛んだ  コアを撃ち抜け' });
-      launchEscorts(g, b.level === 2 ? T.boss2Escorts : 3);
+      launchEscorts(g, b.level === 3 ? T.boss3Escorts : 3);
     }
     if (b.phase === 'core' && aliveParts(b, 'core') === 0) {
       b.phase = 'dying';
@@ -1200,7 +1224,7 @@
       p.fireCd -= dt;
       if (p.fireCd > 0 || !pl.alive || g.state !== 'play') continue;
       if (d > T.turretRange || dot(to, p.face) < d * 0.1) { p.fireCd = 0.5; continue; }
-      p.fireCd = rand(g, 2.2, 3.4) * (b.level === 2 ? T.boss2Fire : 1);
+      p.fireCd = rand(g, 2.2, 3.4) * (b.level === 3 ? T.boss3Fire : 1);
       const ic = intercept(p.pos, pl.pos, pl.vel, T.turretShotSpeed);
       const aim = sub(ic ? ic.point : pl.pos, p.pos);
       const from = addScaled(p.pos, norm(aim), p.radius + 2);
@@ -1235,7 +1259,7 @@
         }
         if (c.t >= T.cannonFire) {
           c.state = 'idle';
-          c.next = (b.phase === 'core' ? 6.5 : 9) * (b.level === 2 ? T.boss2Cannon : 1);
+          c.next = (b.phase === 'core' ? 6.5 : 9) * (b.level === 3 ? T.boss3Cannon : 1);
           if (!c.hitDone) emit(g, 'cannonDodged');
         }
       }
@@ -1319,17 +1343,30 @@
 
   function updateStage(g, dt) {
     g.stageTimer += dt;
-    if (g.stage === 'intro2') {
-      if (g.stageTimer > T.stage2Intro) { g.stage = 'wave1'; g.stageTimer = 0; spawnWave(g, 1); }
+    if (g.stage === 'intro') {
+      if (g.stageTimer > T.stageIntro) { g.stage = 'wave1'; g.stageTimer = 0; spawnWave(g, 1); }
+      return;
+    }
+    // 小ボスを落としたら、少し間をおいて次の面へ
+    if (g.stage === 'ace') {
+      if (g.ace && !g.ace.alive) { g.stage = 'aceDown'; g.stageTimer = 0; }
+      return;
+    }
+    if (g.stage === 'aceDown') {
+      if (g.stageTimer > T.aceDownDelay) startStage(g, 3);
       return;
     }
     if (g.stage === 'wave1' && g.fighters.length === 0) { g.stage = 'gap1'; g.stageTimer = 0; emit(g, 'waveClear'); }
     else if (g.stage === 'gap1' && g.stageTimer > 2.5) { g.stage = 'wave2'; g.stageTimer = 0; spawnWave(g, 2); }
     else if (g.stage === 'wave2' && g.fighters.length === 0) { g.stage = 'gap2'; g.stageTimer = 0; emit(g, 'waveClear'); }
     else if ((g.stage === 'gap2' && g.stageTimer > 3) || (g.stage === 'bossIn' && !g.boss)) {
-      g.stage = 'boss'; g.stageTimer = 0;
-      g.boss = makeBoss(g);
-      emit(g, 'bossWarning', { text: '警告  巨大戦艦 接近' });
+      g.stageTimer = 0;
+      if (g.level === 2) { g.stage = 'ace'; spawnAce(g); }
+      else {
+        g.stage = 'boss';
+        g.boss = makeBoss(g);
+        emit(g, 'bossWarning', { text: '警告  巨大戦艦 接近' });
+      }
     }
   }
 
@@ -1385,7 +1422,7 @@
     if (g.state === 'ending') {
       g.endT += dt;
       if (g.boss && g.boss.phase === 'dead' && g.endT > 7) {
-        if (g.level === 1) startStage2(g);
+        if (g.level === 1) startStage(g, 2);
         else { g.state = 'clear'; emit(g, 'clear'); }
       }
     } else if (g.state === 'over') {
@@ -1394,23 +1431,23 @@
   }
 
   /**
-   * 1 面の戦艦を沈めたあと、2 面へ進む。機体を直し (シールド・機体・ミサイル・ブースト)、
-   * しばらく間をおいてから 2 面の第1波を出す。戦艦は 2 面の第2波のあとに、蛍光緑に塗った強い艦が来る
+   * 次の面へ進む (1 面の戦艦を沈めたら 2 面、2 面の小ボスを落としたら 3 面)。
+   * 機体を直し (シールド・機体・ミサイル・ブースト)、しばらく間をおいてから、その面の第1波を出す
    */
-  function startStage2(g) {
+  function startStage(g, level) {
     const pl = g.player;
-    g.level = 2;
+    g.level = level;
     g.state = 'play';
     g.boss = null;
+    g.ace = null;
     g.fighters = [];
     g.shots = [];
     g.missiles = [];
-    g.stage = 'intro2';
+    g.stage = 'intro';
     g.stageTimer = 0;
-    g.stage1Time = g.stats.time;
     pl.shield = T.shieldMax; pl.hull = T.hullMax; pl.missiles = T.missileMax; pl.boost = 100;
     pl.mlock.length = 0; pl.lockT = 0; pl.locked = false; pl.lockId = 0; pl.targetId = 0;
-    emit(g, 'stageStart', { level: 2, text: 'STAGE 2' });
+    emit(g, 'stageStart', { level: level, text: 'STAGE ' + level });
   }
 
   /** 終わったときの成績。 */
@@ -1428,7 +1465,7 @@
     let rank = 'C';
     // 2 面まで遊ぶと点も増えるので線を伸ばす。2 面は長く手ごわいので 2 倍ではなく 1.8 倍
     // (自動操縦 8 通りで、1 面だけのときと同じく 上手 → ほぼ S・下手 → A になる値)
-    const lv = g.level === 2 ? 1.8 : 1;
+    const lv = g.level === 3 ? 2.3 : g.level === 2 ? 1.3 : 1;
     if (cleared) rank = total >= 16000 * lv ? 'S' : total >= 12000 * lv ? 'A' : total >= 8000 * lv ? 'B' : 'C';
     return {
       cleared: !!cleared, time: s.time, kills: s.kills, accuracy: acc,

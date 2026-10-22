@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const out = process.argv[2];
 if (!out) { console.error('使い方: node bundle.js 出力先.html'); process.exit(1); }
-const ASSETS = ['space.jpg', 'space2.jpg', 'earth.jpg', 'mars.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'];
+const ASSETS = ['space.jpg', 'space2.jpg','space3.jpg','mercury.jpg', 'earth.jpg', 'mars.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'];
 const read = (f) => fs.readFileSync(path.join(__dirname, f), 'utf8');
 // </script> が中にあると、そこで埋め込みが切れる
 const safe = (js) => js.replace(/<\/script/gi, '<\\/script');

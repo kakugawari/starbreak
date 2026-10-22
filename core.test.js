@@ -392,10 +392,19 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   assert.strictEqual(g.state, 'play', '1 面の戦艦では終わらず、2 面へ進む');
   assert.strictEqual(g.level, 2);
   assert.strictEqual(g.boss, null);
-  // 2 面の戦艦まで飛ばして、同じ順で沈めるとクリア
+  // 2 面のボスはエース機。落とすと 3 面へ進む
+  g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
+  run(g, 1, (gg) => { gg.fighters = gg.fighters.filter((f) => f.ace); return {}; });
+  assert.ok(g.ace && g.ace.alive && g.stage === 'ace', 'エース機が出る');
+  assert.strictEqual(g.boss, null, '2 面に戦艦はいない');
+  g.ace.hp = 0.1; g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60));
+  for (let i = 0; i < 90 && g.ace.alive; i++) { g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60)); C.step(g, { fire: true, throttle: 0 }, 1 / 30); }
+  run(g, T.aceDownDelay + 1, (gg) => { gg.fighters = []; return {}; });
+  assert.strictEqual(g.level, 3);
+  // 3 面の戦艦まで飛ばして、同じ順で沈めるとクリア
   g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
   run(g, 14, (gg) => { gg.fighters = []; return {}; });
-  assert.strictEqual(g.boss.level, 2);
+  assert.strictEqual(g.boss.level, 3);
   assert.strictEqual(g.boss.phase, 'battle');
   for (const k of ['turret', 'engine', 'core']) { killParts(g, k); run(g, 0.1, {}); }
   assert.strictEqual(g.boss.phase, 'dying');
@@ -572,49 +581,65 @@ test('護衛機は船体の外から出て、船体にめり込まない', () =>
 
 // ------------------------------------------------------------ 通しで遊ぶ
 
-test('上手な自動操縦は、8通りの始め方のうち7つ以上で 2 面の最後まで勝てる', () => {
+test('上手な自動操縦は、8通りの始め方のうち7つ以上で 3 面の最後まで勝てる', () => {
   let cleared = 0;
   const times = [];
   for (let seed = 1; seed <= 8; seed++) {
     const g = C.createGame({ seed: seed });
-    run(g, 840, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
+    run(g, 1500, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
     if (g.state === 'clear') { cleared++; times.push(Math.round(g.stats.time)); }
   }
   assert.ok(cleared >= 7, `勝てたのは ${cleared}/8 (${times.join(', ')} 秒)`);
-  assert.ok(Math.max.apply(null, times) < 600, 'どれも 2 面あわせて 10 分以内');
+  assert.ok(Math.max.apply(null, times) < 900, 'どれも 3 面あわせて 15 分以内');
 });
 
-test('1 面の戦艦を沈めると 2 面へ進む: 機体が直り、敵は多く、戦艦は蛍光緑の強い艦。2 面の戦艦を沈めて初めてクリア', () => {
+test('3 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・蛍光緑の強い戦艦) → クリア。面が変わるたびに機体が直る', () => {
   const g = C.createGame({ seed: 4 });
-  const seen = [];
-  let at2 = null, wave = [], boss2 = null;
-  run(g, 840, (gg) => {
+  const seen = [], starts = {}, waves = { 2: [], 3: [] };
+  let boss3 = null, aceWarn = 0, aceDown = 0, aceMax = 0, bossIn2 = false;
+  run(g, 1500, (gg) => {
     for (const e of gg.events) {
-      if (e.type === 'stageStart') { at2 = { t: gg.t, hull: gg.player.hull, shield: gg.player.shield, missiles: gg.player.missiles, state: gg.state, boss: gg.boss }; }
-      if (e.type === 'stage' && gg.level === 2) wave.push(gg.fighters.filter((f) => !f.drone).length);
+      if (e.type === 'stageStart') starts[e.level] = { hull: gg.player.hull, shield: gg.player.shield, missiles: gg.player.missiles, state: gg.state, boss: gg.boss, ace: gg.ace };
+      if (e.type === 'stage' && gg.level > 1) waves[gg.level].push(gg.fighters.filter((f) => !f.drone && !f.ace).length);
       if (e.type === 'clear') seen.push('clear@' + gg.level);
+      if (e.type === 'aceWarning') aceWarn++;
+      if (e.type === 'aceDown') aceDown++;
     }
-    if (gg.level === 2 && gg.boss && !boss2) boss2 = gg.boss;
+    if (gg.ace) aceMax = Math.max(aceMax, gg.ace.maxHp);
+    if (gg.level === 2 && gg.boss) bossIn2 = true;
+    if (gg.level === 3 && gg.boss && !boss3) boss3 = gg.boss;
     gg.events.length = 0;
     return gg.state === 'play' ? C.autopilot(gg, 1) : {};
   }, 1 / 30);
-  assert.ok(at2, '2 面へ進んだ');
-  assert.strictEqual(at2.state, 'play');
-  assert.strictEqual(at2.boss, null, '1 面の戦艦は片づく');
-  assert.ok(at2.hull === T.hullMax && at2.shield === T.shieldMax && at2.missiles === T.missileMax, '2 面に入るとき機体が直る');
-  assert.deepStrictEqual(wave, [4, 5], '2 面の敵は 4 機・5 機 (1 面は 3 機・4 機)');
-  assert.ok(boss2 && boss2.level === 2, '2 面の戦艦');
-  const turret = boss2.parts.find((p) => p.kind === 'turret'), core = boss2.parts.find((p) => p.kind === 'core');
-  assert.strictEqual(turret.maxHp, Math.round(T.turretHp * T.boss2Hp));
-  assert.strictEqual(core.maxHp, Math.round(T.coreHp * T.boss2Hp));
-  assert.deepStrictEqual(seen, ['clear@2'], '1 面の戦艦ではクリアにならず、2 面の戦艦を沈めてクリア');
+  [2, 3].forEach((lv) => {
+    const s = starts[lv];
+    assert.ok(s, lv + ' 面へ進んだ');
+    assert.strictEqual(s.state, 'play');
+    assert.strictEqual(s.boss, null, '前の面のボスは片づく');
+    assert.ok(s.hull === T.hullMax && s.shield === T.shieldMax && s.missiles === T.missileMax, lv + ' 面に入るとき機体が直る');
+  });
+  assert.deepStrictEqual(waves[2], [4, 4], '2 面の敵は 4 機・4 機');
+  assert.deepStrictEqual(waves[3], [4, 5], '3 面の敵は 4 機・5 機 (1 面は 3 機・4 機)');
+  assert.ok(!bossIn2, '2 面のボスは戦艦ではなくエース機');
+  assert.strictEqual(aceWarn, 1); assert.strictEqual(aceDown, 1);
+  assert.strictEqual(aceMax, T.aceHp);
+  assert.ok(boss3 && boss3.level === 3, '3 面の戦艦');
+  const turret = boss3.parts.find((p) => p.kind === 'turret'), core = boss3.parts.find((p) => p.kind === 'core');
+  assert.strictEqual(turret.maxHp, Math.round(T.turretHp * T.boss3Hp));
+  assert.strictEqual(core.maxHp, Math.round(T.coreHp * T.boss3Hp));
+  assert.deepStrictEqual(seen, ['clear@3'], '1 面の戦艦・エース機ではクリアにならず、3 面の戦艦を沈めてクリア');
+});
+
+test('エース機の強さ: 通常の敵より大きく、体力が 10 倍以上', () => {
+  assert.ok(T.aceHp >= 10 * T.fighterHp, 'ふつうの敵の 10 倍以上の体力');
+  assert.ok(T.aceRadius > T.fighterRadius && T.aceScale > 1.2, '大きい');
 });
 
 test('巨大戦艦から始めても、沈めたあと 2 面へ進む', () => {
   const g = C.createGame({ seed: 2, start: 'boss' });
-  let reached = false;
-  run(g, 420, (gg) => { if (gg.events.some((e) => e.type === 'stageStart')) reached = true; gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
-  assert.ok(reached && g.level === 2);
+  let first = 0;
+  run(g, 420, (gg) => { for (const e of gg.events) if (e.type === 'stageStart' && !first) first = e.level; gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
+  assert.strictEqual(first, 2, '沈めたあと 2 面 (エース機) へ進む');
 });
 
 test('主砲は脅威になる: よけない操縦では当たり、よける操縦ではほとんど当たらない', () => {
@@ -641,7 +666,7 @@ test('主砲は脅威になる: よけない操縦では当たり、よける操
 
 test('成績: 勝てばランクが付き、負ければ付かない', () => {
   const g = C.createGame({ seed: 2 });
-  run(g, 840, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
+  run(g, 1500, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
   const r = C.result(g);
   assert.ok(r.cleared && ['S', 'A', 'B', 'C'].includes(r.rank));
   assert.ok(r.total >= r.score);
