@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.3';
+  const VERSION = 'v0.8.4';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1329,10 +1329,85 @@
       if (!ctx.createStereoPanner) { node.connect(dest); return; }
       const sp = ctx.createStereoPanner(); sp.pan.value = p; node.connect(sp); sp.connect(dest);
     }
-    function startMusic() {
-      if (!ctx || mus || !enabled) return;
+
+    // ---- 通常戦闘の曲 (その場で合成) ----
+    // 速さ・正確さ・追われる緊張。120 BPM・16 小節 (32 秒) をくり返し、長い前置きも終わりも無い。
+    // 刻むシンセの低音 (8 分) + 引き締まったキックとスネア + 機械のような 16 分の音列 + 暗い弦のパッド (Am → F → Dm → E) +
+    // ときどき低い金管のひと吹き。緊張は 16 小節かけて少しずつ上がる (音列 → ハイハット → 最後の小節のスネアの連打)。
+    // 中高音は空けておく: 音列は低め・小さく、ハイハットは裏拍だけ、シンバルは無し (レーザー・ロック音・爆発が聞こえるように)
+    const CBT_BPM = 120, CBT_BEAT = 60 / CBT_BPM, CBT_BAR = CBT_BEAT * 4, CBT_S = CBT_BEAT / 4, CBT_VOL = 0.75;
+    const CBT_ROOT = [33, 29, 26, 28];                                     // A1 F1 D1 E1
+    const CBT_PAD = [[57, 60, 64, 69], [53, 57, 60, 65], [50, 57, 62, 65], [52, 56, 59, 64]];
+    const CBT_KICK = [0, 6, 8, 13], CBT_ARP = [0, 2, 1, 3, 2, 1, 3, 2, 0, 2, 1, 3, 2, 3, 1, 2];
+    function cNoise(t, dur, vol, type, f, q, p) {
+      const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+      const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.value = f; fl.Q.value = q || 0.7;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      s.connect(fl); fl.connect(g); pan(g, p || 0, mus.bus);
+      s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.02);
+    }
+    function cTone(t, type, f0, f1, dur, vol, lpf, p) {
+      const o = ctx.createOscillator(); o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      let node = o;
+      if (lpf) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(lpf, t); f.frequency.exponentialRampToValueAtTime(Math.max(80, lpf * 0.35), t + dur); o.connect(f); node = f; }
+      node.connect(g); pan(g, p || 0, mus.bus);
+      o.start(t); o.stop(t + dur + 0.03); mus.voices.push(o);
+    }
+    function scheduleCombatBar(bar, t) {
+      const k = bar % 16, lv = 0.3 + 0.7 * k / 15, ci = Math.floor(k / 4) % 4;
+      const root = CBT_ROOT[ci], pad = CBT_PAD[ci];
+      if (mus.voices.length > 160) mus.voices = mus.voices.slice(-80);
+      // 弦: 4 小節ごと。暗く、少しずつ開く
+      if (k % 4 === 0) {
+        const len = CBT_BAR * 4;
+        const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+        lp.frequency.setValueAtTime(550 + 500 * lv, t); lp.frequency.linearRampToValueAtTime(650 + 700 * lv, t + len);
+        const g = ctx.createGain(), pk = 0.02 + 0.012 * lv;
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(pk, t + 1.0);
+        g.gain.setValueAtTime(pk, t + len - 0.3); g.gain.linearRampToValueAtTime(0.0001, t + len + 1.0);
+        lp.connect(g); g.connect(mus.bus);
+        pad.forEach(function (m, i) {
+          [-8, 8].forEach(function (dt) {
+            const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = mtof(m); o.detune.value = dt;
+            const vg = ctx.createGain(); vg.gain.value = 0.6; o.connect(vg); pan(vg, (i % 2 ? 1 : -1) * 0.3, lp);
+            o.start(t); o.stop(t + len + 1.1); mus.voices.push(o);
+          });
+        });
+        // 低い金管: 和音の頭にひと吹き
+        cTone(t, 'sawtooth', mtof(root + 24), mtof(root + 24), 0.7, 0.05, 520, 0);
+      }
+      for (let st = 0; st < 16; st++) {
+        const at = t + st * CBT_S;
+        // 低音: 8 分で刻む。裏の拍で 1 オクターブ上へ
+        if (st % 2 === 0) cTone(at, 'sawtooth', mtof(root + (st === 6 || st === 14 ? 12 : 0)), mtof(root + (st === 6 || st === 14 ? 12 : 0)), CBT_S * 1.8, 0.1, 380, 0);
+        if (st === 0) cTone(at, 'sine', mtof(root), mtof(root), CBT_BEAT * 1.6, 0.1, 0, 0);
+        // キック・スネア (引き締めて短く)
+        if (CBT_KICK.indexOf(st) >= 0) cTone(at, 'sine', 140, 42, 0.2, 0.45, 0, 0);
+        if (st === 4 || st === 12) { cNoise(at, 0.13, 0.2, 'bandpass', 1900, 0.8); cTone(at, 'triangle', 200, 150, 0.09, 0.09, 0, 0); }
+        // 最後の小節: スネアの連打で次の周回へ
+        if (k === 15 && st >= 12 && st % 1 === 0) cNoise(at, 0.07, 0.07 + 0.012 * (st - 12), 'bandpass', 2000, 0.8);
+        // 機械のような音列: 2 小節目以降。低めで小さい
+        if (lv >= 0.35 && st !== 3 && st !== 11) {
+          const m = pad[CBT_ARP[st]] + (CBT_ARP[st] % 2 ? 0 : 12) - 12;
+          cTone(at, 'square', mtof(m + 12), mtof(m + 12), CBT_S * 1.2, st % 4 === 0 ? 0.034 : 0.022, 1300, st % 2 ? 0.35 : -0.35);
+        }
+        // ハイハット: 裏拍だけ。終盤は 16 分
+        if ((lv >= 0.55 && st % 4 === 2) || (lv >= 0.85 && st % 2 === 1)) cNoise(at, 0.035, 0.035, 'highpass', 7500, 0.7, st % 4 === 2 ? 0.3 : -0.3);
+      }
+    }
+    function startMusic(kind) {
+      kind = kind || 'title';
+      if (!ctx || !enabled) return;
+      if (mus && mus.kind === kind) return;
+      if (mus) stopMusic(0.8);
+      const combat = kind === 'combat';
       const bus = ctx.createGain(); bus.gain.value = 0; bus.connect(master);
-      bus.gain.setTargetAtTime(0.55, ctx.currentTime, 1.6);   // ゆっくり入る
+      bus.gain.setTargetAtTime(combat ? CBT_VOL : 0.55, ctx.currentTime, combat ? 0.4 : 1.6);   // タイトルはゆっくり入る。戦闘はすぐ
       // こだま: 付点 8 分。戻りは暗く (高い音を削る)
       const dly = ctx.createDelay(2); dly.delayTime.value = BEAT * 0.75;
       const fb = ctx.createGain(); fb.gain.value = 0.5;
@@ -1341,7 +1416,7 @@
       dly.connect(dlp); dlp.connect(fb); fb.connect(dly); dlp.connect(wet); wet.connect(bus);
       const send = ctx.createGain(); send.gain.value = 1; send.connect(dly);
       // 低い唸り: 深い正弦 (A1) + ほんの少しずらした 2 本ののこぎり波 (A2) を、ゆっくり開閉するフィルターへ
-      const dg = ctx.createGain(); dg.gain.value = 0.13; dg.connect(bus);
+      const dg = ctx.createGain(); dg.gain.value = combat ? 0 : 0.13; dg.connect(bus);
       const dlp2 = ctx.createBiquadFilter(); dlp2.type = 'lowpass'; dlp2.frequency.value = 200; dlp2.Q.value = 2;
       dlp2.connect(dg);
       const oscs = [];
@@ -1351,10 +1426,10 @@
       });
       const lfo = ctx.createOscillator(); lfo.frequency.value = 0.045;
       const lg = ctx.createGain(); lg.gain.value = 90; lfo.connect(lg); lg.connect(dlp2.frequency); lfo.start(); oscs.push(lfo);
-      mus = { bus: bus, send: send, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
+      mus = { kind: kind, barLen: combat ? CBT_BAR : BAR, bus: bus, send: send, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
       const tick = function () {
         if (!mus) return;
-        while (mus.t < ctx.currentTime + 2) { scheduleBar(mus.bar, mus.t); mus.bar++; mus.t += BAR; }
+        while (mus.t < ctx.currentTime + 2) { (mus.kind === 'combat' ? scheduleCombatBar : scheduleBar)(mus.bar, mus.t); mus.bar++; mus.t += mus.barLen; }
       };
       tick();
       mus.timer = setInterval(tick, 250);
@@ -1429,6 +1504,7 @@
       music: startMusic,
       stopMusic: stopMusic,
       musicOn: function () { return !!mus; },
+      musicKind: function () { return mus ? mus.kind : null; },
       ready: function () { return !!ctx && ctx.state === 'running'; },
       setEnabled: function (on) {
         enabled = on;
@@ -1635,13 +1711,17 @@
 
   /** タイトルの間だけ曲を鳴らす (音の設定を切ったら止める)。 */
   function syncMusic() {
-    if (screen === 'title' && settings.sound) audio.music(); else audio.stopMusic(0.6);
+    if (!settings.sound) { audio.stopMusic(0.6); return; }
+    if (screen === 'title') audio.music('title');
+    // 戦闘の曲は、戦艦が出ていない間だけ (戦艦戦は曲なし。いまはまだ専用の曲が無い)
+    else if (screen === 'play' && game && game.state === 'play' && !game.boss) audio.music('combat');
+    else audio.stopMusic(1.2);
   }
   // 音は最初の指のあとでないと鳴らせない (iOS)。タイトルで最初に触れた瞬間に始める
   ['pointerup', 'touchend'].forEach(function (type) {
     document.addEventListener(type, function once() {
       audio.init();
-      if (screen === 'title' && settings.sound) audio.music();
+      syncMusic();
       if (audio.ready()) { ['pointerup', 'touchend'].forEach(function (t) { document.removeEventListener(t, once, true); }); }
     }, true);
   });
@@ -1651,7 +1731,6 @@
     opts = opts || {};
     lastStart = opts.start;
     audio.init();
-    audio.stopMusic(1.2);
     clearWorld();
     game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start });
     shipObj = makePlayerShip();
@@ -1667,6 +1746,7 @@
     setSkyDim(SKY_DIM.play);
     screen = 'play';
     paused = false;
+    syncMusic();
     els.title.hidden = true; els.result.hidden = true; els.pause.hidden = true;
     els.controls.hidden = false;
     // 巨大戦艦からのときは、すぐ出るカットインが知らせる
@@ -1691,7 +1771,7 @@
     setSkyKind('space');
     screen = 'title';
     paused = false;
-    audio.music();
+    syncMusic();
     els.title.hidden = false; els.result.hidden = true; els.pause.hidden = true; els.controls.hidden = true;
     shipObj = makePlayerShip();
     scene.add(shipObj);
@@ -1741,6 +1821,7 @@
     els.result.hidden = false;
     els.controls.hidden = true;
     screen = 'result';
+    syncMusic();
   }
 
   /**
@@ -1879,9 +1960,10 @@
         }
         case 'scrape': sparks(e.pos, 16, [1, 0.8, 0.4]); break;
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
-        case 'stageStart': showStageCard(e.level); break;
+        case 'stageStart': showStageCard(e.level); setTimeout(syncMusic, 0); break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
+          setTimeout(syncMusic, 0);
           showCutin();
           audio.alarm(); setTimeout(audio.alarm, 500); setTimeout(audio.alarm, 1000);
           fx.bossCam = 6;
@@ -2862,6 +2944,7 @@
       toTitle: toTitle,
       audioLevel: function () { return audio.level(); },
       musicOn: function () { return audio.musicOn(); },
+      musicKind: function () { return audio.musicKind(); },
       settings: settings,
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
       // 自機のまわり r m にある、大きな (煙の玉のような) 粒の数。ブーストで煙を出さない見張り用

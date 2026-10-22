@@ -259,7 +259,13 @@ async function run() {
       fighters: window.__app.game().fighters.length
     }));
     ok(playing.controls && playing.title, '操作の部品が出て、タイトルが消える');
-    ok(!(await page.evaluate(() => window.__app.musicOn())), '出撃すると、タイトルの曲は止まる');
+    ok(await page.evaluate(() => window.__app.musicKind() === 'combat'), '出撃すると、タイトルの曲から戦闘の曲に替わる');
+    const clv = [];
+    for (let i = 0; i < 8; i++) { await page.waitForTimeout(400); clv.push(await page.evaluate(() => window.__app.audioLevel())); }
+    if (clv[0]) {
+      const cavg = clv.reduce((a, l) => a + l.avg, 0) / clv.length, cmax = Math.max.apply(null, clv.map((l) => l.max));
+      ok(cavg > 0.008 && cavg < 0.09 && cmax < 0.5, `戦闘の曲は割れず、効果音より小さい (平均 ${cavg.toFixed(3)}・最大 ${cmax.toFixed(3)})`);
+    }
     ok(playing.fighters === 3, `第1波は 3 機 (${playing.fighters})`);
     ok(await page.evaluate(() => window.__app.skyDim() < 0.7), '遊んでいる間は背景を沈める (敵や印が埋もれないように)');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -639,6 +645,7 @@ async function run() {
     ok(cut.glow >= 1, `帯が光る (光のアニメーション ${cut.glow} 本)`);
     await page.waitForFunction(() => document.getElementById('cutin').hidden, null, { timeout: 6000 });
     ok(true, 'カットインは終わると消える');
+    ok(await page.evaluate(() => window.__app.musicKind() === null), '戦艦が出たら、戦闘の曲は止まる (戦艦戦の曲はまだ無い)');
     await page.waitForFunction(() => window.__app.game().boss.shown, null, { timeout: 15000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const boss0 = await page.evaluate(() => { const g = window.__app.game(), b = g.boss, p = g.player.pos; return { vis: window.__app.bossVisible(), d: Math.hypot(b.at.x - p.x, b.at.y - p.y, b.at.z - p.z) }; });
