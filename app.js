@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.4';
+  const VERSION = 'v0.8.5';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1400,14 +1400,93 @@
         if ((lv >= 0.55 && st % 4 === 2) || (lv >= 0.85 && st % 2 === 1)) cNoise(at, 0.035, 0.035, 'highpass', 7500, 0.7, st % 4 === 2 ? 0.3 : -0.3);
       }
     }
+
+    // ---- 巨大戦艦戦の曲 (その場で合成) ----
+    // 小型機では太刀打ちできない巨大な敵と向き合う恐怖。105 BPM。はじめに 4 小節の低い不穏な空気 (1 回だけ)、そのあと 16 小節の戦いをくり返す。
+    // 深い唸り (E1)・重く遅い太鼓・低い金管のうねり (Em → F → Em → D)・暗い弦の低いオスティナート・金属の衝撃音・のぼっていく機械の雑音。
+    // 一定の強さにしない: 前半は静かに構え (太鼓は頭だけ)、8〜9 小節で張りつめ、10 小節目は一拍だけ全部止めて間をあけ、
+    // 11 小節目の頭の大きな一撃から強く攻め、最後の小節で引いて頭へ戻る。主砲の発射や爆発が聞こえるよう、高い音は削る
+    const BSS_BPM = 105, BSS_BEAT = 60 / BSS_BPM, BSS_BAR = BSS_BEAT * 4, BSS_S = BSS_BEAT / 4, BSS_VOL = 0.5, BSS_INTRO = 4;
+    const BSS_ROOT = [40, 41, 40, 38];                     // E2 F2 E2 D2
+    const BSS_OST = [0, 0, 1, 0, 3, 0, 1, 0];              // 半音 (E F) と短 3 度 (G) を行き来する 8 分の音列 (0=根音, 1=+1, 3=+3)
+    function bossHit(t, big) {                              // 金属の衝撃: 合わない倍音を重ね、高いところは削る
+      const base = 150;
+      [1, 2.76, 5.4, 8.93].forEach(function (r, i) {
+        cTone(t, 'sine', base * r, base * r * 0.97, big ? 1.8 : 1.0, (big ? 0.11 : 0.07) / (1 + i * 0.7), 2600, 0);
+      });
+      cNoise(t, big ? 0.9 : 0.35, big ? 0.3 : 0.16, 'lowpass', big ? 1400 : 900, 0.7, 0);
+      cTone(t, 'sine', 70, 30, big ? 1.2 : 0.7, big ? 0.6 : 0.35, 0, 0);
+    }
+    function scheduleBossBar(bar, t) {
+      if (mus.voices.length > 160) mus.voices = mus.voices.slice(-80);
+      const intro = bar < BSS_INTRO, k = intro ? bar : (bar - BSS_INTRO) % 16;
+      const root = BSS_ROOT[intro ? 0 : Math.floor(k / 4) % 4];
+      const bar4 = intro ? bar % 4 : k % 4;
+      // 低い金管のうねり: 2 小節ごと。はじめは遠く、攻めるほど近く
+      const brassOn = intro ? bar === 2 : k % 2 === 0 && k !== 10;
+      if (brassOn) {
+        const len = BSS_BAR * 2, pk = (intro ? 0.035 : (k >= 11 && k <= 14 ? 0.07 : 0.05));
+        [0, 7, 12].forEach(function (iv, i) {
+          [-9, 9].forEach(function (dt) {
+            const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = mtof(root + 12 + iv); o.detune.value = dt;
+            const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
+            lp.frequency.setValueAtTime(260, t); lp.frequency.linearRampToValueAtTime(760 + (k >= 11 ? 220 : 0), t + len * 0.55); lp.frequency.linearRampToValueAtTime(300, t + len);
+            const g = ctx.createGain();
+            g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(pk / (1 + i * 0.35), t + len * 0.5); g.gain.linearRampToValueAtTime(0.0001, t + len);
+            o.connect(lp); lp.connect(g); pan(g, (i - 1) * 0.25, mus.bus);
+            o.start(t); o.stop(t + len + 0.05); mus.voices.push(o);
+          });
+        });
+      }
+      if (intro) {
+        // 太鼓 1 つだけ遠くで鳴る。最後の小節に、のぼる雑音
+        if (bar === 1 || bar === 3) cTone(t, 'sine', 80, 34, 0.9, 0.3, 0, 0);
+        if (bar === 3) {
+          const s2 = ctx.createBufferSource(); s2.buffer = noiseBuf;
+          const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 3;
+          f.frequency.setValueAtTime(150, t); f.frequency.exponentialRampToValueAtTime(1500, t + BSS_BAR);
+          const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.06, t + BSS_BAR * 0.9); g.gain.linearRampToValueAtTime(0.0001, t + BSS_BAR);
+          s2.connect(f); f.connect(g); g.connect(mus.bus); s2.start(t, Math.random()); s2.stop(t + BSS_BAR + 0.05);
+        }
+        return;
+      }
+      const hot = k >= 11 && k <= 14, surge = k === 8 || k === 9, quiet = k <= 3 || k === 15;
+      // 10 小節目: 一拍だけ全部止める (間)。最後の 2 拍に低い唸りだけ立ち上げて、次の一撃へ
+      if (k === 10) { cTone(t + BSS_BEAT * 2, 'sine', 41, 41, BSS_BEAT * 2, 0.16, 0, 0); return; }
+      // 11 小節目の頭: 大きな一撃 (主砲や爆発の隙間にならないよう、あとは引く)
+      if (k === 11) bossHit(t, true);
+      else if (bar4 === 0 && !quiet) bossHit(t, false);
+      for (let st = 0; st < 16; st++) {
+        const at = t + st * BSS_S;
+        // 重く遅い太鼓: 静かなときは頭だけ、構えのあとは 1 と 3 拍、攻めるときは裏も
+        const hits = quiet ? [0] : hot ? [0, 6, 8, 12] : [0, 8];
+        if (hits.indexOf(st) >= 0 && !(k === 11 && st === 0)) cTone(at, 'sine', 100, 36, 0.5, quiet ? 0.32 : 0.5, 0, 0);
+        if (!quiet && (st === 8 || (hot && st === 12))) cNoise(at, 0.22, hot ? 0.16 : 0.1, 'bandpass', 700, 0.9);
+        // 暗い弦のオスティナート: 8 分。低く、短く。攻めるほど大きく
+        if (!quiet && st % 2 === 0) {
+          const m = root + 12 + BSS_OST[(st / 2) % 8];
+          cTone(at, 'sawtooth', mtof(m), mtof(m), BSS_S * 1.7, hot ? 0.06 : 0.04, 650, st % 4 ? 0.3 : -0.3);
+        }
+        // 張りつめる 2 小節: 16 分の機械の刻み (低め)
+        if (surge && st % 2 === 1) cTone(at, 'square', mtof(root + 24), mtof(root + 24), BSS_S * 0.7, 0.018 + 0.006 * (k - 8), 900, st % 4 === 1 ? -0.4 : 0.4);
+      }
+      // のぼる機械の雑音: 8〜9 小節にかけて
+      if (surge) {
+        const s2 = ctx.createBufferSource(); s2.buffer = noiseBuf;
+        const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 4;
+        f.frequency.setValueAtTime(k === 8 ? 200 : 700, t); f.frequency.exponentialRampToValueAtTime(k === 8 ? 700 : 2000, t + BSS_BAR);
+        const g = ctx.createGain(); g.gain.setValueAtTime(0.01, t); g.gain.linearRampToValueAtTime(k === 8 ? 0.035 : 0.06, t + BSS_BAR * 0.95); g.gain.linearRampToValueAtTime(0.0001, t + BSS_BAR);
+        s2.connect(f); f.connect(g); g.connect(mus.bus); s2.start(t, Math.random()); s2.stop(t + BSS_BAR + 0.05);
+      }
+    }
     function startMusic(kind) {
       kind = kind || 'title';
       if (!ctx || !enabled) return;
       if (mus && mus.kind === kind) return;
       if (mus) stopMusic(0.8);
-      const combat = kind === 'combat';
+      const combat = kind === 'combat', bossK = kind === 'boss';
       const bus = ctx.createGain(); bus.gain.value = 0; bus.connect(master);
-      bus.gain.setTargetAtTime(combat ? CBT_VOL : 0.55, ctx.currentTime, combat ? 0.4 : 1.6);   // タイトルはゆっくり入る。戦闘はすぐ
+      bus.gain.setTargetAtTime(combat ? CBT_VOL : bossK ? BSS_VOL : 0.55, ctx.currentTime, kind === 'title' ? 1.6 : 0.4);   // タイトルはゆっくり入る。戦闘はすぐ
       // こだま: 付点 8 分。戻りは暗く (高い音を削る)
       const dly = ctx.createDelay(2); dly.delayTime.value = BEAT * 0.75;
       const fb = ctx.createGain(); fb.gain.value = 0.5;
@@ -1416,20 +1495,20 @@
       dly.connect(dlp); dlp.connect(fb); fb.connect(dly); dlp.connect(wet); wet.connect(bus);
       const send = ctx.createGain(); send.gain.value = 1; send.connect(dly);
       // 低い唸り: 深い正弦 (A1) + ほんの少しずらした 2 本ののこぎり波 (A2) を、ゆっくり開閉するフィルターへ
-      const dg = ctx.createGain(); dg.gain.value = combat ? 0 : 0.13; dg.connect(bus);
+      const dg = ctx.createGain(); dg.gain.value = combat ? 0 : bossK ? 0.09 : 0.13; dg.connect(bus);
       const dlp2 = ctx.createBiquadFilter(); dlp2.type = 'lowpass'; dlp2.frequency.value = 200; dlp2.Q.value = 2;
       dlp2.connect(dg);
       const oscs = [];
-      [[55, 'sine', 0, 1], [110, 'sawtooth', -7, 0.35], [110, 'sawtooth', 7, 0.35]].forEach(function (d) {
+      (bossK ? [[41.2, 'sine', 0, 1], [82.4, 'sawtooth', -9, 0.4], [82.4, 'sawtooth', 9, 0.4]] : [[55, 'sine', 0, 1], [110, 'sawtooth', -7, 0.35], [110, 'sawtooth', 7, 0.35]]).forEach(function (d) {
         const o = ctx.createOscillator(); o.type = d[1]; o.frequency.value = d[0]; o.detune.value = d[2];
         const g = ctx.createGain(); g.gain.value = d[3]; o.connect(g); g.connect(dlp2); o.start(); oscs.push(o);
       });
       const lfo = ctx.createOscillator(); lfo.frequency.value = 0.045;
       const lg = ctx.createGain(); lg.gain.value = 90; lfo.connect(lg); lg.connect(dlp2.frequency); lfo.start(); oscs.push(lfo);
-      mus = { kind: kind, barLen: combat ? CBT_BAR : BAR, bus: bus, send: send, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
+      mus = { kind: kind, barLen: combat ? CBT_BAR : bossK ? BSS_BAR : BAR, bus: bus, send: send, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
       const tick = function () {
         if (!mus) return;
-        while (mus.t < ctx.currentTime + 2) { (mus.kind === 'combat' ? scheduleCombatBar : scheduleBar)(mus.bar, mus.t); mus.bar++; mus.t += mus.barLen; }
+        while (mus.t < ctx.currentTime + 2) { (mus.kind === 'combat' ? scheduleCombatBar : mus.kind === 'boss' ? scheduleBossBar : scheduleBar)(mus.bar, mus.t); mus.bar++; mus.t += mus.barLen; }
       };
       tick();
       mus.timer = setInterval(tick, 250);
@@ -1713,8 +1792,8 @@
   function syncMusic() {
     if (!settings.sound) { audio.stopMusic(0.6); return; }
     if (screen === 'title') audio.music('title');
-    // 戦闘の曲は、戦艦が出ていない間だけ (戦艦戦は曲なし。いまはまだ専用の曲が無い)
-    else if (screen === 'play' && game && game.state === 'play' && !game.boss) audio.music('combat');
+    // 戦艦が出たら戦艦戦の曲へ。沈められる (撃沈の演出) 間と結果では止める
+    else if (screen === 'play' && game && game.state === 'play') audio.music(game.boss ? 'boss' : 'combat');
     else audio.stopMusic(1.2);
   }
   // 音は最初の指のあとでないと鳴らせない (iOS)。タイトルで最初に触れた瞬間に始める

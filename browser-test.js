@@ -645,7 +645,13 @@ async function run() {
     ok(cut.glow >= 1, `帯が光る (光のアニメーション ${cut.glow} 本)`);
     await page.waitForFunction(() => document.getElementById('cutin').hidden, null, { timeout: 6000 });
     ok(true, 'カットインは終わると消える');
-    ok(await page.evaluate(() => window.__app.musicKind() === null), '戦艦が出たら、戦闘の曲は止まる (戦艦戦の曲はまだ無い)');
+    ok(await page.evaluate(() => window.__app.musicKind() === 'boss'), '戦艦が出たら、戦闘の曲から戦艦戦の曲に替わる');
+    const blv = [];
+    for (let i = 0; i < 8; i++) { await page.waitForTimeout(400); blv.push(await page.evaluate(() => window.__app.audioLevel())); }
+    if (blv[0]) {
+      const bavg = blv.reduce((a, l) => a + l.avg, 0) / blv.length, bmax = Math.max.apply(null, blv.map((l) => l.max));
+      ok(bavg > 0.008 && bavg < 0.1 && bmax < 0.6, `戦艦戦の曲は割れず、低く重い (平均 ${bavg.toFixed(3)}・最大 ${bmax.toFixed(3)})`);
+    }
     await page.waitForFunction(() => window.__app.game().boss.shown, null, { timeout: 15000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const boss0 = await page.evaluate(() => { const g = window.__app.game(), b = g.boss, p = g.player.pos; return { vis: window.__app.bossVisible(), d: Math.hypot(b.at.x - p.x, b.at.y - p.y, b.at.z - p.z) }; });
