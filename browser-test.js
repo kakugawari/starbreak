@@ -609,9 +609,12 @@ async function run() {
     const bMax = await sfxMax('boost');
     await page.waitForTimeout(1500);
     const lMax = await sfxMax('lock');
+    await page.waitForTimeout(1500);
+    const gMax = await sfxMax('laser');
     if (bMax !== null) {
       ok(bMax > 0.12 && bMax < 0.9, `ブーストの音は強く、割れない (最大 ${bMax.toFixed(3)})`);
       ok(lMax > 0.03 && lMax < 0.3, `ロックオンの音は鳴り、小さく疲れにくい (最大 ${lMax.toFixed(3)})`);
+      ok(gMax > 0.1 && gMax < 0.5, `レーザーの発射音は力強く、割れない (最大 ${gMax.toFixed(3)})`);
     }
     await f.down(6, fire.x, fire.y);
     await waitGameTime(page, 0.3);
