@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.5';
+  const VERSION = 'v0.8.9';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1272,15 +1272,41 @@
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-      // エンジンのうなり (ずっと鳴らし、速さで音色を変える)
-      const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
-      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300;
-      const osc = ctx.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 55;
-      const og = ctx.createGain(); og.gain.value = 0.05;
-      const g = ctx.createGain(); g.gain.value = 0;
-      src.connect(lp); osc.connect(og); og.connect(lp); lp.connect(g); g.connect(master);
-      src.start(); osc.start();
-      engine = { lp: lp, osc: osc, g: g };
+      // 主人公機のエンジン (ずっと鳴らし、速さとブーストで少しずつ変える)。青い双発に似合う、滑らかな電子機械音:
+      //  ① タービンのうなり: 左右のエンジンをわずかにずらした三角波 (うなりの揺らぎ) + 1 オクターブ上の正弦波
+      //  ② 深いとどろき: 低い正弦波 + 丸めた雑音。③ かすかな電子の高鳴き: 2 本の正弦波 (ゆっくり揺れる)
+      //  ④ 青いエネルギーの噴射: 帯域を絞った雑音 (ブーストで増える)
+      const eg = ctx.createGain(); eg.gain.value = 0; eg.connect(master);
+      const humF = ctx.createBiquadFilter(); humF.type = 'lowpass'; humF.frequency.value = 700; humF.Q.value = 0.5;
+      const humG = ctx.createGain(); humG.gain.value = 0.55; humF.connect(humG); humG.connect(eg);
+      const hums = [];
+      [-1, 1].forEach(function (side) {
+        const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = 112 + side * 0.9;
+        const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = 224 - side * 1.1;
+        const g2 = ctx.createGain(); g2.gain.value = 0.35; o2.connect(g2);
+        const mix = ctx.createGain(); mix.gain.value = 0.5; o.connect(mix); g2.connect(mix);
+        if (ctx.createStereoPanner) { const sp = ctx.createStereoPanner(); sp.pan.value = side * 0.3; mix.connect(sp); sp.connect(humF); } else mix.connect(humF);
+        o.start(); o2.start(); hums.push(o, o2);
+      });
+      const sub = ctx.createOscillator(); sub.type = 'sine'; sub.frequency.value = 44;
+      const subG = ctx.createGain(); subG.gain.value = 0.5; sub.connect(subG); subG.connect(eg); sub.start();
+      const rumble = ctx.createBufferSource(); rumble.buffer = noiseBuf; rumble.loop = true;
+      const rumF = ctx.createBiquadFilter(); rumF.type = 'lowpass'; rumF.frequency.value = 150;
+      const rumG = ctx.createGain(); rumG.gain.value = 0.55; rumble.connect(rumF); rumF.connect(rumG); rumG.connect(eg); rumble.start();
+      const whineG = ctx.createGain(); whineG.gain.value = 0.014; whineG.connect(eg);
+      const whines = [];
+      [2600, 3900].forEach(function (f, i) {
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+        const lf = ctx.createOscillator(); lf.frequency.value = 0.27 + i * 0.11;
+        const lg = ctx.createGain(); lg.gain.value = 22; lf.connect(lg); lg.connect(o.frequency);
+        const vg = ctx.createGain(); vg.gain.value = i ? 0.5 : 1; o.connect(vg); vg.connect(whineG);
+        o.start(); lf.start(); whines.push(o, lf);
+      });
+      const jet = ctx.createBufferSource(); jet.buffer = noiseBuf; jet.loop = true;
+      const jetF = ctx.createBiquadFilter(); jetF.type = 'bandpass'; jetF.frequency.value = 800; jetF.Q.value = 0.7;
+      const jetL = ctx.createBiquadFilter(); jetL.type = 'lowpass'; jetL.frequency.value = 2200;
+      const jetG = ctx.createGain(); jetG.gain.value = 0.05; jet.connect(jetF); jetF.connect(jetL); jetL.connect(jetG); jetG.connect(eg); jet.start();
+      engine = { g: eg, hums: hums, humF: humF, sub: sub, rumF: rumF, whines: whines, whineG: whineG, jetF: jetF, jetG: jetG };
     }
     function env(g, t, a, peak, dec) {
       g.gain.setValueAtTime(0.0001, t);
@@ -1295,6 +1321,20 @@
       o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
       const g = ctx.createGain();
       env(g, t, 0.004, vol, dur);
+      let node = o;
+      if (filt) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filt; o.connect(f); node = f; }
+      node.connect(g); g.connect(master);
+      o.start(t); o.stop(t + dur + 0.05);
+    }
+    /** 指定の時刻 (when 秒後) に鳴らす音。予約なので、描画が遅れてもずれない。 */
+    function toneAt(when, type, f0, f1, dur, vol, filt, atk) {
+      if (!ctx || !enabled) return;
+      const t = ctx.currentTime + when;
+      const o = ctx.createOscillator(); o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+      const g = ctx.createGain();
+      env(g, t, atk || 0.004, vol, dur);
       let node = o;
       if (filt) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filt; o.connect(f); node = f; }
       node.connect(g); g.connect(master);
@@ -1593,12 +1633,28 @@
       resume: function () { if (ctx && ctx.state === 'suspended') ctx.resume(); },
       engine: function (speed, boosting, on) {
         if (!engine) return;
-        const t = ctx.currentTime;
-        engine.lp.frequency.setTargetAtTime(180 + speed * 4 + (boosting ? 900 : 0), t, 0.1);
-        engine.osc.frequency.setTargetAtTime(40 + speed * 0.5, t, 0.1);
-        engine.g.gain.setTargetAtTime(on ? (boosting ? 0.32 : 0.16) : 0, t, 0.15);
+        const t = ctx.currentTime, k = 0.3;   // ゆっくり追いかける (急に変わらない)
+        const sp = Math.min(1.6, speed / 60);
+        // タービン: 速いほど高く。ブーストでさらに少し高く
+        const hf = 100 + sp * 22 + (boosting ? 14 : 0);
+        engine.hums.forEach(function (o, i) { o.frequency.setTargetAtTime(hf * (i % 2 ? 2 : 1) + (i < 2 ? -0.9 : 0.9) * (i % 2 ? -1.2 : 1), t, k); });
+        engine.humF.frequency.setTargetAtTime(520 + sp * 220 + (boosting ? 380 : 0), t, k);
+        engine.sub.frequency.setTargetAtTime(42 + sp * 5, t, k);
+        engine.rumF.frequency.setTargetAtTime(130 + sp * 40 + (boosting ? 90 : 0), t, k);
+        engine.whines.forEach(function (o, i) { if (i % 2 === 0) o.frequency.setTargetAtTime((i ? 3900 : 2600) * (1 + sp * 0.06 + (boosting ? 0.05 : 0)), t, k); });
+        engine.whineG.gain.setTargetAtTime(boosting ? 0.022 : 0.012, t, k);
+        engine.jetF.frequency.setTargetAtTime(700 + sp * 250 + (boosting ? 500 : 0), t, k);
+        engine.jetG.gain.setTargetAtTime(boosting ? 0.2 : 0.05, t, 0.2);
+        engine.g.gain.setTargetAtTime(on ? (boosting ? 0.11 : 0.045) : 0, t, on ? 0.25 : 0.15);
       },
-      laser: function () { tone('square', 1500, 260, 0.075, 0.07, 3200); },
+      // レーザー: 約 0.2 秒。鋭い立ち上がり (短い帯域雑音のクリック) + 速く下がるのこぎり波 + 少し長く下がる正弦波の尾。
+      // 高い音は削る (3kHz まで)。連射しても耳障りにならないよう、1 発ごとに音程を ±4% ふらつかせ、音量も小さめにして重なりを許す
+      laser: function () {
+        const r = 1 + (Math.random() - 0.5) * 0.08;
+        tone('sawtooth', 1450 * r, 360 * r, 0.11, 0.05, 2800);
+        tone('sine', 640 * r, 200 * r, 0.2, 0.075);
+        noise(0.025, 0.05, 2400, 2000, 'bandpass', 1.2);
+      },
       enemyLaser: function () { tone('sawtooth', 700, 180, 0.12, 0.03, 1500); },
       hit: function () { tone('square', 2400, 1800, 0.03, 0.05); noise(0.04, 0.08, 6000, 3000, 'highpass'); },
       armored: function () { tone('triangle', 3200, 2600, 0.05, 0.05); },
@@ -1608,7 +1664,25 @@
       },
       big: function () { noise(2.4, 1, 1800, 40); tone('sine', 80, 20, 2.0, 0.9); },
       // ワープ明け: 上がっていく唸りから、重い轟音へ
-      warp: function () { tone('sawtooth', 120, 1400, 0.35, 0.12, 3000); noise(1.6, 0.9, 3500, 60); tone('sine', 70, 24, 1.8, 0.9); },
+      warp: function () {
+        tone('sawtooth', 120, 1400, 0.35, 0.12, 3000); noise(1.6, 0.9, 3500, 60); tone('sine', 70, 24, 1.8, 0.9);
+        // 巨大戦艦が現れる: 重低音のあとに金属の共鳴 (合わない倍音を低めに重ねて、ゆっくり消す)
+        [96, 265, 519, 857].forEach(function (f, i) { toneAt(0.12, 'sine', f, f * 0.985, 2.4 - i * 0.3, 0.16 / (1 + i * 0.6), 1800, 0.05); });
+      },
+      // ボス登場の警報 (約 1.5 秒): 深い警告音のあと、下がっていく鋭い 2 つのパルス + かすかな金属の響き。
+      // 救急車のようなサイレンにならないよう、音程は一度ずつ下がって止まる。中低域を強く、高い音は削る。「BOSS BATTLE」の帯の出現と同時に鳴らす
+      bossAlert: function () {
+        toneAt(0, 'sawtooth', 98, 90, 0.6, 0.2, 650, 0.03);
+        toneAt(0, 'sine', 49, 46, 0.6, 0.3, 0, 0.03);
+        [0.62, 0.98].forEach(function (w) {
+          toneAt(w, 'square', 820, 430, 0.22, 0.13, 2300, 0.004);
+          toneAt(w, 'triangle', 410, 215, 0.24, 0.14, 0, 0.004);
+          toneAt(w, 'sine', 90, 55, 0.3, 0.22, 0, 0.004);
+        });
+        [330, 905, 1760].forEach(function (f, i) { toneAt(0.6, 'sine', f, f, 0.9 - i * 0.18, 0.05 / (1 + i * 0.8), 2400, 0.006); });
+      },
+      // 音楽を一瞬弱める (演出のあいだ、効果音を聞かせる)
+      duck: function (v) { if (mus) mus.bus.gain.setTargetAtTime(v, ctx.currentTime, 0.06); },
       // 撃墜: 重い爆発 + はじける高い音。コンボが続くほど高くなる (2 半音ずつ、8 段まで)
       kill: function (combo, size) {
         const r = Math.pow(2, Math.min(combo - 1, 8) * 2 / 12);
@@ -1623,9 +1697,33 @@
         for (let i = 1; i < (n || 1); i++) setTimeout(function () { noise(0.45, 0.25, 900 + i * 150, 3200, 'bandpass', 1.2); }, i * 55);
       },
       // マルチロック: 捕まえるたびに短く、数が増えるほど高く
-      mlock: function (n) { const f = 1320 * Math.pow(1.19, n - 1); tone('square', f, f, 0.05, 0.055); },
-      lock: function () { tone('square', 1760, 1760, 0.05, 0.06); setTimeout(function () { tone('square', 2350, 2350, 0.07, 0.06); }, 70); },
-      boost: function () { noise(0.7, 0.35, 300, 4000, 'bandpass', 1); },
+      mlock: function (n) { const f = 1320 * Math.pow(1.19, n - 1); toneAt(0, 'sine', f, f, 0.1, 0.07, 0, 0.003); toneAt(0, 'triangle', f * 2, f * 2, 0.05, 0.02, 3500, 0.003); },
+      // ロックオン (約 0.4 秒): 音程の上がる正確な 2 つの電子音 → かすかなデジタルの走査 → 澄んだ確認の「ピン」。
+      // 冷たく、短く、サイレンではない。高い音は 3.5kHz まで・響きなしで、何度聞いても疲れにくい
+      lock: function () {
+        toneAt(0, 'sine', 1320, 1320, 0.07, 0.07, 0, 0.003);
+        toneAt(0.085, 'sine', 1760, 1760, 0.07, 0.07, 0, 0.003);
+        for (let i = 0; i < 6; i++) toneAt(0.07 + i * 0.03, 'square', 2300 + i * 90, 2300 + i * 90, 0.02, 0.012, 2800, 0.002);   // 走査の刻み
+        toneAt(0.25, 'sine', 2640, 2640, 0.16, 0.075, 0, 0.003);                                                                 // 確認のピン
+        toneAt(0.25, 'sine', 3960, 3960, 0.08, 0.02, 0, 0.003);
+      },
+      // ブースト点火 (約 1.2 秒): 鋭い電子の点火 → のぼっていく青いエネルギーの轟き + 深い低音の衝撃 + 速い空気のうねり + 明るく響く電子音。
+      // 立ち上がりが強く、尾は滑らかに消える。通常のエンジン音から一気に解き放たれる感じ。高い音はやや削る
+      boost: function () {
+        toneAt(0, 'square', 280, 1900, 0.13, 0.09, 3200, 0.003);                 // 点火
+        toneAt(0.02, 'sine', 95, 38, 0.55, 0.5, 0, 0.004);                       // 低音の衝撃
+        toneAt(0.04, 'sawtooth', 70, 430, 1.0, 0.11, 1500, 0.05);                // のぼる轟き
+        toneAt(0.04, 'sawtooth', 70.7, 436, 1.0, 0.08, 1500, 0.05);
+        if (ctx && enabled) {                                                     // 速い空気のうねり (帯域を上へ掃く)
+          const t = ctx.currentTime + 0.03, s2 = ctx.createBufferSource(); s2.buffer = noiseBuf;
+          const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 0.9;
+          f.frequency.setValueAtTime(350, t); f.frequency.exponentialRampToValueAtTime(3000, t + 0.6);
+          const g = ctx.createGain(); env(g, t, 0.05, 0.32, 0.85);
+          s2.connect(f); f.connect(g); g.connect(master); s2.start(t, Math.random() * 1.5); s2.stop(t + 1);
+        }
+        toneAt(0.1, 'sine', 1320, 1400, 1.0, 0.05, 0, 0.01);                      // 明るく響く電子音
+        toneAt(0.1, 'sine', 1980, 2100, 0.8, 0.03, 0, 0.01);
+      },
       hurt: function (big) { noise(0.25, big ? 0.6 : 0.35, 900, 200); tone('square', 200, 90, 0.18, 0.12); },
       alarm: function () { tone('square', 880, 870, 0.18, 0.08); setTimeout(function () { tone('square', 660, 650, 0.18, 0.08); }, 220); },
       charge: function () { tone('sawtooth', 80, 900, 2.6, 0.08, 2000); },
@@ -1789,11 +1887,16 @@
   }
 
   /** タイトルの間だけ曲を鳴らす (音の設定を切ったら止める)。 */
+  let bossMusic = false;   // 戦艦が現れたあと true
   function syncMusic() {
     if (!settings.sound) { audio.stopMusic(0.6); return; }
     if (screen === 'title') audio.music('title');
     // 戦艦が出たら戦艦戦の曲へ。沈められる (撃沈の演出) 間と結果では止める
-    else if (screen === 'play' && game && game.state === 'play') audio.music(game.boss ? 'boss' : 'combat');
+    else if (screen === 'play' && game && game.state === 'play') {
+      // 戦艦が出る知らせのあいだは、戦闘の曲を弱めて警報と帯を聞かせ、戦艦が現れた瞬間 (bossWarp) から戦艦戦の曲へ
+      if (game.boss && !bossMusic) audio.duck(0.12);
+      else audio.music(game.boss ? 'boss' : 'combat');
+    }
     else audio.stopMusic(1.2);
   }
   // 音は最初の指のあとでないと鳴らせない (iOS)。タイトルで最初に触れた瞬間に始める
@@ -1809,6 +1912,7 @@
   function startGame(opts) {
     opts = opts || {};
     lastStart = opts.start;
+    bossMusic = false;
     audio.init();
     clearWorld();
     game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start });
@@ -2039,12 +2143,13 @@
         }
         case 'scrape': sparks(e.pos, 16, [1, 0.8, 0.4]); break;
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
-        case 'stageStart': showStageCard(e.level); setTimeout(syncMusic, 0); break;
+        case 'stageStart': showStageCard(e.level); bossMusic = false; setTimeout(syncMusic, 0); break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
+          bossMusic = false;
           setTimeout(syncMusic, 0);
           showCutin();
-          audio.alarm(); setTimeout(audio.alarm, 500); setTimeout(audio.alarm, 1000);
+          audio.bossAlert();
           fx.bossCam = 6;
           break;
         case 'bossPhase':
@@ -2064,6 +2169,8 @@
           shockRing(e.pos, 1400, 1.0, 0xff6050);
           shake(2.0);
           audio.warp();
+          bossMusic = true;
+          setTimeout(syncMusic, 0);
           break;
         case 'bossLand': shake(1.0); audio.explode(3); break;
         case 'cannonCharge': audio.charge(); break;
@@ -3024,6 +3131,7 @@
       audioLevel: function () { return audio.level(); },
       musicOn: function () { return audio.musicOn(); },
       musicKind: function () { return audio.musicKind(); },
+      sfx: function (name) { audio[name](); },
       settings: settings,
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
       // 自機のまわり r m にある、大きな (煙の玉のような) 粒の数。ブーストで煙を出さない見張り用

@@ -593,6 +593,26 @@ async function run() {
 
     // ------------------------------------------------ 音
     section('音');
+    // 主人公機のエンジン音: ずっと鳴り、静かで、割れない (曲を止めて、エンジンだけを測る)
+    await page.evaluate(() => window.__app.sfx('stopMusic'));
+    await page.waitForTimeout(2500);
+    const elv = [];
+    for (let i = 0; i < 8; i++) { await page.waitForTimeout(300); elv.push(await page.evaluate(() => window.__app.audioLevel())); }
+    if (!elv[0]) skip('このブラウザでは音を測れない');
+    else {
+      const eavg = elv.reduce((a, l) => a + l.avg, 0) / elv.length, emax = Math.max.apply(null, elv.map((l) => l.max));
+      ok(eavg > 0.004 && eavg < 0.05 && emax < 0.2, `エンジン音は鳴り続け、静かで割れない (平均 ${eavg.toFixed(3)}・最大 ${emax.toFixed(3)})`);
+    }
+    // ブーストとロックオンの音: 鳴って、割れない。ロックは小さく疲れにくく、ブーストは強い (どちらも時刻を使う連続ループで測る。setTimeout だと遅い機械で外す)
+    const sfxMax = (name) => page.evaluate((name) => { const t0 = performance.now(); window.__app.sfx(name); let mx = 0; while (performance.now() - t0 < 1500) mx = Math.max(mx, window.__app.audioLevel().max); return mx; }, name);
+    await page.waitForTimeout(1500);
+    const bMax = await sfxMax('boost');
+    await page.waitForTimeout(1500);
+    const lMax = await sfxMax('lock');
+    if (bMax !== null) {
+      ok(bMax > 0.12 && bMax < 0.9, `ブーストの音は強く、割れない (最大 ${bMax.toFixed(3)})`);
+      ok(lMax > 0.03 && lMax < 0.3, `ロックオンの音は鳴り、小さく疲れにくい (最大 ${lMax.toFixed(3)})`);
+    }
     await f.down(6, fire.x, fire.y);
     await waitGameTime(page, 0.3);
     const level = await page.evaluate(() => window.__app.audioLevel());
@@ -645,7 +665,8 @@ async function run() {
     ok(cut.glow >= 1, `帯が光る (光のアニメーション ${cut.glow} 本)`);
     await page.waitForFunction(() => document.getElementById('cutin').hidden, null, { timeout: 6000 });
     ok(true, 'カットインは終わると消える');
-    ok(await page.evaluate(() => window.__app.musicKind() === 'boss'), '戦艦が出たら、戦闘の曲から戦艦戦の曲に替わる');
+    await page.waitForFunction(() => window.__app.musicKind() === 'boss', null, { timeout: 60000 });
+    ok(true, '戦艦が現れたら、戦艦戦の曲が始まる');
     const blv = [];
     for (let i = 0; i < 8; i++) { await page.waitForTimeout(400); blv.push(await page.evaluate(() => window.__app.audioLevel())); }
     if (blv[0]) {
@@ -702,6 +723,9 @@ async function run() {
     ok(await card(3, 'MARS ORBIT', '火星軌道') && await page.evaluate(() => window.__app.planetKind() === 'mars' && window.__app.skyKind() === 'space3'), 'エース機を落とすと 3 面 (火星・琥珀色の星雲・「STAGE 3」の札) へ進む');
     // 3 面の戦艦まで飛ばす: 蛍光緑に塗った艦が来る
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
+    // 知らせのあいだは、戦闘の曲を弱めて残す (戦艦戦の曲は、戦艦が現れた瞬間から)
+    await page.waitForFunction(() => window.__app.game().boss, null, { timeout: 30000 });
+    ok(await page.evaluate(() => { const b = window.__app.game().boss; return b.phase === 'arrive' && b.arriveT < 2.3 && window.__app.musicKind() === 'combat'; }), '戦艦の知らせのあいだは、戦闘の曲のまま (戦艦戦の曲はまだ始まらない)');
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const look = await page.evaluate(() => window.__app.bossLook());
