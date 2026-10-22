@@ -610,16 +610,18 @@ async function run() {
       const el = document.getElementById('cutin');
       const a = el.getAnimations()[0]; a.pause(); a.currentTime = 700; // 止まって見えている所で調べる
       const r = el.getBoundingClientRect();
-      const fire = document.getElementById('btnMissile').getBoundingClientRect();
-      const fx = fire.left + fire.width / 2, fy = fire.top + fire.height / 2;
+      const mid = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       const img = el.querySelector('img');
+      const top = document.elementFromPoint(mid.x, mid.y);
+      const glow = img.getAnimations().length;
       const res = { shown: !el.hidden && r.width > 800, loaded: img.complete && img.naturalWidth > 0,
-        overFire: r.top < fy && r.bottom > fy && r.left < fx && r.right > fx, hitFire: !!(document.elementFromPoint(fx, fy) && document.elementFromPoint(fx, fy).closest('#btnMissile')) };
+        passThrough: getComputedStyle(el).pointerEvents === 'none' && !!top && !top.closest('#cutin'), glow: glow };
       a.play();
       return res;
     });
     ok(cut.shown && cut.loaded, 'ボス戦の始まりにカットインが出る (絵も読み込まれている)');
-    ok(cut.overFire && cut.hitFire, `カットインが重なっていても、その下のボタン (ミサイル) を押せる (重なり ${cut.overFire}・押せる ${cut.hitFire})`);
+    ok(cut.passThrough, `カットインは指を素通しする (真ん中の点の一番上はカットインではない: ${cut.passThrough})`);
+    ok(cut.glow >= 1, `帯が光る (光のアニメーション ${cut.glow} 本)`);
     await page.waitForFunction(() => document.getElementById('cutin').hidden, null, { timeout: 6000 });
     ok(true, 'カットインは終わると消える');
     await page.waitForFunction(() => window.__app.game().boss.shown, null, { timeout: 15000 });

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.1';
+  const VERSION = 'v0.8.2';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1618,6 +1618,7 @@
    */
   const CUTIN_MS = 2400;
   let cutinAnim = null;
+  let cutinGlow = null;
   function showCutin() {
     const el = $('cutin');
     el.hidden = false;
@@ -1634,7 +1635,13 @@
       { transform: 'translateX(-1%) skewX(4deg)', opacity: 1, offset: 0.86 },
       { transform: 'translateX(-115%) skewX(18deg)', opacity: 0, offset: 1 }
     ], { duration: CUTIN_MS, easing: 'linear' });
-    cutinAnim.onfinish = function () { el.hidden = true; cutinAnim = null; };
+    // 帯は光らせる: 赤い光のにじみが脈を打つ (明るさと光の広がりを往復)
+    if (cutinGlow) cutinGlow.cancel();
+    cutinGlow = el.querySelector('img').animate([
+      { filter: 'drop-shadow(0 0 10px rgba(255,40,60,.6)) brightness(1)' },
+      { filter: 'drop-shadow(0 0 30px rgba(255,60,80,1)) drop-shadow(0 0 8px rgba(255,200,200,.6)) brightness(1.3)' }
+    ], { duration: 380, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out' });
+    cutinAnim.onfinish = function () { el.hidden = true; cutinAnim = null; if (cutinGlow) { cutinGlow.cancel(); cutinGlow = null; } };
     shake(1.0);
   }
 

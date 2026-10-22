@@ -60,7 +60,7 @@ body {
   pointer-events: none;
   will-change: transform, opacity;
 }
-#cutin img { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 18px rgba(255, 40, 60, .55)); }
+#cutin img { display: block; width: 100%; height: auto; filter: drop-shadow(0 0 14px rgba(255, 40, 60, .7)); }
 #cutin::before {
   /* 後ろに敷く暗い帯 (星雲の上でも字が埋もれないように) */
   content: "";
