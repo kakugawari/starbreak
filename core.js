@@ -226,7 +226,7 @@
     // 3 面 (最後): 戦艦は 1 面と同じ形で強くする (部位の耐久・砲台の撃つ間隔・主砲の間隔・護衛機の数)。面が変わるとき機体を直す
     boss3Hp: 1.3, boss3Fire: 0.8, boss3Cannon: 0.8, boss3Escorts: 4, stageIntro: 3.5,
     // 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。体力が多く、何発も当てないと落ちない。撃つ間隔が短く、5 連射
-    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
+    boss3Size: 1.5, aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
     // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
@@ -500,39 +500,42 @@
   }
 
   /** ワープして現れる所: 自機の前 (水平の向き) 700m・下 150m。戦う場所の外へはみ出さないよう、中心寄りに詰める */
-  function bossSpot(g) {
+  function bossSpot(g, k) {
+    k = k || 1;
+    const dk = 1 + (k - 1) * 0.5;   // 大きくしたぶんの半分だけ遠くへ置く (画面で 1 割ほど大きく見え、全体が収まる)
     const pl = g.player;
     let f = vec(pl.dir.x, 0, pl.dir.z);
     f = len(f) > 1e-3 ? norm(f) : vec(0, 0, -1);
-    const at = vec(pl.pos.x + f.x * BOSS_AHEAD, pl.pos.y - BOSS_DROP, pl.pos.z + f.z * BOSS_AHEAD);
-    const c = T.arenaCenter, maxR = T.arenaRadius - 800;
+    const at = vec(pl.pos.x + f.x * BOSS_AHEAD * dk, pl.pos.y - BOSS_DROP * dk, pl.pos.z + f.z * BOSS_AHEAD * dk);
+    const c = T.arenaCenter, maxR = T.arenaRadius - 800 * k;
     const dx = at.x - c.x, dz = at.z - c.z, d = Math.hypot(dx, dz);
     if (d > maxR) { at.x = c.x + dx * maxR / d; at.z = c.z + dz * maxR / d; }
     return at;
   }
 
   function makeBoss(g) {
-    const at = bossSpot(g);
-    const portal = add(at, vec(BOSS_PORTAL, 0, 0));
-    const from = add(portal, vec(-BOSS_BOW, 0, 0)); // 艦首がちょうど光の面にある所
+    const k = g.level === 3 ? T.boss3Size : 1;   // 3 面の戦艦は大きい (形・部位の位置・当たり判定をすべて k 倍)
+    const at = bossSpot(g, k);
+    const portal = add(at, vec(BOSS_PORTAL * k, 0, 0));
+    const from = add(portal, vec(-BOSS_BOW * k, 0, 0)); // 艦首がちょうど光の面にある所
     const parts = BOSS_PARTS.map(function (d) {
       const hp = Math.round((d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp) * (g.level === 3 ? T.boss3Hp : 1));
       return {
-        id: g.nextId++, kind: d.kind, local: copy(d.at), face: copy(d.face),
-        pos: add(from, d.at), vel: vec(),
-        radius: d.kind === 'turret' ? 12 : d.kind === 'engine' ? 17 : 15,
+        id: g.nextId++, kind: d.kind, local: scale(d.at, k), face: copy(d.face),
+        pos: add(from, scale(d.at, k)), vel: vec(),
+        radius: (d.kind === 'turret' ? 12 : d.kind === 'engine' ? 17 : 15) * k,
         hp: hp, maxHp: hp, alive: true,
         active: d.kind === 'turret',
         fireCd: rand(g, 1.5, 3.5), flash: 0, aim: vec(0, 1, 0)
       };
     });
     return {
-      level: g.level,
+      level: g.level, size: k,
       pos: copy(from), at: at, from: from, portal: portal, vel: vec(), arriveT: 0, shown: false, emerge: 0,
       phase: 'arrive',        // arrive / battle / cannon / weak / core / dying / dead
       parts: parts,
       armor: true,
-      cannon: { state: 'idle', t: 0, next: 4, dir: vec(1, 0, 0), from: copy(BOSS_CANNON), hitDone: false },
+      cannon: { state: 'idle', t: 0, next: 4, dir: vec(1, 0, 0), from: scale(BOSS_CANNON, k), hitDone: false },
       dyingT: 0
     };
   }
@@ -541,12 +544,27 @@
    * いま当たり判定に使う戦艦の立体 (世界座標の面の並び)。装甲は外れたら消える。
    * 弾ごと・コマごとに何度も呼ぶので、位置と装甲が変わらない間は作り直さない。
    */
+  const _scaledSolids = {};
+  /** 立体の表を k 倍にしたもの (大きい戦艦用)。 */
+  function scaledSolids(k) {
+    if (k === 1) return BOSS_SOLIDS;
+    if (_scaledSolids[k]) return _scaledSolids[k];
+    return (_scaledSolids[k] = BOSS_SOLIDS.map(function (sd) {
+      const o = {};
+      for (const key in sd) o[key] = sd[key];
+      o.poly = sd.poly.map(function (p) { return [p[0] * k, p[1] * k]; });
+      ['y0', 'y1', 'z0', 'z1'].forEach(function (key) { if (sd[key] !== undefined) o[key] = sd[key] * k; });
+      return o;
+    }));
+  }
+
   function bossSolids(boss) {
     const key = boss.pos.x + ',' + boss.pos.y + ',' + boss.pos.z + ',' + boss.armor;
     if (boss._solidsKey === key) return boss._solids;
     const out = [];
-    for (let i = 0; i < BOSS_SOLIDS.length; i++) {
-      const sd = BOSS_SOLIDS[i];
+    const defs = scaledSolids(boss.size || 1);
+    for (let i = 0; i < defs.length; i++) {
+      const sd = defs[i];
       if (sd.armor && !boss.armor) continue;
       out.push(solidPlanes(sd, boss.pos));
     }
@@ -1112,7 +1130,8 @@
     for (let i = 0; i < n; i++) {
       const side = i % 2 === 0 ? -1 : 1;
       // 船体の下 (竜骨の横) から出す。三角の船体の中に出ないように
-      const pos = add(b.pos, vec(250 - i * 30, -48, side * 60));
+      const k = b.size || 1;
+      const pos = add(b.pos, vec((250 - i * 30) * k, -48 * k, side * 60 * k));
       const dir = vec(-0.4, 0.2, side);
       g.fighters.push(makeFighter(g, pos, dir));
     }
@@ -1194,7 +1213,7 @@
       b.armor = false;
       for (let i = 0; i < b.parts.length; i++) if (b.parts[i].kind === 'core') b.parts[i].active = true;
       const armorAt = BOSS_PARTS[BOSS_PARTS.length - 1].at;
-      emit(g, 'explode', { pos: add(b.pos, vec(armorAt.x, armorAt.y + 6, armorAt.z)), size: 3, kind: 'armor' });
+      emit(g, 'explode', { pos: add(b.pos, scale(vec(armorAt.x, armorAt.y + 6, armorAt.z), b.size || 1)), size: 3 * (b.size || 1), kind: 'armor' });
       emit(g, 'bossPhase', { phase: 'core', text: '装甲が吹き飛んだ  コアを撃ち抜け' });
       launchEscorts(g, b.level === 3 ? T.boss3Escorts : 3);
     }
@@ -1239,7 +1258,7 @@
     // 主砲: チャージ → 狙いを固定 → 発射。固定のあとは動けばよけられる
     if (b.phase === 'cannon' || b.phase === 'weak' || b.phase === 'core') {
       const c = b.cannon;
-      c.from = add(b.pos, BOSS_CANNON);
+      c.from = add(b.pos, scale(BOSS_CANNON, b.size || 1));
       if (c.state === 'idle') {
         c.next -= dt;
         if (c.next <= 0 && pl.alive && g.state === 'play') {
@@ -1514,6 +1533,13 @@
       }
     } else if (tgt && dist(tgt.pos, pl.pos) < 60) {
       aim = add(pl.pos, add(scale(pl.dir, 100), vec(0, 120, 0)));
+    }
+    // 構える場所へ船体を突き抜けてしまう (上から下の砲台へ向かうなど) ときは、船体の横へ回り込んでから向かう
+    if (g.boss && tgt && tgt.face && bot.mode === 'setup' && g.boss.phase !== 'dead') {
+      const solids = bossSolids(g.boss);
+      let blocked = false;
+      for (let i = 0; i < solids.length && !blocked; i++) if (segmentSolid(pl.pos, aim, solids[i].planes) >= 0) blocked = true;
+      if (blocked) aim = vec(pl.pos.x, pl.pos.y, g.boss.pos.z + (pl.pos.z >= g.boss.pos.z ? 1 : -1) * 300 * (g.boss.size || 1));
     }
     // 船体に近づいたら上へ逃げる
     if (g.boss && g.boss.phase !== 'dead') {

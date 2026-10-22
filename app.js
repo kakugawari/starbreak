@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.8.0';
+  const VERSION = 'v0.8.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1840,13 +1840,14 @@
       const arriving = b.phase === 'arrive';
       bossObj.visible = !arriving || b.shown;
       bossObj.position.set(b.pos.x, b.pos.y, b.pos.z);
+      bossObj.scale.setScalar(b.size || 1);
       bossClip.constant = arriving ? b.portal.x : 1e9;
       const TM = C.BOSS_TIMING;
       if (arriving) {
         const open = Math.min(1, b.arriveT / TM.delay);                                        // 開いていく
         const close = Math.max(0, (b.arriveT - TM.delay - TM.emerge) / (TM.arrive - TM.delay - TM.emerge)); // 出きったら閉じる
         const flick = 0.85 + 0.15 * Math.sin(b.arriveT * 37);
-        const size = (160 + 640 * open * open) * (1 - close);
+        const size = (160 + 640 * open * open) * (1 - close) * (b.size || 1);
         warpGlow.visible = size > 1;
         warpGlow.position.set(b.portal.x, b.portal.y, b.portal.z);
         warpGlow.scale.setScalar(Math.max(1, size));

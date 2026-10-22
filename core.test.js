@@ -630,6 +630,24 @@ test('3 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面
   assert.deepStrictEqual(seen, ['clear@3'], '1 面の戦艦・エース機ではクリアにならず、3 面の戦艦を沈めてクリア');
 });
 
+test('3 面の戦艦は 1.5 倍の大きさ: 部位の位置・当たりの大きさ・立体・主砲の位置がそろって大きくなる', () => {
+  const mk = (level) => { const g = C.createGame({ seed: 1 }); g.level = level; return C.makeBoss(g); };
+  const b1 = mk(1), b3 = mk(3), k = T.boss3Size;
+  assert.strictEqual(b1.size, 1); assert.strictEqual(b3.size, k);
+  assert.strictEqual(b3.parts.length, b1.parts.length, '砲台の数はそのまま');
+  b1.parts.forEach((p, i) => {
+    const q = b3.parts[i];
+    assert.ok(Math.abs(q.local.x - p.local.x * k) < 1e-9 && Math.abs(q.local.z - p.local.z * k) < 1e-9, '部位の位置が k 倍');
+    assert.ok(Math.abs(q.radius - p.radius * k) < 1e-9, '部位の大きさが k 倍');
+  });
+  // 立体: 艦首の先 (x = -360 k) の少し外は素通り、少し内は当たる
+  const solidAt = (b, x) => C.bossSolids(b).some((sd) => C.pointInSolid(C.add(b.pos, C.vec(x, 0, 0)), sd.planes));
+  assert.ok(solidAt(b3, -250 * k), '大きくした立体の中');
+  assert.ok(!solidAt(b3, -400 * k), '艦首の先は素通り');
+  assert.ok(solidAt(b3, 240 * k) && !solidAt(b1, 240 * k), '艦尾も k 倍 (1 面の艦尾 246 の先は 3 面では中)');
+  assert.ok(Math.abs(b3.cannon.from.x - C.BOSS_CANNON.x * k) < 1e-9, '主砲の位置も k 倍');
+});
+
 test('エース機の強さ: 通常の敵より大きく、体力が 10 倍以上', () => {
   assert.ok(T.aceHp >= 10 * T.fighterHp, 'ふつうの敵の 10 倍以上の体力');
   assert.ok(T.aceRadius > T.fighterRadius && T.aceScale > 1.2, '大きい');
