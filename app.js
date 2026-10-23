@@ -202,7 +202,7 @@
     const m = new THREE.Mesh(new THREE.SphereGeometry(20000, 64, 32), mat);
     m.renderOrder = -10;
     sky.add(m);
-    // 1 面は紫の星雲 (space.jpg)、2 面は灰色の星雲 (space2.jpg)、3 面は琥珀色の星雲 (space3.jpg)。面が変わったら setSkyKind で替える
+    // 1 面は紫の星雲 (space.jpg)、2 面は灰色の星雲 (space2.jpg)、3 面は琥珀色の星雲 (space3.jpg)、4 面は木星色の星雲 (space4.jpg)。面が変わったら setSkyKind で替える
     sky.userData.tex = {};
     sky.userData.kind = 'space';
     function useSky(name) {
@@ -213,7 +213,7 @@
       mat.needsUpdate = true;
     }
     sky.userData.use = useSky;
-    ['space', 'space2', 'space3'].forEach(function (name) {
+    ['space', 'space2', 'space3', 'space4'].forEach(function (name) {
       loadTex(name + '.jpg', function (t) {
         // 内側から見ると左右が反転するので戻す
         t.wrapS = THREE.RepeatWrapping;
@@ -2700,7 +2700,7 @@
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
     setPlanetKind(['earth', 'earth', 'mercury', 'mars', 'jupiter'][game.level] || 'earth');
-    setSkyKind(['space', 'space', 'space2', 'space3', 'space3'][game.level] || 'space');
+    setSkyKind(['space', 'space', 'space2', 'space3', 'space4'][game.level] || 'space');
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)

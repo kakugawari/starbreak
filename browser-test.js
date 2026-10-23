@@ -146,7 +146,7 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => ['space.jpg', 'space2.jpg', 'space3.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
     ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['mars.jpg'] === true && assets['jupiter.jpg'] === true && assets['space2.jpg'] === true && assets['space3.jpg'] === true && assets['mercury.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・火星・木星・戦艦の装甲の絵が読み込まれる');
     ok(assets['title_planet.jpg'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
@@ -739,7 +739,7 @@ async function run() {
     // 3 面の戦艦を沈めると 4 面 (木星) へ。ボスは球と輪の木星要塞
     await page.waitForFunction(() => window.__app.game().level === 4, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.screen() === 'play'), '3 面の戦艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
+    ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.skyKind() === 'space4' && window.__app.screen() === 'play'), '3 面の戦艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
     await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });
@@ -767,16 +767,16 @@ async function run() {
     const sp = await sctx.newPage();
     watch(sp, '1枚版');
     await sp.goto('file://' + single);
-    await sp.waitForFunction(() => window.__app && ['space.jpg', 'space2.jpg', 'space3.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await sp.waitForFunction(() => window.__app && ['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'space2.jpg', 'space3.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・火星・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
+    ok(['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・火星・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth
     }));
     ok(/user-scalable=no/.test(vp.meta) && /maximum-scale=1/.test(vp.meta), '1 枚版にも「拡大しない」指定が入っている');
     ok(vp.scale === 1 && vp.w === 932, `1 枚版も倍率 1 で、幅 932 (倍率 ${vp.scale} / 幅 ${vp.w})`);
-    ok(fs.statSync(single).size < 4 * 1024 * 1024, `大きさ ${(fs.statSync(single).size / 1024 / 1024).toFixed(1)}MB`);
+    ok(fs.statSync(single).size < 5 * 1024 * 1024, `大きさ ${(fs.statSync(single).size / 1024 / 1024).toFixed(1)}MB`);
     await sctx.close();
 
     // ------------------------------------------------ 縦向き
