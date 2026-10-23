@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.9.1';
+  const VERSION = 'v0.10.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -285,6 +285,7 @@
     loadTex('earth.jpg', function (t) { planet.userData.tex.earth = t; if (planet.userData.kind === 'earth') { mat.uniforms.map.value = t; m.visible = true; } });
     loadTex('mars.jpg', function (t) { planet.userData.tex.mars = t; if (planet.userData.kind === 'mars') { mat.uniforms.map.value = t; m.visible = true; } });
     loadTex('mercury.jpg', function (t) { planet.userData.tex.mercury = t; if (planet.userData.kind === 'mercury') { mat.uniforms.map.value = t; m.visible = true; } });
+    loadTex('jupiter.jpg', function (t) { planet.userData.tex.jupiter = t; if (planet.userData.kind === 'jupiter') { mat.uniforms.map.value = t; m.visible = true; } });
     planet.userData.mat = mat;
     planet.userData.offset = new THREE.Vector3(-3400, -5200, -9000);
     planet.userData.ball = m;
@@ -756,12 +757,19 @@
     const rng0 = C.solidRange(solid), y0 = rng0[0], y1 = rng0[1];
     // 横向きの立体 (axis: 'z') は、計算した形の y と z を入れ替えて置く
     const swap = solid.axis === 'z';
-    const mapv = function (v) { return swap ? [v[0], v[2], v[1]] : v; };
+    const mapv0 = function (v) { return swap ? [v[0], v[2], v[1]] : v; };
+    // 立体に回転 (solid.m)・ずらし (solid.at) があるときは、点と法線をその分だけ回す (木星要塞の輪・軸・台座)
+    const SM = solid.m, SA = solid.at;
+    const mapv = SM ? function (v) {
+      v = mapv0(v);
+      return [SM[0] * v[0] + SM[1] * v[1] + SM[2] * v[2], SM[3] * v[0] + SM[4] * v[1] + SM[5] * v[2], SM[6] * v[0] + SM[7] * v[1] + SM[8] * v[2]];
+    } : mapv0;
+    const mapp = function (v) { v = mapv(v); return SA ? [v[0] + SA[0], v[1] + SA[1], v[2] + SA[2]] : v; };
     let cx = 0, cz = 0;
     P.forEach(function (q) { cx += q[0]; cz += q[1]; });
     cx /= P.length; cz /= P.length;
     const tri = function (a, b, c, n, ua, ub, uc) {
-      a = mapv(a); b = mapv(b); c = mapv(c); n = mapv(n);
+      a = mapp(a); b = mapp(b); c = mapp(c); n = mapv(n);
       // 表向き (頂点の並び) を法線にそろえる (入れ替えは鏡と同じなので、入れ替えた後で見る)
       const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
       const cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
@@ -827,7 +835,8 @@
     return hullMatGreen;
   }
 
-  function makeBossModel(level) {
+  function makeBossModel(level, type) {
+    if (type === 'fortress') return makeFortressModel();
     const mat = bossHullMat(level || 1);
     const group = new THREE.Group();
     const rng = C.mulberry32(1234);
@@ -989,6 +998,247 @@
       });
     });
     group.userData = { topRing: topRing, topGlow: topGlow, sideRings: sideRings, parts: parts, armor: armor, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: thrusters, hull: hullMesh };
+    return group;
+  }
+
+  // ------------------------------------------------------------ 木星要塞
+  //
+  // core.js の C.FORTRESS (立体の表) から作る。輪・軸・支柱・台座・主砲の砲身は、当たり判定と同じ立体 (prismGeo)。
+  // 中央の球は、六角の装甲板を重ねた見た目 (当たり判定は外接する多面体で、板より外側)。
+  // 色は木星の縞: 青銅・暗い銅・炭の灰・くすんだ琥珀。
+
+  const FORT_TINT = {
+    bronze: [0.58, 0.40, 0.23], copper: [0.44, 0.25, 0.17], charcoal: [0.26, 0.26, 0.30], amber: [0.64, 0.48, 0.22],
+    pin: [0.40, 0.40, 0.44], mount: [0.38, 0.35, 0.34], housing: [0.48, 0.33, 0.24], shield: [0.8, 0.8, 0.85], sphere: [0.5, 0.36, 0.2]
+  };
+  const FORT_BANDS = ['bronze', 'copper', 'charcoal', 'amber', 'bronze', 'charcoal', 'copper', 'amber', 'bronze', 'charcoal', 'copper'];
+  let fortMat = null;
+
+  /** 大赤斑のような赤い嵐の渦 (主砲の砲口に貼る絵)。 */
+  function makeStormTexture() {
+    const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+    const x = c.getContext('2d'), R = S / 2;
+    const bg = x.createRadialGradient(R, R, 0, R, R, R);
+    bg.addColorStop(0, '#ffe9c4'); bg.addColorStop(0.18, '#ff9a3c'); bg.addColorStop(0.55, '#c2200f'); bg.addColorStop(1, '#3a0505');
+    x.fillStyle = bg; x.fillRect(0, 0, S, S);
+    const rng = C.mulberry32(42);
+    for (let arm = 0; arm < 3; arm++) {
+      for (let i = 0; i < 2200; i++) {
+        const t = rng(), r = 8 + t * (R - 14), a = arm * 2.094 + t * 7.5 + (rng() - 0.5) * 0.32;
+        const px = R + Math.cos(a) * r, py = R + Math.sin(a) * r;
+        const hot = rng() < 0.5;
+        x.fillStyle = hot ? 'rgba(255,190,110,' + (0.10 + 0.22 * (1 - t)) + ')' : 'rgba(60,5,5,' + (0.10 + 0.25 * t) + ')';
+        x.beginPath(); x.arc(px, py, 1.2 + rng() * 3.4 * (0.4 + t), 0, 6.283); x.fill();
+      }
+    }
+    const rim = x.createRadialGradient(R, R, R * 0.8, R, R, R);
+    rim.addColorStop(0, 'rgba(0,0,0,0)'); rim.addColorStop(1, 'rgba(10,0,0,0.85)');
+    x.fillStyle = rim; x.fillRect(0, 0, S, S);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    return t;
+  }
+  /** 光の盾の六角の網目。 */
+  function makeShieldTexture() {
+    const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+    const x = c.getContext('2d');
+    x.strokeStyle = 'rgba(255,170,110,0.9)'; x.lineWidth = 2.5;
+    const r = 26, h = r * Math.sqrt(3) / 2;
+    for (let row = -1; row < S / h + 1; row++) {
+      for (let col = -1; col < S / (r * 1.5) + 1; col++) {
+        const cx = col * r * 1.5, cy = row * h * 2 + (col % 2 ? h : 0);
+        x.beginPath();
+        for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; x.lineTo(cx + r * 0.94 * Math.cos(a), cy + r * 0.94 * Math.sin(a)); }
+        x.closePath(); x.stroke();
+        x.fillStyle = 'rgba(255,120,70,0.07)'; x.fill();
+      }
+    }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  /** 球の六角の装甲板 (頂点のまわりの三角形の重心を結んだ多角形)。縞の色で塗り、緯度によって厚みを変える */
+  function addSpherePlates(out, rng) {
+    const F = C.FORTRESS, RS = F.RS, V = F.ico.verts, Fc = F.ico.faces;
+    const vf = V.map(function () { return []; });
+    Fc.forEach(function (f, fi) { f.forEach(function (vi) { vf[vi].push(fi); }); });
+    const cent = Fc.map(function (f) {
+      const x = V[f[0]][0] + V[f[1]][0] + V[f[2]][0], y = V[f[0]][1] + V[f[1]][1] + V[f[2]][1], z = V[f[0]][2] + V[f[1]][2] + V[f[2]][2];
+      const l = Math.hypot(x, y, z); return [x / l, y / l, z / l];
+    });
+    const cross3 = function (a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; };
+    const dot3 = function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    const nrm3 = function (a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const push = function (a, b, c, n, col) {
+      // 表向きを法線にそろえる
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      if (dot3(cross3(e1, e2), n) < 0) { const t = b; b = c; c = t; }
+      [a, b, c].forEach(function (v) {
+        out.pos.push(v[0], v[1], v[2]); out.nor.push(n[0], n[1], n[2]); out.col.push(col[0], col[1], col[2]);
+        // 絵: 法線のいちばん大きい軸を落として、残り 2 軸 / HULL_TILE
+        const ax = Math.abs(n[0]) > Math.abs(n[1]) ? (Math.abs(n[0]) > Math.abs(n[2]) ? 0 : 2) : (Math.abs(n[1]) > Math.abs(n[2]) ? 1 : 2);
+        const u = ax === 0 ? v[1] : v[0], w = ax === 2 ? v[1] : v[2];
+        out.uv.push(u / HULL_TILE, w / HULL_TILE);
+      });
+    };
+    V.forEach(function (n, vi) {
+      const u = nrm3(cross3(Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], n)), w = cross3(n, u);
+      const ring = vf[vi].map(function (fi) { return cent[fi]; }).sort(function (p, q) { return Math.atan2(dot3(p, w), dot3(p, u)) - Math.atan2(dot3(q, w), dot3(q, u)); });
+      const lat = n[1];
+      const band = FORT_BANDS[Math.max(0, Math.min(FORT_BANDS.length - 1, Math.floor((lat * 0.5 + 0.5) * FORT_BANDS.length + (rng() - 0.5) * 0.7)))];
+      const tint = FORT_TINT[band], bright = 0.82 + rng() * 0.32;
+      const belt = Math.abs(Math.abs(lat) - 0.18) < 0.07;           // 2 本の盛り上がった帯
+      const h = belt ? 7 : 3 + rng() * 1.5;
+      const baseR = RS - 1, topR = RS + h, shrink = 0.86;
+      const base = ring.map(function (c) { return [c[0] * baseR, c[1] * baseR, c[2] * baseR]; });
+      const ctr = [n[0] * topR, n[1] * topR, n[2] * topR];
+      const top = ring.map(function (c) { return [ctr[0] + (c[0] * topR - ctr[0]) * shrink, ctr[1] + (c[1] * topR - ctr[1]) * shrink, ctr[2] + (c[2] * topR - ctr[2]) * shrink]; });
+      const topCol = [tint[0] * bright, tint[1] * bright, tint[2] * bright], sideCol = [topCol[0] * 0.55, topCol[1] * 0.55, topCol[2] * 0.55];
+      for (let i = 1; i < top.length - 1; i++) push(top[0], top[i], top[i + 1], n, topCol);
+      for (let i = 0; i < top.length; i++) {
+        const j = (i + 1) % top.length;
+        const mid = [(base[i][0] + base[j][0] + top[i][0] + top[j][0]) / 4, (base[i][1] + base[j][1] + top[i][1] + top[j][1]) / 4, (base[i][2] + base[j][2] + top[i][2] + top[j][2]) / 4];
+        const sn = nrm3(cross3([base[j][0] - base[i][0], base[j][1] - base[i][1], base[j][2] - base[i][2]], [top[i][0] - base[i][0], top[i][1] - base[i][1], top[i][2] - base[i][2]]));
+        const nn = dot3(sn, mid) < 0 ? [-sn[0], -sn[1], -sn[2]] : sn;
+        push(base[i], base[j], top[j], nn, sideCol); push(base[i], top[j], top[i], nn, sideCol);
+      }
+    });
+  }
+
+  function makeFortressModel() {
+    const F = C.FORTRESS;
+    if (!fortMat) {
+      fortMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40, specular: 0x302a24, flatShading: true, emissive: 0x100a06 });
+    }
+    fortMat.map = hullMat.map;                // 装甲の絵は読み込みが遅れることがあるので、使うたびに合わせる
+    const group = new THREE.Group();
+    const rng = C.mulberry32(777);
+    const hull = { pos: [], nor: [], col: [], uv: [] };       // 当たり判定と同じ立体
+    const deco = { pos: [], nor: [], col: [], uv: [] };       // 判定には入れない飾り (板・球の装甲)
+    const lights = { pos: [], nor: [], col: [] };
+    const mm = function (sd, x, y, z) {                        // 立体の局所の点 → 要塞の座標
+      const M = sd.m;
+      const o = M ? [M[0] * x + M[1] * y + M[2] * z, M[3] * x + M[4] * y + M[5] * z, M[6] * x + M[7] * y + M[8] * z] : [x, y, z];
+      return sd.at ? [o[0] + sd.at[0], o[1] + sd.at[1], o[2] + sd.at[2]] : o;
+    };
+    const light = function (p, size, c) {
+      const g = new THREE.BoxGeometry(size, size * 0.6, size).toNonIndexed();
+      g.translate(p[0], p[1], p[2]);
+      const P = g.attributes.position.array, N = g.attributes.normal.array;
+      for (let i = 0; i < P.length; i += 3) { lights.pos.push(P[i], P[i + 1], P[i + 2]); lights.nor.push(N[i], N[i + 1], N[i + 2]); lights.col.push(c[0], c[1], c[2]); }
+      g.dispose();
+    };
+
+    // ① 当たり判定と同じ立体 (輪の扇・軸・支柱・台座・砲身)。球と盾は別に作る
+    F.solids.forEach(function (sd) {
+      if (sd.sphere || sd.armor) return;
+      const t = FORT_TINT[sd.tint] || FORT_TINT.pin;
+      const k = 0.85 + rng() * 0.3;
+      prismGeo(sd, [t[0] * k, t[1] * k, t[2] * k], hull);
+      // 輪の扇の上面・下面に、六角の装甲板 (低い板を 2 枚) と、ふちの明かり
+      if (sd.ring) {
+        const R = F.rings[sd.ring], idx = parseInt(sd.name.slice(5), 10);
+        const a0 = (idx + 0.04) * 2 * Math.PI / R.n, a1 = (idx + 0.96) * 2 * Math.PI / R.n, am = (a0 + a1) / 2;
+        const rm = (R.r0 + R.r1) / 2, wR = (R.r1 - R.r0) * 0.7;
+        [1, -1].forEach(function (side) {
+          for (let j = 0; j < 2; j++) {
+            const rr = rm + (j - 0.5) * wR * 0.55, aa = am + (j - 0.5) * (a1 - a0) * 0.2;
+            const cx = rr * Math.cos(aa), cz = rr * Math.sin(aa), r = (R.r1 - R.r0) * 0.3;
+            const hexP = []; for (let q = 0; q < 6; q++) hexP.push([cx + r * Math.cos(q * Math.PI / 3), cz + r * Math.sin(q * Math.PI / 3)]);
+            const top = side > 0 ? R.up[idx] : -R.down[idx];
+            const plate = side > 0 ? { poly: hexP, y0: top, y1: top + 2.2 } : { poly: hexP, y0: top - 2.2, y1: top };
+            plate.m = sd.m; plate.at = sd.at;
+            prismGeo(plate, [t[0] * (0.9 + rng() * 0.25), t[1] * (0.9 + rng() * 0.25), t[2] * (0.9 + rng() * 0.25)], deco);
+          }
+          if (rng() < 0.7) light(mm(sd, R.r1 * Math.cos(am) - Math.cos(am) * 0.4, side > 0 ? R.up[idx] + 0.4 : -R.down[idx] - 0.4, R.r1 * Math.sin(am) - Math.sin(am) * 0.4), 1.6, rng() < 0.3 ? [1, 0.75, 0.4] : [1, 0.2, 0.14]);
+        });
+      }
+    });
+    // ② 球の六角の装甲板 + 土台の球
+    addSpherePlates(deco, rng);
+    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(F.RS - 3, 2), new THREE.MeshPhongMaterial({ color: 0x1b1814, shininess: 20, flatShading: true }));
+    group.add(core);
+    const hullMesh = new THREE.Mesh(geoFrom(hull), fortMat);
+    const decoMesh = new THREE.Mesh(geoFrom(deco), fortMat);
+    const lightMesh = new THREE.Mesh(geoFrom(lights), new THREE.MeshBasicMaterial({ vertexColors: true }));
+    group.add(hullMesh, decoMesh, lightMesh);
+
+    // ③ 主砲: 前 (-x) の砲口に赤い嵐の渦。ふちの輪と、渦の前の光の盾 (六角の網目の浅いドーム)
+    const darkMat = new THREE.MeshPhongMaterial({ color: 0x3a3631, shininess: 55, flatShading: true });
+    const glowRed = new THREE.MeshBasicMaterial({ color: 0xff3a1a });
+    const faceX = -178;                                               // 砲身の前の面 (core.js の cannon の y1)
+    const rimGeo = new THREE.TorusGeometry(66, 5, 8, 36); rimGeo.rotateY(Math.PI / 2);
+    const rimGlow = new THREE.TorusGeometry(58, 2.2, 6, 36); rimGlow.rotateY(Math.PI / 2);
+    group.add(mesh(rimGeo, darkMat, faceX, 0, 0), mesh(rimGlow, glowRed, faceX - 0.5, 0, 0));
+    for (let i = 0; i < 8; i++) {                                     // 砲口の八方の支え
+      const a = i * Math.PI / 4;
+      const fin = mesh(new THREE.BoxGeometry(16, 7, 14), darkMat, faceX - 3, Math.cos(a) * 66, Math.sin(a) * 66);
+      fin.rotation.x = -a; group.add(fin);
+    }
+    const storm = new THREE.Group(); storm.position.set(faceX - 1, 0, 0); storm.rotation.y = -Math.PI / 2;
+    const stormDisc = new THREE.Mesh(new THREE.CircleGeometry(57, 40), new THREE.MeshBasicMaterial({ map: makeStormTexture() }));
+    storm.add(stormDisc); group.add(storm);
+    const stormGlow = glowSprite(0xff3a1a, 190, 0.6); stormGlow.position.set(faceX - 6, 0, 0); group.add(stormGlow);
+
+    const shieldGroup = new THREE.Group(); shieldGroup.position.set(-206, 0, 0);
+    const domeGeo = new THREE.SphereGeometry(66, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2); domeGeo.scale(1, 0.2, 1); domeGeo.rotateZ(Math.PI / 2);
+    const shieldTex = makeShieldTexture(); shieldTex.repeat.set(3, 1.5);
+    const dome = new THREE.Mesh(domeGeo, new THREE.MeshBasicMaterial({ map: shieldTex, color: 0xff9a60, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    const slab = new THREE.Mesh(new THREE.CylinderGeometry(66, 66, 10, 12), new THREE.MeshBasicMaterial({ color: 0xff8050, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
+    slab.rotation.z = Math.PI / 2; slab.position.x = -5;
+    shieldGroup.add(dome, slab); group.add(shieldGroup);
+
+    // ④ 部位: 砲塔 (太く大きい)・動力の節 (赤熱する輪の節)・コア
+    const parts = [];
+    const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0);
+    F.parts.forEach(function (p) {
+      const pg = new THREE.Group();
+      pg.position.set(p.at.x, p.at.y, p.at.z);
+      const mat = new THREE.MeshPhongMaterial({ color: 0x625c56, shininess: 55, emissive: 0x000000 });
+      const face = new THREE.Vector3(p.face.x, p.face.y, p.face.z);
+      if (p.kind === 'turret') pg.scale.setScalar(1.45);
+      if (p.kind === 'turret') {
+        const base = mesh(new THREE.CylinderGeometry(11, 13.5, 7, 12), mat);
+        const head = new THREE.Group();
+        head.add(mesh(new THREE.SphereGeometry(10, 14, 10), mat));
+        const barrelGeo = new THREE.CylinderGeometry(1.7, 2, 24, 8); barrelGeo.rotateX(Math.PI / 2); barrelGeo.translate(0, 0, -13);
+        head.add(mesh(barrelGeo, ENEMY_MAT.dark, -3.6, 1, 0), mesh(barrelGeo, ENEMY_MAT.dark, 3.6, 1, 0));
+        head.add(mesh(new THREE.BoxGeometry(7, 2, 1.4), new THREE.MeshBasicMaterial({ color: 0xff5a3a }), 0, 4.6, -7));
+        pg.quaternion.setFromUnitVectors(Y, face);
+        head.position.y = 5;
+        pg.add(base, head);
+        pg.userData.head = head;
+      } else if (p.kind === 'engine') {
+        const geo = new THREE.CylinderGeometry(15, 18, 14, 6); geo.rotateZ(Math.PI / 2);
+        pg.add(mesh(geo, mat));
+        const disc = mesh(new THREE.CircleGeometry(12.5, 6), new THREE.MeshBasicMaterial({ color: 0xff5040 }), 7.3, 0, 0);
+        disc.rotation.y = Math.PI / 2;
+        pg.add(disc);
+        const gl = glowSprite(0xff3a30, 80, 0.8); gl.position.x = 14;
+        pg.add(gl);
+        pg.quaternion.setFromUnitVectors(X, face);
+        pg.userData.glow = gl; pg.userData.disc = disc;
+      } else {
+        const cm = mesh(new THREE.IcosahedronGeometry(14, 1), new THREE.MeshPhongMaterial({ color: 0xff3050, emissive: 0x801020, shininess: 90, flatShading: true }));
+        pg.add(cm);
+        const gl = glowSprite(0xff3a5a, 80, 0.9);
+        pg.add(gl);
+        pg.userData.glow = gl; pg.userData.coreMesh = cm;
+      }
+      pg.userData.mat = mat; pg.userData.kind = p.kind;
+      group.add(pg); parts.push(pg);
+    });
+
+    // ⑤ 主砲: チャージの光・射線の予告・光線 (戦艦と同じ作り。場面に直接置く)
+    const charge = glowSprite(0xff3a2a, 10, 0);
+    charge.position.set(F.cannon.x - 6, F.cannon.y, F.cannon.z);
+    group.add(charge);
+    const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true); beamGeo.rotateX(Math.PI / 2); beamGeo.translate(0, 0, 0.5);
+    const beamOuter = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff3a2a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const beamCore = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xffe0c0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const guide = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff2020, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    [beamOuter, beamCore, guide].forEach(function (m) { m.frustumCulled = false; scene.add(m); m.visible = false; });
+
+    group.userData = { type: 'fortress', topRing: null, topGlow: stormGlow, sideRings: [], parts: parts, armor: shieldGroup, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: [], hull: hullMesh, storm: storm, stormDisc: stormDisc, dome: dome };
     return group;
   }
 
@@ -1928,7 +2178,7 @@
     bossMusic = false;
     audio.init();
     clearWorld();
-    game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start });
+    game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start, level: opts.level });
     shipObj = makePlayerShip();
     scene.add(shipObj);
     input.stickX = 0; input.stickY = 0; input.missile = false;
@@ -2057,7 +2307,8 @@
   const STAGE_CARD = {
     1: { en: 'PLANETARY ORBIT', ja: '惑星軌道' },
     2: { en: 'MERCURY ORBIT', ja: '水星軌道' },
-    3: { en: 'MARS ORBIT', ja: '火星軌道' }
+    3: { en: 'MARS ORBIT', ja: '火星軌道' },
+    4: { en: 'JUPITER ORBIT', ja: '木星軌道' }
   };
   const STAGE_CARD_MS = 3000;
   let stageCardAnim = null;
@@ -2252,7 +2503,7 @@
     // 戦艦
     const b = game.boss;
     if (b && b.phase !== 'dead') {
-      if (!bossObj) { bossObj = makeBossModel(b.level); bossObj.userData.level = b.level; clipBoss(bossObj); scene.add(bossObj); }
+      if (!bossObj) { bossObj = makeBossModel(b.level, b.type); bossObj.userData.level = b.level; clipBoss(bossObj); scene.add(bossObj); }
       const u = bossObj.userData;
       // ワープの登場: カットインの間に右側 (+x) に赤い光が開き、艦はその光の中から艦首を先にゆっくり出てくる。
       // 光の面より向こうにある部分は描かない (bossClip)
@@ -2260,6 +2511,7 @@
       bossObj.visible = !arriving || b.shown;
       bossObj.position.set(b.pos.x, b.pos.y, b.pos.z);
       bossObj.scale.setScalar(b.size || 1);
+      bossObj.rotation.y = b.rot || 0;     // 木星要塞はゆっくり回る (戦艦は 0)
       bossClip.constant = arriving ? b.portal.x : 1e9;
       const TM = C.BOSS_TIMING;
       if (arriving) {
@@ -2320,7 +2572,8 @@
             o.userData.mat.emissive.setRGB(0.3 * pulse + fl, 0.05 + fl * 0.6, fl * 0.4);
           }
         } else {
-          o.visible = !b.armor && p.alive;
+          // 戦艦のコアは装甲が外れるまで隠れている。要塞のコアは、光の盾 (半透明) の奥に最初から見える
+          o.visible = p.alive && (!b.armor || u.type === 'fortress');
           if (o.visible) {
             const pulse = 0.75 + 0.25 * Math.sin(game.t * 10);
             o.userData.glow.scale.setScalar(90 * pulse);
@@ -2341,6 +2594,11 @@
       u.topGlow.material.opacity = (exposed ? 0.85 : 0.5) * beat;
       u.topGlow.scale.setScalar((exposed ? 230 : 190) * (0.95 + 0.05 * beat));
       u.sideRings.forEach(function (gl) { gl.material.opacity = 0.45 * beat; });
+      if (u.storm) {
+        // 要塞: 赤い嵐の渦がゆっくり回り、光の盾が揺らぐ
+        u.stormDisc.rotation.z += dt * (exposed ? 1.4 : 0.5);
+        u.dome.material.opacity = 0.42 + 0.16 * Math.sin(game.t * 3.1) + 0.05 * Math.sin(game.t * 17);
+      }
       // 主砲
       const c = b.cannon;
       const from = new THREE.Vector3(c.from.x, c.from.y, c.from.z);
@@ -2441,8 +2699,8 @@
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
-    setPlanetKind(['earth', 'earth', 'mercury', 'mars'][game.level] || 'earth');
-    setSkyKind(['space', 'space', 'space2', 'space3'][game.level] || 'space');
+    setPlanetKind(['earth', 'earth', 'mercury', 'mars', 'jupiter'][game.level] || 'earth');
+    setSkyKind(['space', 'space', 'space2', 'space3', 'space3'][game.level] || 'space');
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -2456,7 +2714,13 @@
     front: { pos: [0, 0.5, -30], up: [0, 1, 0] },
     rear: { pos: [-14, 9, 16], up: [0, 1, 0] },
     // アプリのアイコン用: 斜め後ろ上から、噴射を長く (icon-shot.js が背景の色を変えて 2 回写す)
-    icon: { pos: [-9, 10, 15], up: [0, 1, 0], rot: [0.05, 0.1, -0.5], k: 1.25, thrust: 1.9 }
+    icon: { pos: [-9, 10, 15], up: [0, 1, 0], rot: [0.05, 0.1, -0.5], k: 1.25, thrust: 1.9 },
+    // 木星要塞の確認用 (正面 = 主砲の面 -x、斜め前方、上、横、後ろ)。暗い背景
+    fortFront: { pos: [-1, 0.12, 0], up: [0, 1, 0], k: 0.95, bg: 0x07070c },
+    fortOblique: { pos: [-1, 0.5, -0.8], up: [0, 1, 0], k: 0.95, bg: 0x07070c },
+    fortTop: { pos: [0, 1, 0.001], up: [1, 0, 0], k: 0.95, bg: 0x07070c },
+    fortSide: { pos: [0, 0.15, 1], up: [0, 1, 0], k: 0.95, bg: 0x07070c },
+    fortRear: { pos: [1, 0.35, 0.5], up: [0, 1, 0], k: 0.95, bg: 0x07070c }
   };
   let inspectObj = null;
   function renderInspect() {
@@ -2826,8 +3090,10 @@
       c.textAlign = 'center';
       c.font = '700 10px -apple-system, sans-serif';
       c.fillStyle = 'rgba(255,190,170,.95)';
-      const phaseName = { arrive: '接近中', battle: '砲台', cannon: '砲台 / 主砲', weak: 'エンジン', core: 'コア', dying: '撃沈' }[b.phase] || '';
-      c.fillText('巨大戦艦  ' + phaseName, W / 2, 14);
+      const fort = b.type === 'fortress';
+      const phaseName = (fort ? { arrive: '接近中', battle: '砲塔', cannon: '砲塔 / 主砲', weak: '動力節', core: 'コア', dying: '撃沈' }
+                              : { arrive: '接近中', battle: '砲台', cannon: '砲台 / 主砲', weak: 'エンジン', core: 'コア', dying: '撃沈' })[b.phase] || '';
+      c.fillText(C.BOSS_TYPES[b.type].name + '  ' + phaseName, W / 2, 14);
       c.fillStyle = 'rgba(0,0,0,.5)';
       c.fillRect(bx, 19, bw, 5);
       c.fillStyle = '#ff5a5a';
@@ -3216,6 +3482,7 @@
         }
         if (view && kind === 'enemy') { inspectObj = makeEnemyShip(); scene.add(inspectObj); }
         if (view && kind === 'boss') { inspectObj = makeBossModel(); scene.add(inspectObj); }
+        if (view && kind === 'fortress') { inspectObj = makeFortressModel(); scene.add(inspectObj); }
         if (shipObj) shipObj.visible = !inspectObj;
         if (!view) { sky.visible = true; planet.visible = true; dust.lines.visible = true; scene.background = null; inspectLight.visible = false; }
         els.title.hidden = !!view || screen !== 'title';

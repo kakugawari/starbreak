@@ -409,6 +409,16 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   for (const k of ['turret', 'engine', 'core']) { killParts(g, k); run(g, 0.1, {}); }
   assert.strictEqual(g.boss.phase, 'dying');
   run(g, 15, {});
+  assert.strictEqual(g.state, 'play', '3 面の戦艦でも終わらず、4 面へ進む');
+  assert.strictEqual(g.level, 4);
+  // 4 面の木星要塞も同じ順で沈めるとクリア
+  g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
+  run(g, 14, (gg) => { gg.fighters = []; return {}; });
+  assert.strictEqual(g.boss.type, 'fortress');
+  assert.strictEqual(g.boss.phase, 'battle');
+  for (const k of ['turret', 'engine', 'core']) { killParts(g, k); run(g, 0.1, {}); }
+  assert.strictEqual(g.boss.phase, 'dying');
+  run(g, 15, {});
   assert.strictEqual(g.boss.phase, 'dead');
   assert.strictEqual(g.state, 'clear');
 });
@@ -581,23 +591,23 @@ test('護衛機は船体の外から出て、船体にめり込まない', () =>
 
 // ------------------------------------------------------------ 通しで遊ぶ
 
-test('上手な自動操縦は、8通りの始め方のうち7つ以上で 3 面の最後まで勝てる', () => {
+test('上手な自動操縦は、8通りの始め方のうち7つ以上で 4 面の最後まで勝てる', () => {
   let cleared = 0;
   const times = [];
   for (let seed = 1; seed <= 8; seed++) {
     const g = C.createGame({ seed: seed });
-    run(g, 1500, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
+    run(g, 2200, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
     if (g.state === 'clear') { cleared++; times.push(Math.round(g.stats.time)); }
   }
   assert.ok(cleared >= 7, `勝てたのは ${cleared}/8 (${times.join(', ')} 秒)`);
-  assert.ok(Math.max.apply(null, times) < 900, 'どれも 3 面あわせて 15 分以内');
+  assert.ok(Math.max.apply(null, times) < 1500, 'どれも 4 面あわせて 25 分以内');
 });
 
-test('3 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・蛍光緑の強い戦艦) → クリア。面が変わるたびに機体が直る', () => {
+test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・蛍光緑の強い戦艦) → 4 面 (木星要塞) → クリア。面が変わるたびに機体が直る', () => {
   const g = C.createGame({ seed: 4 });
-  const seen = [], starts = {}, waves = { 2: [], 3: [] };
-  let boss3 = null, aceWarn = 0, aceDown = 0, aceMax = 0, bossIn2 = false;
-  run(g, 1500, (gg) => {
+  const seen = [], starts = {}, waves = { 2: [], 3: [], 4: [] };
+  let boss3 = null, boss4 = null, aceWarn = 0, aceDown = 0, aceMax = 0, bossIn2 = false;
+  run(g, 2400, (gg) => {
     for (const e of gg.events) {
       if (e.type === 'stageStart') starts[e.level] = { hull: gg.player.hull, shield: gg.player.shield, missiles: gg.player.missiles, state: gg.state, boss: gg.boss, ace: gg.ace };
       if (e.type === 'stage' && gg.level > 1) waves[gg.level].push(gg.fighters.filter((f) => !f.drone && !f.ace).length);
@@ -608,10 +618,11 @@ test('3 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面
     if (gg.ace) aceMax = Math.max(aceMax, gg.ace.maxHp);
     if (gg.level === 2 && gg.boss) bossIn2 = true;
     if (gg.level === 3 && gg.boss && !boss3) boss3 = gg.boss;
+    if (gg.level === 4 && gg.boss && !boss4) boss4 = gg.boss;
     gg.events.length = 0;
     return gg.state === 'play' ? C.autopilot(gg, 1) : {};
   }, 1 / 30);
-  [2, 3].forEach((lv) => {
+  [2, 3, 4].forEach((lv) => {
     const s = starts[lv];
     assert.ok(s, lv + ' 面へ進んだ');
     assert.strictEqual(s.state, 'play');
@@ -627,7 +638,9 @@ test('3 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面
   const turret = boss3.parts.find((p) => p.kind === 'turret'), core = boss3.parts.find((p) => p.kind === 'core');
   assert.strictEqual(turret.maxHp, Math.round(T.turretHp * T.boss3Hp));
   assert.strictEqual(core.maxHp, Math.round(T.coreHp * T.boss3Hp));
-  assert.deepStrictEqual(seen, ['clear@3'], '1 面の戦艦・エース機ではクリアにならず、3 面の戦艦を沈めてクリア');
+  assert.ok(boss4 && boss4.type === 'fortress' && boss4.level === 4, '4 面は木星要塞');
+  assert.strictEqual(waves[4].length, 2, '4 面も第1波・第2波');
+  assert.deepStrictEqual(seen, ['clear@4'], '1 面の戦艦・エース機・3 面の戦艦ではクリアにならず、4 面の木星要塞を沈めてクリア');
 });
 
 test('3 面の戦艦は 1.5 倍の大きさ: 部位の位置・当たりの大きさ・立体・主砲の位置がそろって大きくなる', () => {
@@ -777,4 +790,74 @@ test('ボスのワープ先は、戦う場所の外へはみ出さない', () =>
   const b = C.makeBoss(g);
   const r = Math.hypot(b.at.x - c.x, b.at.z - c.z);
   assert.ok(r <= T.arenaRadius - 800 + 1, `中心から ${r.toFixed(0)}m (上限 ${T.arenaRadius - 800})`);
+});
+
+// ------------------------------------------------------------ 4 面: 木星要塞
+
+function fortGame() {
+  const g = C.createGame({ seed: 3, level: 4, start: 'boss' });
+  run(g, 14, {}, 1 / 30);
+  g.fighters = [];
+  return g;
+}
+
+test('木星要塞: 球と輪の要塞。砲塔 12・エンジン 4・コア 1・主砲があり、戦艦とは型が違う', () => {
+  const g = fortGame();
+  const b = g.boss;
+  assert.strictEqual(b.type, 'fortress'); assert.strictEqual(b.level, 4);
+  const count = (k) => b.parts.filter((p) => p.kind === k).length;
+  assert.strictEqual(count('turret'), 12); assert.strictEqual(count('engine'), 4); assert.strictEqual(count('core'), 1);
+  assert.strictEqual(b.parts.find((p) => p.kind === 'turret').maxHp, T.fortTurretHp);
+  assert.strictEqual(b.parts.find((p) => p.kind === 'core').maxHp, T.fortCoreHp);
+  assert.ok(b.cannon && b.cannon.from, '主砲');
+  // 立体の数は戦艦より桁違いに多い (球の板・輪の殻・砲塔の台)
+  const sb = C.makeBoss(Object.assign(C.createGame({ seed: 3, level: 1 }), { level: 1 }));
+  assert.ok(C.bossSolids(b).length > 4 * C.bossSolids(sb).length);
+  assert.ok(C.BOSS_TYPES.fortress.name !== C.BOSS_TYPES.battleship.name);
+});
+
+test('木星要塞: 中心の球は撃てる (弾が止まる)。向きを変えても球は中心のまわりのまま、部位は向きに合わせて回る', () => {
+  const g = fortGame();
+  const b = g.boss;
+  const inside = (p) => C.bossSolids(b).some((sd) => C.pointInSolid(p, sd.planes));
+  for (const rot of [0, 1.1, -2.4]) {
+    b.rot = rot;
+    for (const d of [C.vec(1, 0, 0), C.vec(0, 1, 0), C.vec(0, 0, -1), C.vec(0.6, 0.6, 0.5)]) {
+      const u = C.norm(d);
+      assert.ok(inside(C.add(b.pos, C.scale(u, 100))), '球の内側は当たる rot=' + rot);
+      assert.ok(!inside(C.add(b.pos, C.scale(u, 700))), '遠くは素通り');
+    }
+  }
+  // 部位の位置は、艦の向きで回した local
+  b.rot = 0.9;
+  run(g, 0.05, {});
+  const c = Math.cos(b.rot), sn = Math.sin(b.rot);
+  b.parts.forEach((p) => {
+    const lx = p.local.x, lz = p.local.z;
+    assert.ok(Math.abs((p.pos.x - b.pos.x) - (c * lx + sn * lz)) < 1 && Math.abs((p.pos.z - b.pos.z) - (-sn * lx + c * lz)) < 1, '部位が艦と一緒に回る');
+  });
+});
+
+test('木星要塞: 自分の方を向いていないと主砲を溜めない', () => {
+  const g = fortGame();
+  const b = g.boss;
+  b.parts.filter((p) => p.kind === 'turret').forEach((p) => { p.hp = 0; p.alive = false; });
+  b.rot = Math.PI;   // 主砲は -x 側 → 背を向ける
+  g.player.pos = C.vec(b.pos.x - 10, b.pos.y, b.pos.z + 700);
+  b.cannon.next = 0;
+  let charged = false;
+  run(g, 3, (gg) => { if (gg.boss.cannon.state !== 'idle') charged = true; gg.player.pos = C.vec(b.pos.x - 10, b.pos.y, b.pos.z + 700); return {}; }, 1 / 30);
+  assert.ok(['cannon', 'weak', 'core'].includes(b.phase), '主砲を撃てる段階 ' + b.phase);
+  assert.ok(!charged, '背を向けている間は主砲を溜めない');
+  // 向き直れば溜め始める
+  b.rot = 0;
+  run(g, 1, (gg) => { if (gg.boss.cannon.state !== 'idle') charged = true; gg.player.pos = C.vec(b.pos.x - 400, b.pos.y, b.pos.z + 10); return {}; }, 1 / 30);
+  assert.ok(charged, '向き直れば溜める');
+});
+
+test('4 面の成績: 腕前の線は 3 倍 (4 面まで遊ぶと 48000 点で S)', () => {
+  const mk = (score) => { const g = C.createGame({ seed: 1 }); g.level = 4; g.state = 'clear'; g.stats.score = score; g.stats.time = 5000; g.player.hull = 0; return C.result(g); };
+  assert.strictEqual(mk(47000).rank, 'A');
+  assert.strictEqual(mk(49000).rank, 'S');
+  assert.strictEqual(mk(30000).rank, 'B');
 });
