@@ -649,6 +649,30 @@ async function run() {
     const lost = await page.evaluate(() => ({ head: document.getElementById('resultHead').textContent, rank: document.getElementById('resultRank').textContent, controls: document.getElementById('controls').hidden }));
     ok(lost.head === 'MISSION FAILED' && lost.rank === '—', `負けの結果が出る (${lost.head})`);
     ok(lost.controls, '結果の画面では操作の部品を隠す');
+    // 負けたら「この面から続ける」が出る。押すとその面の始まりから (機体は直り、面の札が出る)
+    const contInfo = await page.evaluate(() => {
+      const b = document.getElementById('btnContinue'), p = document.querySelector('.result-panel').getBoundingClientRect();
+      const r = b.getBoundingClientRect(), again = document.getElementById('btnAgain');
+      return { shown: !b.hidden && r.width > 0, text: b.textContent, again: again.textContent, level: window.__app.game().level,
+        inside: [b, again, document.getElementById('btnResultTitle')].every((e) => { const q = e.getBoundingClientRect(); return q.left >= p.left - 1 && q.right <= p.right + 1 && q.width >= 80 && e.scrollWidth <= e.clientWidth + 1; }) };
+    });
+    ok(contInfo.shown && contInfo.text === 'STAGE ' + contInfo.level + ' から続ける' && contInfo.again === '最初から', `負けたら「${contInfo.text}」と「${contInfo.again}」が出る`);
+    ok(contInfo.inside, '3 つのボタンが結果の板の中に収まり、字がはみ出さない');
+    const contBtn = center(await rectOf(page, '#btnContinue'));
+    await page.touchscreen.tap(contBtn.x, contBtn.y);
+    await page.waitForFunction(() => window.__app.screen() === 'play', null, { timeout: 10000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const resumed = await page.evaluate(() => { const g = window.__app.game(), c = window.__app.stageCard(); return { level: g.level, stage: g.stage, hull: g.player.hull, alive: g.player.alive, card: c.shown && c.num === 'STAGE ' + g.level }; });
+    ok(resumed.level === contInfo.level && resumed.alive && resumed.hull === 100 && resumed.card && (resumed.stage === 'intro' || resumed.stage === 'wave1'), `その面 (STAGE ${resumed.level}) の始まりから、機体を直して続く (${resumed.stage}・機体 ${resumed.hull}・札 ${resumed.card})`);
+    // もう一度負けると、結果に続けた回数が出る
+    await page.evaluate(() => {
+      const g = window.__app.game(), pl = g.player;
+      g.fighters = []; pl.shield = 0; pl.hull = 1;
+      const p = { x: pl.pos.x + pl.dir.x * 15, y: pl.pos.y + pl.dir.y * 15, z: pl.pos.z + pl.dir.z * 15 };
+      g.shots.push({ owner: 'enemy', pos: p, prev: p, vel: { x: -pl.dir.x * 300, y: -pl.dir.y * 300, z: -pl.dir.z * 300 }, life: 1, dmg: 5, dead: false });
+    });
+    await page.waitForFunction(() => window.__app.screen() === 'result', null, { timeout: 60000 });
+    ok(await page.evaluate(() => document.getElementById('resultStats').textContent.indexOf('コンティニュー1 回') >= 0), '結果に「コンティニュー 1 回」が出る');
 
     // ------------------------------------------------ 巨大戦艦 → 勝ち
     section('巨大戦艦から → 撃沈 → 結果');

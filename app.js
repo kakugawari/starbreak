@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.12.0';
+  const VERSION = 'v0.13.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -2347,7 +2347,9 @@
     bossMusic = false;
     audio.init();
     clearWorld();
-    game = C.createGame({ seed: opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0, start: opts.start, level: opts.level });
+    const seed = opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0;
+    // 続きから: 負けた面の始まりから (成績はその面を始めたときに戻す)。面の札は stageStart の知らせが出す
+    game = opts.continueFrom ? C.continueGame(opts.continueFrom, seed) : C.createGame({ seed: seed, start: opts.start, level: opts.level });
     shipObj = makePlayerShip();
     scene.add(shipObj);
     input.stickX = 0; input.stickY = 0; input.missile = false;
@@ -2365,7 +2367,7 @@
     els.title.hidden = true; els.result.hidden = true; els.pause.hidden = true;
     els.controls.hidden = false;
     // 巨大戦艦からのときは、すぐ出るカットインが知らせる
-    if (opts.start !== 'boss') showStageCard(1);
+    if (opts.start !== 'boss' && !opts.continueFrom) showStageCard(1);
     consumeEvents();
   }
 
@@ -2430,6 +2432,16 @@
       const dd = document.createElement('dd'); dd.textContent = row[1];
       els.resultStats.append(dt, dd);
     });
+    if (r.continues) {
+      const cdt = document.createElement('dt'); cdt.textContent = 'コンティニュー';
+      const cdd = document.createElement('dd'); cdd.textContent = r.continues + ' 回';
+      els.resultStats.append(cdt, cdd);
+    }
+    // 負けたら、その面の始まりから続けられる (いちばん上に出す)。「もう一度」は最初から
+    const cont = $('btnContinue');
+    cont.hidden = r.cleared;
+    cont.textContent = 'STAGE ' + r.level + ' から続ける';
+    $('btnAgain').textContent = r.cleared ? 'もう一度' : '最初から';
     const dt = document.createElement('dt'); dt.textContent = '合計'; dt.className = 'total';
     const dd = document.createElement('dd'); dd.textContent = r.total.toLocaleString(); dd.className = 'total';
     els.resultStats.append(dt, dd);
@@ -3542,6 +3554,7 @@
     $('btnRetry').addEventListener('click', function () { startGame({ start: lastStart }); });
     $('btnToTitle').addEventListener('click', toTitle);
     $('btnAgain').addEventListener('click', function () { startGame({ start: lastStart }); });
+    $('btnContinue').addEventListener('click', function () { if (game) startGame({ continueFrom: game, start: lastStart }); });
     $('btnResultTitle').addEventListener('click', toTitle);
 
     // 別のアプリへ切り替えたら止める

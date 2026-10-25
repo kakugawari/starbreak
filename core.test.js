@@ -335,17 +335,19 @@ test('ロックオンボタン: タップ 1 回で、押しっぱなしにしな
   assert.ok(C.angleBetween(g.player.dir, C.sub(f.pos, g.player.pos)) > before - 5 * DEG, '離しても勝手には向かない');
 });
 
-test('ロックオンの追いかけ: 次の波の敵が出てきたら、その敵を選んで向き続ける', () => {
+test('ロックオン: 狙う相手を倒したら、次の敵を自動では選ばない (追いかけも止まる)。次の波が出ても選ばない', () => {
   const g = C.createGame({ seed: 3 });
   g.events.length = 0;
   C.step(g, { select: true }, 1 / 30);
-  const first = g.player.targetId;
-  assert.ok(first && g.player.follow);
-  // 第 1 波を消す → 第 2 波が出たら自動で選ぶ
+  assert.ok(g.player.targetId && g.player.follow);
+  // 第 1 波を消す → 選びも追いかけも止まる。第 2 波が出ても、自分で押すまで選ばない
   run(g, 0.5, (gg) => { gg.fighters.forEach((f) => { f.alive = false; }); return {}; }, 1 / 30);
+  assert.ok(!g.player.targetId && !g.player.follow, '倒したら選びも追いかけも止まる');
   run(g, 6, {}, 1 / 30);
   assert.ok(g.fighters.some((f) => f.alive), '第 2 波');
-  assert.ok(g.player.targetId && g.player.targetId !== first && g.fighters.some((f) => f.id === g.player.targetId), '第 2 波の敵を選んでいる');
+  assert.ok(!g.player.targetId && !g.player.follow, '第 2 波の敵を勝手に選ばない');
+  C.step(g, { select: true }, 1 / 30);
+  assert.ok(g.player.targetId && g.player.follow, 'もう一度押せば選んで追いかける');
 });
 
 test('ロックオンの追いかけでボスの部位を追っても、船体へ突っ込んでこすり続けない (子どもの操作: LOCK 1 回 + 撃ちっぱなし)', () => {
@@ -360,17 +362,51 @@ test('ロックオンの追いかけでボスの部位を追っても、船体�
   assert.ok(scrapes <= 8, `4 通り x 40 秒でこすったのは ${scrapes} 回 (よけないと 30 回以上)`);
 });
 
-test('ロックオンボタン: 狙う相手を倒すと、次の敵へ移る。狙う相手は円の外でも偏差の印が出る', () => {
+test('ロックオンボタン: 狙う相手を倒すと選びが外れる。押し直すと次の敵を選び、円の外でも偏差の印が出る', () => {
   const g = quietGame();
   const a = fighterAhead(g, 0, 250);
   const b = fighterAhead(g, 60, 300);
   [a, b].forEach((f) => { f.mode = 'hold'; f.fireCd = 99; });
   C.step(g, { select: true }, 1 / 60);
   assert.strictEqual(g.player.targetId, a.id);
+  // 追いかけを止めて、向きを変えずに撃つ (60° 横の b へ向かないように)
+  g.player.follow = false;
   run(g, 1.2, { fire: true });
   assert.strictEqual(a.alive, false, '撃墜');
-  assert.strictEqual(g.player.targetId, b.id, '次の敵へ移る');
+  assert.strictEqual(g.player.targetId, 0, '次の敵へは移らない');
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, b.id, '押し直すと次の敵');
+  // 印 (focus) は次のコマの照準の計算で付く (選ぶのは照準の計算のあと)
+  g.player.follow = false;
+  C.step(g, {}, 1 / 60);
   assert.ok(g.player.focus && g.player.focus.target === b, `60° 横でも狙う相手に偏差の印が出る`);
+});
+
+test('負けたら、その面の始まりから続けられる: 機体は直り、成績はその面を始めたときに戻り、続けた回数が残る', () => {
+  const g = C.createGame({ seed: 5 });
+  g.stats.score = 1234; g.stats.kills = 9;
+  // 1 面の戦艦を沈めて 2 面へ進んだことにする (面を始めたときの成績を覚える)
+  g.fighters = []; g.stage = 'test';
+  g.boss = C.makeBoss(g); g.boss.phase = 'dead';
+  g.state = 'ending'; g.endT = 99;
+  C.step(g, {}, 1 / 30);     // 1 面 → 2 面へ (startStage)
+  assert.strictEqual(g.level, 2);
+  g.stats.score += 500; g.player.hull = 0; g.player.alive = false; g.state = 'over';
+  const c = C.continueGame(g, 77);
+  assert.strictEqual(c.level, 2, '負けた面から');
+  assert.strictEqual(c.state, 'play');
+  assert.strictEqual(c.stage, 'intro', '面の始まりの間から');
+  assert.ok(c.events.some((e) => e.type === 'stageStart' && e.level === 2), '面の札が出る');
+  assert.ok(c.player.alive && c.player.hull === T.hullMax && c.player.shield === T.shieldMax, '機体は直る');
+  assert.strictEqual(c.stats.score, 1234, '負けた面の点は数えない (面を始めたときの点に戻る)');
+  assert.strictEqual(c.stats.kills, 9);
+  assert.strictEqual(C.result(c).continues, 1);
+  // 間のあとに 2 面の第 1 波が出る
+  run(c, T.stageIntro + 0.5, {}, 1 / 30);
+  assert.strictEqual(c.fighters.filter((f) => f.alive).length, 4, '2 面の第 1 波 (4 機)');
+  // もう一度負けて続けると 2 回
+  c.state = 'over';
+  assert.strictEqual(C.result(C.continueGame(c)).continues, 2);
 });
 
 // ------------------------------------------------------------ 敵

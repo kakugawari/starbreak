@@ -104,7 +104,7 @@
           <dt>LASER</dt><dd>押しているあいだ撃ち続ける</dd>
           <dt>MSL</dt><dd>長押しで照準のまわりの敵を最大 4 つロック。離すと一斉に撃つ</dd>
           <dt>BOOST</dt><dd>速く飛ぶ</dd>
-          <dt>LOCK</dt><dd>タップで敵を選び、その敵の方へ自動で向き続ける。もう一度押すと次の敵。スティックを大きく倒すと自分で操縦にもどる</dd>
+          <dt>LOCK</dt><dd>タップで敵を選び、その敵の方へ自動で向き続ける。もう一度押すと次の敵。倒したら、また自分で押して選ぶ。スティックを大きく倒すと自分で操縦にもどる</dd>
         </dl>
         <button type="button" class="btn btn-glass btn-back" data-back>戻る</button>
       </div>
@@ -137,6 +137,7 @@
         <dl class="stats" id="resultStats"></dl>
       </div>
       <div class="row">
+        <button type="button" class="btn btn-primary" id="btnContinue" hidden>この面から続ける</button>
         <button type="button" class="btn btn-primary" id="btnAgain">もう一度</button>
         <button type="button" class="btn" id="btnResultTitle">タイトルへ</button>
       </div>

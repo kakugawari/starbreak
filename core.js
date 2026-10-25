@@ -691,7 +691,8 @@
       rng: mulberry32(seed),
       t: 0,
       state: 'play',          // play / ending / clear / over
-      stage: opts.start === 'boss' ? 'bossIn' : 'wave1',
+      // start: 'boss' は巨大戦艦から、'stage' はその面の始まり (間のあとに第1波。負けたあとの「この面から続ける」)
+      stage: opts.start === 'boss' ? 'bossIn' : opts.start === 'stage' ? 'intro' : 'wave1',
       stageTimer: 0,
       level: opts.level || 1, // 面 (1〜4)。1 面の戦艦 → 2 面 (小ボス) → 3 面 (火星の採掘母艦) → 4 面 (木星要塞)。opts.level は試験・写真用
       nextId: 1,
@@ -715,10 +716,27 @@
       boss: null,
       events: [],
       stats: { shots: 0, hits: 0, kills: 0, score: 0, damage: 0, combo: 0, comboT: 0, time: 0 },
+      continues: opts.continues || 0,   // 負けて「この面から続ける」を使った回数
       endT: 0
     };
+    // 続きから: その面を始めたときの成績を引き継ぐ (負けた回の点は数えない)
+    if (opts.carry) ['shots', 'hits', 'kills', 'score', 'damage', 'time'].forEach(function (k) { g.stats[k] = opts.carry[k] || 0; });
+    g.stageStats = copyStats(g.stats);
     if (g.stage === 'wave1') spawnWave(g, 1);
+    if (g.stage === 'intro') emit(g, 'stageStart', { level: g.level, text: 'STAGE ' + g.level });
     return g;
+  }
+
+  function copyStats(s) {
+    return { shots: s.shots, hits: s.hits, kills: s.kills, score: s.score, damage: s.damage, time: s.time };
+  }
+
+  /**
+   * 負けたあと「この面から続ける」: 負けた面の始まりから、機体を直してやり直す。
+   * 成績はその面を始めたときのものに戻す (負けた回の点・時間は数えない)。続けた回数は結果に出す
+   */
+  function continueGame(g, seed) {
+    return createGame({ seed: seed === undefined ? g.seed + 1 : seed, level: g.level, start: 'stage', carry: g.stageStats, continues: (g.continues || 0) + 1 });
   }
 
   function rand(g, a, b) { return a + (b - a) * g.rng(); }
@@ -950,15 +968,14 @@
   }
 
   /**
-   * 狙う相手を倒したら (いなくなったら)、照準にいちばん近い次の敵へ移る。
-   * 追いかけ中 (follow) は、相手がいない間に次の敵が出てきたら、その敵を選ぶ (次の波・ボスの部位)
+   * 狙う相手を倒したら (いなくなったら)、選びをやめて追いかけも止める。次の敵は自分で LOCK を押して選ぶ
+   * (前は次の敵へ自動で移っていたが、「自分でロックオンしてもらう」と言われてやめた)
    */
   function keepTarget(g) {
     const pl = g.player;
-    if (pl.targetId && findById(g, pl.targetId)) return;
-    if (!pl.targetId && !pl.follow) return;
+    if (!pl.targetId || findById(g, pl.targetId)) return;
     pl.targetId = 0;
-    if (targets(g).some(function (t) { return !t.drone; })) selectTarget(g);
+    if (pl.follow) { pl.follow = false; emit(g, 'followOff'); }
   }
 
   function turnLimit(speed, boosting) {
@@ -1811,7 +1828,8 @@
     g.stage = 'intro';
     g.stageTimer = 0;
     pl.shield = T.shieldMax; pl.hull = T.hullMax; pl.missiles = T.missileMax; pl.boost = 100;
-    pl.mlock.length = 0; pl.lockT = 0; pl.locked = false; pl.lockId = 0; pl.targetId = 0;
+    pl.mlock.length = 0; pl.lockT = 0; pl.locked = false; pl.lockId = 0; pl.targetId = 0; pl.follow = false;
+    g.stageStats = copyStats(g.stats);
     emit(g, 'stageStart', { level: level, text: 'STAGE ' + level });
   }
 
@@ -1834,7 +1852,8 @@
     if (cleared) rank = total >= 16000 * lv ? 'S' : total >= 12000 * lv ? 'A' : total >= 8000 * lv ? 'B' : 'C';
     return {
       cleared: !!cleared, time: s.time, kills: s.kills, accuracy: acc,
-      damage: s.damage, score: s.score, bonus: bonus, total: total, rank: rank
+      damage: s.damage, score: s.score, bonus: bonus, total: total, rank: rank,
+      level: g.level, continues: g.continues || 0
     };
   }
 
@@ -1978,7 +1997,7 @@
     intercept: intercept, segmentSphere: segmentSphere, segmentBox: segmentBox, sphereBoxPush: sphereBoxPush,
     solidPlanes: solidPlanes, solidRange: solidRange, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
-    createGame: createGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
+    createGame: createGame, continueGame: continueGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
     autopilot: autopilot, selectTarget: selectTarget, BOSS_TIMING: { delay: BOSS_WARP_DELAY, emerge: BOSS_EMERGE, arrive: BOSS_ARRIVE, ahead: BOSS_AHEAD, drop: BOSS_DROP, bow: BOSS_BOW, stern: BOSS_STERN }, makeFighter: makeFighter, makeBoss: makeBoss
   };
 });
