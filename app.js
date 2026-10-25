@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.11.0';
+  const VERSION = 'v0.12.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -2240,7 +2240,7 @@
   const missileIds = new Set();
   // ミサイル: 押している間に照準の近くの敵を次々ロックし、離したら一斉に撃つ (ロックが無ければ 1 発)
   holdButton(els.btnMissile, missileIds, null, function () { input.missile = true; });
-  // ロックオン: 押した瞬間に敵を選ぶ (2 回目からは次の敵へ)。押している間はその敵へ機首を向ける
+  // ロックオン: 押した瞬間に敵を選び、その敵を向き続ける (2 回目からは次の敵へ)。スティックを大きく倒すとやめる
   holdButton(els.btnTarget, touch.trackIds, function () { input.select = true; });
   // 指を置いた瞬間に止める (遊んでいる間は touchend を打ち消すので click が来ない)
   els.btnPause.addEventListener('pointerdown', function (e) { e.preventDefault(); setPaused(true); });
@@ -3401,6 +3401,8 @@
     if (shown.mtext !== mtext) { shown.mtext = mtext; els.missileCount.textContent = mtext; }
     const hasTarget = !!pl.targetId;
     if (shown.hasTarget !== hasTarget) { shown.hasTarget = hasTarget; els.btnTarget.classList.toggle('has-target', hasTarget); }
+    const following = !!pl.follow;
+    if (shown.following !== following) { shown.following = following; els.btnTarget.classList.toggle('following', following); }
     const be = pl.boost < 5 && !pl.boosting;
     if (shown.boostEmpty !== be) { shown.boostEmpty = be; els.btnBoost.classList.toggle('empty', be); }
   }

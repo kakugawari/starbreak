@@ -228,6 +228,8 @@
     // 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。体力が多く、何発も当てないと落ちない。撃つ間隔が短く、5 連射
     // 4 面 (木星): 木星要塞 (球・輪・多数の砲塔。ゆっくり回って主砲の面を自機へ向ける)。砲塔が多いので 1 つの耐久は低め
     fortTurretHp: 12, fortEngineHp: 26, fortCoreHp: 55, fortFire: 1.1, fortCannon: 0.8, fortEscorts: 3, fortFaceCos: 0.6,
+    // ロックオンの追いかけ: スティックを followCancel より大きく倒したらやめる。ボスの部位から followBreak (m) まで近づいたら、followAwayTime 秒離れてから向き直す
+    followCancel: 0.75, followBreak: 200, followAwayTime: 2.5,
     drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
     aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
@@ -704,7 +706,7 @@
         missiles: T.missileMax, missileCd: 0,
         focus: null, assist: null, lockId: 0, lockT: 0, locked: false,
         mlock: [], mlockT: 0, mlockCand: 0,
-        targetId: 0, tracking: false,
+        targetId: 0, tracking: false, follow: false,
         aimDir: vec(0, 0, -1), alive: true, outside: false
       },
       fighters: [],
@@ -947,12 +949,16 @@
     return t;
   }
 
-  /** 狙う相手を倒したら (いなくなったら)、照準にいちばん近い次の敵へ移る。 */
+  /**
+   * 狙う相手を倒したら (いなくなったら)、照準にいちばん近い次の敵へ移る。
+   * 追いかけ中 (follow) は、相手がいない間に次の敵が出てきたら、その敵を選ぶ (次の波・ボスの部位)
+   */
   function keepTarget(g) {
     const pl = g.player;
-    if (!pl.targetId || findById(g, pl.targetId)) return;
+    if (pl.targetId && findById(g, pl.targetId)) return;
+    if (!pl.targetId && !pl.follow) return;
     pl.targetId = 0;
-    if (targets(g).length) selectTarget(g);
+    if (targets(g).some(function (t) { return !t.drone; })) selectTarget(g);
   }
 
   function turnLimit(speed, boosting) {
@@ -966,8 +972,10 @@
     const sx = clamp(input.stickX || 0, -1, 1);
     const sy = clamp(input.stickY || 0, -1, 1);
     const stickMag = Math.sqrt(sx * sx + sy * sy);
-    // ロックオンボタンを押しっぱなし: 狙う相手 (いれば)
-    const sel = input.track && pl.targetId ? findById(g, pl.targetId) : null;
+    // スティックを大きく倒したら、追いかけをやめて自分で操縦する (押しっぱなしの間は、離せばまた向く)
+    if (pl.follow && stickMag >= T.followCancel) { pl.follow = false; emit(g, 'followOff'); }
+    // ロックオンボタンを押しっぱなし、または追いかけ中: 狙う相手 (いれば) へ機首を向ける
+    const sel = (input.track || pl.follow) && pl.targetId ? findById(g, pl.targetId) : null;
 
     // ブースト: 押している間だけ、エネルギーがある限り
     const wantBoost = !!input.boost && pl.boost > 0;
@@ -1018,10 +1026,23 @@
       tPitch += clamp((want.pitch - pl.pitch) * 4, -T.magnetRate, T.magnetRate) * k;
     }
 
-    // ロックオンボタンを押しっぱなし: 狙う相手へ機首を向ける。スティックを大きく倒せばそちらが勝つ
+    // ロックオンボタンを押しっぱなし・追いかけ中: 狙う相手へ機首を向ける。スティックを大きく倒せばそちらが勝つ
     pl.tracking = !!sel && stickMag < 0.6;
     if (pl.tracking) {
-      const want = yawPitchOf(sub(sel.pos, pl.pos));
+      let aimAt = sel.pos;
+      // ボスの部位を追うと、そのまま船体へ突っ込んでこすり続けた (子どもの操作をまねて測ると、痛手の 8 割がこすり)。
+      // 近づきすぎたら部位の外向き (面の向き) へいったん離れ、離れてから向き直す。前に船体があれば、よける向きへ
+      pl.followAway = Math.max(0, (pl.followAway || 0) - dt);
+      if (sel.face && g.boss) {
+        if (dist(sel.pos, pl.pos) < T.followBreak) pl.followAway = T.followAwayTime;
+        if (pl.followAway > 0) aimAt = add(pl.pos, add(scale(sel.face, 100), scale(pl.dir, 60)));
+        const solids = bossSolids(g.boss), ahead = addScaled(pl.pos, pl.dir, 70);
+        for (let i = 0; i < solids.length; i++) {
+          const push = sphereSolidPush(ahead, 30, solids[i].planes);
+          if (push) aimAt = add(pl.pos, add(scale(push.normal, 100), scale(pl.dir, 30)));
+        }
+      }
+      const want = yawPitchOf(sub(aimAt, pl.pos));
       const k = 1 - stickMag / 0.6;
       tYaw = tYaw * (1 - k) + clamp(wrapAngle(want.yaw - pl.yaw) * 3, -lim, lim) * k;
       tPitch = tPitch * (1 - k) + clamp((want.pitch - pl.pitch) * 3, -lim * 0.85, lim * 0.85) * k;
@@ -1753,7 +1774,8 @@
       if (g.state === 'play') {
         fireLasers(g, input, dt);
         fireMissile(g, input, dt);
-        if (input.select) selectTarget(g);
+        // ロックオンボタンのタップ: 敵を選び、その敵を向き続ける (追いかけ)。押しっぱなしにしなくてよい
+        if (input.select && selectTarget(g)) pl.follow = true;
       }
     }
     updateMissiles(g, dt);

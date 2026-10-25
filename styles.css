@@ -199,7 +199,7 @@ body {
   bottom: calc(var(--sa-b) + 136px);
   width: 74px; height: 74px;
 }
-/* ロックオン: タップで敵を選ぶ・押しっぱなしでその敵へ向く */
+/* ロックオン: タップで敵を選び、その敵を向き続ける (スティックを大きく倒すとやめる) */
 #btnTarget {
   right: calc(var(--sa-r) + 136px);
   bottom: calc(var(--sa-b) + 104px);
@@ -207,6 +207,9 @@ body {
 }
 #btnTarget .pad-ico { font-size: 24px; color: #ffd36a; }
 #btnTarget.has-target { border-color: rgba(255, 211, 106, .9); box-shadow: 0 0 18px rgba(255, 200, 90, .5); }
+/* 追いかけ中: 金色に塗って、AUTO と出す */
+#btnTarget.following { background: rgba(255, 196, 80, .38); box-shadow: 0 0 26px rgba(255, 200, 90, .8); }
+#btnTarget.following .pad-name::after { content: ' AUTO'; color: #ffe39a; }
 #btnMissile.locked { border-color: var(--red); box-shadow: 0 0 20px rgba(255, 74, 90, .7); }
 #btnMissile.empty { opacity: .45; }
 #btnBoost.empty { opacity: .45; }

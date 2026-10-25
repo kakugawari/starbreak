@@ -554,15 +554,27 @@ async function run() {
     });
     const tgtBtn = center(await rectOf(page, '#btnTarget'));
     const before = await page.evaluate(() => ({ id: window.__app.game().fighters[0].id, ang: (() => { const g = window.__app.game(), p = g.player, f = g.fighters[0]; const v = { x: f.pos.x - p.pos.x, y: f.pos.y - p.pos.y, z: f.pos.z - p.pos.z }; const l = Math.hypot(v.x, v.y, v.z); return Math.acos((v.x * p.dir.x + v.y * p.dir.y + v.z * p.dir.z) / l) * 180 / Math.PI; })() }));
+    // タップ (押してすぐ離す) だけで、その敵へ向き続ける (追いかけ)
     await f.down(7, tgtBtn.x, tgtBtn.y);
-    await waitGameTime(page, 0.15);
+    await waitGameTime(page, 0.1);
+    await f.up(7);
     const picked = await page.evaluate(() => window.__app.game().player.targetId);
     ok(picked === before.id, `タップで敵を選ぶ (真横の敵 ${before.id} → 選んだ ${picked})`);
     await waitGameTime(page, 1.6);
     const after = await page.evaluate(() => { const g = window.__app.game(), p = g.player, f = g.fighters.find((x) => x.id === p.targetId); const v = { x: f.pos.x - p.pos.x, y: f.pos.y - p.pos.y, z: f.pos.z - p.pos.z }; const l = Math.hypot(v.x, v.y, v.z); return Math.acos((v.x * p.dir.x + v.y * p.dir.y + v.z * p.dir.z) / l) * 180 / Math.PI; });
-    await f.up(7);
-    ok(after < before.ang - 40, `押しっぱなしで、その敵へ機首が向く (なす角 ${before.ang.toFixed(0)}° → ${after.toFixed(0)}°)`);
-    ok(await page.evaluate(() => document.getElementById('btnTarget').classList.contains('has-target')), '敵を選んでいる間、ボタンが光る');
+    ok(after < before.ang - 40, `タップしただけで (押しっぱなしにしなくても)、その敵へ機首が向く (なす角 ${before.ang.toFixed(0)}° → ${after.toFixed(0)}°)`);
+    const lockBtn = await page.evaluate(() => { const b = document.getElementById('btnTarget'); return { has: b.classList.contains('has-target'), fol: b.classList.contains('following'), label: getComputedStyle(b.querySelector('.pad-name'), '::after').content }; });
+    ok(lockBtn.has && lockBtn.fol && /AUTO/.test(lockBtn.label), `追いかけている間、ボタンが金色に光って AUTO と出る (${lockBtn.label})`);
+    // スティックを大きく倒すと、追いかけをやめる
+    await page.evaluate(() => { window.__app.game().player.follow = true; });
+    const stickZ = await rectOf(page, '#stickZone');
+    const sc = { x: stickZ.x + stickZ.width * 0.35, y: stickZ.y + stickZ.height * 0.55 };
+    await f.down(8, sc.x, sc.y);
+    await f.move(8, sc.x + 120, sc.y);
+    await waitGameTime(page, 0.3);
+    await f.up(8);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    ok(await page.evaluate(() => !window.__app.game().player.follow && !document.getElementById('btnTarget').classList.contains('following')), 'スティックを大きく倒すと、追いかけをやめる (AUTO が消える)');
 
     // ------------------------------------------------ 一時停止
     section('一時停止');

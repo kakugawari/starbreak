@@ -318,6 +318,48 @@ test('ロックオンボタン: 押しっぱなしで、真後ろの敵へも機
   assert.ok(g2.player.dir.x < 0, 'スティックを左いっぱいに倒すと、右の敵ではなく左へ曲がる');
 });
 
+test('ロックオンボタン: タップ 1 回で、押しっぱなしにしなくても、その敵へ向き続ける (追いかけ)。スティックを大きく倒すとやめる', () => {
+  const g = quietGame();
+  const f = fighterAhead(g, 150, 300);
+  f.mode = 'hold'; f.fireCd = 99;
+  C.step(g, { select: true }, 1 / 60);
+  assert.ok(g.player.follow, '追いかけ中');
+  let t = 0;
+  while (t < 6 && C.angleBetween(g.player.dir, C.sub(f.pos, g.player.pos)) > 8 * DEG) { C.step(g, { fire: true }, 1 / 60); t += 1 / 60; }
+  assert.ok(t < 4, `撃ちながら (ボタンを離したまま) 4 秒以内に向く (${t.toFixed(1)} 秒)`);
+  // スティックを大きく倒すと追いかけをやめ、離しても敵へ戻らない
+  run(g, 0.5, { stickX: 1 });
+  assert.ok(!g.player.follow, 'スティックで追いかけをやめる');
+  const before = C.angleBetween(g.player.dir, C.sub(f.pos, g.player.pos));
+  run(g, 2, {});
+  assert.ok(C.angleBetween(g.player.dir, C.sub(f.pos, g.player.pos)) > before - 5 * DEG, '離しても勝手には向かない');
+});
+
+test('ロックオンの追いかけ: 次の波の敵が出てきたら、その敵を選んで向き続ける', () => {
+  const g = C.createGame({ seed: 3 });
+  g.events.length = 0;
+  C.step(g, { select: true }, 1 / 30);
+  const first = g.player.targetId;
+  assert.ok(first && g.player.follow);
+  // 第 1 波を消す → 第 2 波が出たら自動で選ぶ
+  run(g, 0.5, (gg) => { gg.fighters.forEach((f) => { f.alive = false; }); return {}; }, 1 / 30);
+  run(g, 6, {}, 1 / 30);
+  assert.ok(g.fighters.some((f) => f.alive), '第 2 波');
+  assert.ok(g.player.targetId && g.player.targetId !== first && g.fighters.some((f) => f.id === g.player.targetId), '第 2 波の敵を選んでいる');
+});
+
+test('ロックオンの追いかけでボスの部位を追っても、船体へ突っ込んでこすり続けない (子どもの操作: LOCK 1 回 + 撃ちっぱなし)', () => {
+  let scrapes = 0;
+  for (let seed = 1; seed <= 4; seed++) {
+    const g = C.createGame({ seed: seed, start: 'boss' });
+    run(g, 14, {}, 1 / 30);
+    g.fighters = [];
+    C.step(g, { select: true }, 1 / 30);
+    run(g, 40, (gg) => { for (const e of gg.events) if (e.type === 'scrape') scrapes++; gg.events.length = 0; return gg.state === 'play' ? { fire: true } : {}; }, 1 / 30);
+  }
+  assert.ok(scrapes <= 8, `4 通り x 40 秒でこすったのは ${scrapes} 回 (よけないと 30 回以上)`);
+});
+
 test('ロックオンボタン: 狙う相手を倒すと、次の敵へ移る。狙う相手は円の外でも偏差の印が出る', () => {
   const g = quietGame();
   const a = fighterAhead(g, 0, 250);
