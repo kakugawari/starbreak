@@ -231,8 +231,10 @@
     // ロックオンの追いかけ: スティックを followCancel より大きく倒したらやめる。ボスの部位から followBreak (m) まで近づいたら、followAwayTime 秒離れてから向き直す
     followCancel: 0.75, followBreak: 200, followAwayTime: 2.5,
     drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
+    // 面の終わりの余韻: 撃沈の演出が始まってから次の面へ進むまで (秒)・暗転を始めるのは進む何秒前か
+    bossEndWait: 8.4, stageOutLead: 1.2,
     aceAhead: 600, aceEscorts: 2,   // 2 面のボス戦: エース機が現れる距離 (自機の前)・連れてくる護衛機の数
-    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
+    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4.2,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
     // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
@@ -1752,6 +1754,7 @@
       return;
     }
     if (g.stage === 'aceDown') {
+      if (!g.stageOutSent && g.stageTimer > T.aceDownDelay - T.stageOutLead) { g.stageOutSent = true; emit(g, 'stageOut', { level: 3 }); }
       if (g.stageTimer > T.aceDownDelay) startStage(g, 3);
       return;
     }
@@ -1821,7 +1824,12 @@
     if (g.state === 'play') updateStage(g, dt);
     if (g.state === 'ending') {
       g.endT += dt;
-      if (g.boss && g.boss.phase === 'dead' && g.endT > 7) {
+      // 撃沈のあとの余韻: 大爆発 (dying 4.2 秒) → STAGE CLEAR の札 → 暗転 (stageOut。次の面へ進む stageOutLead 秒前) → 次の面
+      if (g.boss && g.boss.phase === 'dead' && (g.level === 1 || g.level === 3) && !g.stageOutSent && g.endT > T.bossEndWait - T.stageOutLead) {
+        g.stageOutSent = true;
+        emit(g, 'stageOut', { level: g.level + 1 });
+      }
+      if (g.boss && g.boss.phase === 'dead' && g.endT > T.bossEndWait) {
         if (g.level === 1 || g.level === 3) startStage(g, g.level + 1);   // 1 面の戦艦 → 2 面、3 面の採掘母艦 → 4 面。2 面は小ボス (エース機)
         else { g.state = 'clear'; emit(g, 'clear'); }
       }
@@ -1845,6 +1853,7 @@
     g.missiles = [];
     g.stage = 'intro';
     g.stageTimer = 0;
+    g.stageOutSent = false;
     pl.shield = T.shieldMax; pl.hull = T.hullMax; pl.missiles = T.missileMax; pl.boost = 100;
     pl.mlock.length = 0; pl.lockT = 0; pl.locked = false; pl.lockId = 0; pl.targetId = 0; pl.follow = false;
     g.stageStats = copyStats(g.stats);

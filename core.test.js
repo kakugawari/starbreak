@@ -382,6 +382,21 @@ test('ロックオンボタン: 狙う相手を倒すと選びが外れる。押
   assert.ok(g.player.focus && g.player.focus.target === b, `60° 横でも狙う相手に偏差の印が出る`);
 });
 
+test('ボスを沈めたら、次の面へ移る少し前に暗転の知らせ (stageOut) が出て、そのあと次の面が始まる', () => {
+  const g = C.createGame({ seed: 6 });
+  g.fighters = []; g.stage = 'test';
+  g.boss = C.makeBoss(g); g.boss.phase = 'dead';
+  g.state = 'ending'; g.endT = 0;
+  let outT = -1, startT = -1;
+  run(g, T.bossEndWait + 0.5, (gg) => {
+    for (const e of gg.events) { if (e.type === 'stageOut' && outT < 0) outT = gg.endT; if (e.type === 'stageStart' && startT < 0) startT = gg.t; }
+    gg.events.length = 0; return {};
+  }, 1 / 30);
+  assert.ok(outT > 0, '暗転の知らせが出る');
+  assert.ok(Math.abs(outT - (T.bossEndWait - T.stageOutLead)) < 0.1, `次の面の ${T.stageOutLead} 秒前 (${outT.toFixed(2)})`);
+  assert.strictEqual(g.level, 2);
+});
+
 test('負けたら、その面の始まりから続けられる: 機体は直り、成績はその面を始めたときに戻り、続けた回数が残る', () => {
   const g = C.createGame({ seed: 5 });
   g.stats.score = 1234; g.stats.kills = 9;

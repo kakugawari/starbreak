@@ -69,6 +69,35 @@ body {
   background: linear-gradient(90deg, rgba(20, 0, 6, 0), rgba(20, 0, 6, .55) 15%, rgba(20, 0, 6, .55) 85%, rgba(20, 0, 6, 0));
 }
 
+/* 面の終わり: STAGE CLEAR (札と同じ細い字・グラデーション) と、次の面へ移る暗転 */
+#stageClear {
+  position: absolute; left: 0; right: 0; top: 30%;
+  text-align: center; pointer-events: none; will-change: transform, opacity;
+  /* 爆発の火の玉と同じ橙なので、字の後ろに横に薄れる暗い帯を敷く (帯が無いと字が火の玉に溶けた) */
+  padding: 14px 0 16px;
+  background: linear-gradient(90deg, rgba(4,6,14,0) 8%, rgba(4,6,14,.62) 30%, rgba(4,6,14,.62) 70%, rgba(4,6,14,0) 92%);
+  border-top: 1px solid; border-bottom: 1px solid;
+  border-image: linear-gradient(90deg, rgba(255,210,122,0) 15%, rgba(255,210,122,.7) 50%, rgba(255,210,122,0) 85%) 1;
+}
+#stageClear .clr-en {
+  font-family: "Avenir Next", "Helvetica Neue", -apple-system, sans-serif;
+  font-weight: 300; font-size: 46px; letter-spacing: .22em; padding-left: .22em; line-height: 1.15;
+  background: linear-gradient(90deg, #fff1c4 10%, #ffd27a 50%, #ffb07a 90%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  filter: drop-shadow(0 0 12px rgba(255, 200, 110, .55));
+}
+#stageClear .clr-ja {
+  margin-top: 6px;
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", -apple-system, sans-serif;
+  font-weight: 300; font-size: 15px; letter-spacing: .4em; padding-left: .4em; color: #ffe4b8;
+}
+#blackout { position: absolute; inset: 0; background: #000; pointer-events: none; opacity: 0; }
+/* 暗転のあいだの札は、画面の真ん中に大きく出す (明けると、ふだんの位置の大きさに戻る札とは別に、暗い中で読ませる) */
+#stageCard.center { top: calc(50% - 89px); }
+#stageCard.center .sc-frame { width: 429px; height: 178px; }
+#stageCard.center .sc-in { transform: scale(.6); }
+
 /* 面の始まりの札: 715 x 296 の板に組み、半分の大きさで出す。指は素通し */
 #stageCard {
   position: absolute;

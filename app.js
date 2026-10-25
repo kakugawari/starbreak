@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.15.0';
+  const VERSION = 'v0.16.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -2329,6 +2329,24 @@
         sn({ at: 0.3, atk: 0.3, dur: 3, vol: 0.12, type: 'highpass', f0: 5000, f1: 2500, rev: 0.8 });
         [-7, 7].forEach(function (dt) { sv({ type: 'sawtooth', f0: 55, f1: 28, atk: 0.15, dur: 3.5, vol: 0.08, lp: 300, detune: dt, heavy: true }); });
       },
+      // 面クリアのファンファーレ (STAGE CLEAR の札と同時): 明るい長調の和音 (C → G → C の上) を金管のように開き、澄んだ鐘を重ねる
+      clearSting: function () {
+        [[0, [60, 64, 67, 72]], [0.32, [67, 71, 74, 79]], [0.62, [72, 76, 79, 84]]].forEach(function (c, ci) {
+          const last = ci === 2;
+          c[1].forEach(function (m, i) {
+            const f = 440 * Math.pow(2, (m - 69) / 12);
+            [-6, 6].forEach(function (dt) { sv({ at: c[0], type: 'sawtooth', f0: f, f1: f, atk: 0.03, hold: last ? 0.5 : 0.12, dur: last ? 1.4 : 0.25, vol: 0.022 / (1 + i * 0.25), lp: 1400, lp1: last ? 700 : 1100, detune: dt, rev: 0.4 }); });
+          });
+          sv({ at: c[0], type: 'sine', f0: 440 * Math.pow(2, (c[1][0] - 12 - 69) / 12), f1: 440 * Math.pow(2, (c[1][0] - 12 - 69) / 12), atk: 0.02, hold: last ? 0.4 : 0.1, dur: last ? 1.2 : 0.2, vol: 0.18, heavy: true });
+        });
+        [2093, 2637, 3136].forEach(function (f, i) { sv({ at: 0.62 + i * 0.07, type: 'sine', f0: f, f1: f, dur: 1.6, vol: 0.035, rev: 0.5 }); });
+      },
+      // 次の面へ飛ぶ (暗転と同時): 上がっていく風の唸り + 遠ざかる低い唸り。暗くなりきる所で静かに消える
+      stageOut: function () {
+        sn({ atk: 0.8, dur: 0.6, vol: 0.2, type: 'bandpass', f0: 300, f1: 3200, glide: 1.0, q: 1.1, rev: 0.5 });
+        sv({ type: 'sawtooth', f0: 70, f1: 280, glide: 1.0, atk: 0.6, dur: 0.6, vol: 0.06, lp: 900, heavy: true });
+        sv({ at: 0.9, type: 'sine', f0: 120, f1: 40, dur: 0.9, vol: 0.25, heavy: true, rev: 0.4 });
+      },
       // 撃沈の演出中の連鎖爆発 (0.2 秒ごと): 重い「ドン」を入れない、ぱちぱち・ぼっという軽い火の爆ぜ (太鼓の連打に聞こえないように)
       chain: function (near) {
         near = near === undefined ? 1 : near;
@@ -2660,7 +2678,8 @@
       // 戦艦が出る知らせのあいだは、戦闘の曲を弱めて警報と帯を聞かせ、戦艦が現れた瞬間 (bossWarp) から戦艦戦の曲へ
       // 2 面はエース機がボス (知らせ 'aceIn' から、落とすまで)
       const bossTime = !!game.boss || game.stage === 'aceIn' || !!(game.ace && game.ace.alive);
-      if (bossTime && !bossMusic) audio.duck(0.12);
+      if (game.stage === 'aceDown') audio.stopMusic(1.2);    // エース機を落としたあとの余韻は、曲を止めて聞かせる
+      else if (bossTime && !bossMusic) audio.duck(0.12);
       else audio.music(bossTime ? 'boss' : 'combat');
     }
     else audio.stopMusic(1.2);
@@ -2681,6 +2700,7 @@
     bossMusic = false;
     audio.init();
     clearWorld();
+    resetTransitions();
     const seed = opts.seed !== undefined ? opts.seed : (Math.random() * 1e9) >>> 0;
     // 続きから: 負けた面の始まりから (成績はその面を始めたときに戻す)。面の札は stageStart の知らせが出す
     game = opts.continueFrom ? C.continueGame(opts.continueFrom, seed) : C.createGame({ seed: seed, start: opts.start, level: opts.level });
@@ -2717,6 +2737,7 @@
   function toTitle() {
     showMenu(null);
     clearWorld();
+    resetTransitions();
     game = null;
     setSkyDim(SKY_DIM.title);
     setSkyKind('space');
@@ -2827,22 +2848,64 @@
   };
   const STAGE_CARD_MS = 3000;
   let stageCardAnim = null;
-  function showStageCard(level) {
+  function showStageCard(level, center) {
     const el = $('stageCard'), d = STAGE_CARD[level] || STAGE_CARD[1];
     $('scNum').textContent = 'STAGE ' + level;
     $('scEn').textContent = d.en;
     $('scJa').textContent = d.ja;
     el.hidden = false;
+    // 暗転から来たときは、暗い画面の真ん中に大きく出す
+    el.classList.toggle('center', !!center);
     if (stageCardAnim) stageCardAnim.cancel();
     stageCardAnim = el.animate([
       { opacity: 0, transform: 'scale(.9)', offset: 0 },
       { opacity: 1, transform: 'scale(1)', offset: 0.1 },
       { opacity: 1, transform: 'scale(1.015)', offset: 0.85 },
       { opacity: 0, transform: 'scale(1.04)', offset: 1 }
-    ], { duration: STAGE_CARD_MS, easing: 'ease-out' });
+    ], { duration: center ? STAGE_CARD_MS + 400 : STAGE_CARD_MS, easing: 'ease-out' });
     stageCardAnim.onfinish = function () { el.hidden = true; stageCardAnim = null; };
     fx.cardT = STAGE_CARD_MS / 1000;
     audio.stageIn();
+  }
+
+  // ---- 面の終わりの余韻と、次の面への移り変わり ----
+  // ボスを倒す → 大爆発 → (0.8 秒後) STAGE CLEAR の札とファンファーレ → (stageOut) 1.1 秒かけて暗転 →
+  // 真っ暗な中で次の面の札が真ん中に大きく出る (stageStart。空と惑星はこの間に替わる) → 1.4 秒後から 1.6 秒かけて明け、新しい宇宙が現れる
+  let blackAnim = null, blackOn = false, clearAnim = null;
+  function blackoutTo(on, ms) {
+    const el = $('blackout');
+    const from = blackAnim ? Number(getComputedStyle(el).opacity) : (blackOn ? 1 : 0);
+    if (blackAnim) blackAnim.cancel();
+    el.hidden = false;
+    blackOn = on;
+    blackAnim = el.animate([{ opacity: from }, { opacity: on ? 1 : 0 }], { duration: ms, easing: on ? 'ease-in' : 'ease-out', fill: 'forwards' });
+    blackAnim.onfinish = function () { if (!on) { el.hidden = true; blackAnim.cancel(); blackAnim = null; } };
+  }
+  function resetTransitions() {
+    if (blackAnim) { blackAnim.cancel(); blackAnim = null; }
+    blackOn = false; $('blackout').hidden = true;
+    if (clearAnim) { clearAnim.cancel(); clearAnim = null; }
+    $('stageClear').hidden = true;
+    fx.clearAt = 0; fx.fadeInAt = 0;
+  }
+  function showStageClear(level) {
+    const el = $('stageClear');
+    $('clrJa').textContent = 'ステージ ' + level + ' クリア';
+    el.hidden = false;
+    if (clearAnim) clearAnim.cancel();
+    clearAnim = el.animate([
+      { opacity: 0, transform: 'scale(1.25)', letterSpacing: '0', offset: 0 },
+      { opacity: 1, transform: 'scale(1)', offset: 0.12 },
+      { opacity: 1, transform: 'scale(1.03)', offset: 0.8 },
+      { opacity: 0, transform: 'scale(1.06)', offset: 1 }
+    ], { duration: 3000, easing: 'ease-out' });
+    clearAnim.onfinish = function () { el.hidden = true; clearAnim = null; };
+    audio.clearSting();
+  }
+  function updateTransitions() {
+    if (!game) return;
+    if (fx.clearAt && game.t >= fx.clearAt) { fx.clearAt = 0; showStageClear(fx.clearLevel); }
+    if (fx.fadeInAt && game.t >= fx.fadeInAt) { fx.fadeInAt = 0; blackoutTo(false, 1600); }
   }
 
   function banner(text, dur, color, big) {
@@ -2922,7 +2985,13 @@
         }
         case 'scrape': sparks(e.pos, 16, [1, 0.8, 0.4]); break;
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
-        case 'stageStart': showStageCard(e.level); bossMusic = false; setTimeout(syncMusic, 0); break;
+        case 'stageStart':
+          // 暗転から来たら、暗い中で札を大きく見せてから明ける
+          if (blackOn) { showStageCard(e.level, true); fx.fadeInAt = game.t + 1.4; } else showStageCard(e.level);
+          bossMusic = false; setTimeout(syncMusic, 0);
+          break;
+        case 'stageOut': blackoutTo(true, 1100); audio.stageOut(); fx.fovKick = 1.4; break;
+        case 'bossDead': fx.clearAt = game.t + 0.8; fx.clearLevel = game.level; break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
           bossMusic = false;
@@ -2952,7 +3021,7 @@
           bossMusic = true;
           setTimeout(syncMusic, 0);
           break;
-        case 'aceDown': banner(e.text, 3, '#ffd27a', true); fx.slowT = 1.0; shake(1.5); audio.big(); bossMusic = false; setTimeout(syncMusic, 0); break;
+        case 'aceDown': banner(e.text, 3, '#ffd27a', true); fx.slowT = 1.0; shake(1.5); audio.big(); bossMusic = false; setTimeout(syncMusic, 0); fx.clearAt = game.t + 0.6; fx.clearLevel = game.level; break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
         case 'drones': banner('迎撃機 接近', 1.4, '#ff8a7a'); break;
         case 'bossWarp':
@@ -3835,6 +3904,7 @@
       const ts = performance.now();
       C.step(game, stepInput, dt);
       consumeEvents();
+      updateTransitions();
       prof.step += performance.now() - ts;
     }
 
@@ -3987,6 +4057,7 @@
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
+      transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center') }; },
       stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
       aceLook: function () { const f = game.ace, o = f && enemyObjs.get(f.id); return o ? { scale: o.scale.x, color: o.userData.mats[0].color.getHexString() } : null; },

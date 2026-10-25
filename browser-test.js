@@ -765,15 +765,23 @@ async function run() {
     await kill('engine');
     ok(await page.evaluate(() => window.__app.game().boss.phase === 'core'), 'エンジンをこわすと、装甲が外れる');
     await kill('core');
+    // 沈めたあとの余韻: 爆発のなかで STAGE CLEAR → 暗転 → 暗い中に次の面の札 → 明けて新しい宇宙
+    await page.waitForFunction(() => window.__app.transition().clear, null, { timeout: 60000 });
+    const clr = await page.evaluate(() => ({ level: window.__app.game().level, black: window.__app.transition().black, ja: document.getElementById('clrJa').textContent }));
+    ok(clr.level === 1 && !clr.black && clr.ja.indexOf('1') >= 0, `戦艦を沈めると、まだ 1 面のうちに STAGE CLEAR が出る (面 ${clr.level}・暗転 ${clr.black}・${clr.ja})`);
     // 1 面の戦艦を沈めると、結果ではなく 2 面へ進む
     await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const tr2 = await page.evaluate(() => window.__app.transition());
+    ok(tr2.black && tr2.blackOpacity > 0.95 && tr2.cardCenter, `2 面が始まる瞬間は真っ暗で、札が真ん中に出る (暗さ ${tr2.blackOpacity.toFixed(2)}・真ん中 ${tr2.cardCenter})`);
     const card = (n, en, ja) => page.evaluate(([n, en, ja]) => { const c = window.__app.stageCard(); return c.shown && c.num === 'STAGE ' + n && c.en === en && c.ja === ja; }, [n, en, ja]);
     const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), boss: window.__app.bossVisible() }));
     const kinds = await page.evaluate(() => window.__app.planetKind());
     const skyK = await page.evaluate(() => window.__app.skyKind());
     ok(kinds === 'mercury' && skyK === 'space2', `2 面では空の惑星が水星に、空の絵が灰色の星雲になる (${kinds} / ${skyK})`);
     ok(st2.screen === 'play' && await card(2, 'MERCURY ORBIT', '水星軌道') && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2 水星軌道」の札・前の戦艦は消える)`);
+    await page.waitForFunction(() => window.__app.transition().blackOpacity < 0.02, null, { timeout: 30000 });
+    ok(!(await page.evaluate(() => window.__app.transition().black)), '暗転は札のあとに明けて、新しい宇宙が見える');
     // 2 面のボスはエース機 (通常の敵を大きく赤くした機)。落とすと 3 面へ
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     // ボス戦として始まる: 知らせと同時に BOSS BATTLE の帯。エース機はワープの間のあとに現れ、そこからボス戦の曲

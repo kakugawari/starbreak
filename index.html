@@ -34,6 +34,10 @@
   <!-- ボス戦のカットイン。操作のボタンより上に出す (送ってもらった絵)。指の操作は下へ素通しする -->
   <div id="cutin" aria-hidden="true" hidden><img data-asset="cutin.png" alt="" width="1846" height="260"></div>
 
+  <!-- 面の終わり: ボスを倒したあとの「STAGE CLEAR」と、次の面へ移る暗転。指は素通し -->
+  <div id="stageClear" aria-hidden="true" hidden><div class="clr-en">STAGE CLEAR</div><div class="clr-ja" id="clrJa">ステージ 1 クリア</div></div>
+  <div id="blackout" aria-hidden="true" hidden></div>
+
   <!-- 面の始まりの札 (STAGE n)。数字と名前は app.js が入れる。枠の線・光は SVG、字は文字のまま (グラデーションの字) -->
   <div id="stageCard" aria-hidden="true" hidden>
     <div class="sc-frame"><div class="sc-in">
