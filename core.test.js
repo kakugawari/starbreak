@@ -401,15 +401,16 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   for (let i = 0; i < 90 && g.ace.alive; i++) { g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60)); C.step(g, { fire: true, throttle: 0 }, 1 / 30); }
   run(g, T.aceDownDelay + 1, (gg) => { gg.fighters = []; return {}; });
   assert.strictEqual(g.level, 3);
-  // 3 面の戦艦まで飛ばして、同じ順で沈めるとクリア
+  // 3 面の採掘母艦まで飛ばして、同じ順で沈めると 4 面へ
   g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
   run(g, 14, (gg) => { gg.fighters = []; return {}; });
   assert.strictEqual(g.boss.level, 3);
+  assert.strictEqual(g.boss.type, 'driller');
   assert.strictEqual(g.boss.phase, 'battle');
   for (const k of ['turret', 'engine', 'core']) { killParts(g, k); run(g, 0.1, {}); }
   assert.strictEqual(g.boss.phase, 'dying');
   run(g, 15, {});
-  assert.strictEqual(g.state, 'play', '3 面の戦艦でも終わらず、4 面へ進む');
+  assert.strictEqual(g.state, 'play', '3 面の採掘母艦でも終わらず、4 面へ進む');
   assert.strictEqual(g.level, 4);
   // 4 面の木星要塞も同じ順で沈めるとクリア
   g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
@@ -603,7 +604,7 @@ test('上手な自動操縦は、8通りの始め方のうち7つ以上で 4 面
   assert.ok(Math.max.apply(null, times) < 1500, 'どれも 4 面あわせて 25 分以内');
 });
 
-test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・蛍光緑の強い戦艦) → 4 面 (木星要塞) → クリア。面が変わるたびに機体が直る', () => {
+test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・採掘母艦) → 4 面 (木星要塞) → クリア。面が変わるたびに機体が直る', () => {
   const g = C.createGame({ seed: 4 });
   const seen = [], starts = {}, waves = { 2: [], 3: [], 4: [] };
   let boss3 = null, boss4 = null, aceWarn = 0, aceDown = 0, aceMax = 0, bossIn2 = false;
@@ -634,31 +635,39 @@ test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面
   assert.ok(!bossIn2, '2 面のボスは戦艦ではなくエース機');
   assert.strictEqual(aceWarn, 1); assert.strictEqual(aceDown, 1);
   assert.strictEqual(aceMax, T.aceHp);
-  assert.ok(boss3 && boss3.level === 3, '3 面の戦艦');
-  const turret = boss3.parts.find((p) => p.kind === 'turret'), core = boss3.parts.find((p) => p.kind === 'core');
-  assert.strictEqual(turret.maxHp, Math.round(T.turretHp * T.boss3Hp));
-  assert.strictEqual(core.maxHp, Math.round(T.coreHp * T.boss3Hp));
+  assert.ok(boss3 && boss3.level === 3 && boss3.type === 'driller', '3 面は火星の採掘母艦');
   assert.ok(boss4 && boss4.type === 'fortress' && boss4.level === 4, '4 面は木星要塞');
   assert.strictEqual(waves[4].length, 2, '4 面も第1波・第2波');
-  assert.deepStrictEqual(seen, ['clear@4'], '1 面の戦艦・エース機・3 面の戦艦ではクリアにならず、4 面の木星要塞を沈めてクリア');
+  assert.deepStrictEqual(seen, ['clear@4'], '1 面の戦艦・エース機・3 面の採掘母艦ではクリアにならず、4 面の木星要塞を沈めてクリア');
 });
 
-test('3 面の戦艦は 1.5 倍の大きさ: 部位の位置・当たりの大きさ・立体・主砲の位置がそろって大きくなる', () => {
+test('3 面の採掘母艦: 1 面の戦艦とは形が違う (前にドリル・縦に高い塔)。砲台 7・鉱石タンク 4・動力炉は装甲の輪の中', () => {
   const mk = (level) => { const g = C.createGame({ seed: 1 }); g.level = level; return C.makeBoss(g); };
-  const b1 = mk(1), b3 = mk(3), k = T.boss3Size;
-  assert.strictEqual(b1.size, 1); assert.strictEqual(b3.size, k);
-  assert.strictEqual(b3.parts.length, b1.parts.length, '砲台の数はそのまま');
-  b1.parts.forEach((p, i) => {
-    const q = b3.parts[i];
-    assert.ok(Math.abs(q.local.x - p.local.x * k) < 1e-9 && Math.abs(q.local.z - p.local.z * k) < 1e-9, '部位の位置が k 倍');
-    assert.ok(Math.abs(q.radius - p.radius * k) < 1e-9, '部位の大きさが k 倍');
-  });
-  // 立体: 艦首の先 (x = -360 k) の少し外は素通り、少し内は当たる
-  const solidAt = (b, x) => C.bossSolids(b).some((sd) => C.pointInSolid(C.add(b.pos, C.vec(x, 0, 0)), sd.planes));
-  assert.ok(solidAt(b3, -250 * k), '大きくした立体の中');
-  assert.ok(!solidAt(b3, -400 * k), '艦首の先は素通り');
-  assert.ok(solidAt(b3, 240 * k) && !solidAt(b1, 240 * k), '艦尾も k 倍 (1 面の艦尾 246 の先は 3 面では中)');
-  assert.ok(Math.abs(b3.cannon.from.x - C.BOSS_CANNON.x * k) < 1e-9, '主砲の位置も k 倍');
+  const b1 = mk(1), b3 = mk(3);
+  assert.strictEqual(b1.type, 'battleship'); assert.strictEqual(b3.type, 'driller');
+  const count = (b, k) => b.parts.filter((p) => p.kind === k).length;
+  assert.strictEqual(count(b3, 'turret'), 7); assert.strictEqual(count(b3, 'engine'), 4); assert.strictEqual(count(b3, 'core'), 1);
+  assert.strictEqual(b3.parts.find((p) => p.kind === 'engine').maxHp, Math.round(T.engineHp * T.drillTankHp));
+  // 外形: 大きさ (外接する箱) を比べる。採掘母艦は背が高く (塔)、前に長い (ドリル)
+  const box = (b) => {
+    let mn = C.vec(1e9, 1e9, 1e9), mx = C.vec(-1e9, -1e9, -1e9);
+    C.bossSolids(b).forEach((sd) => { mn = C.vec(Math.min(mn.x, sd.min.x), Math.min(mn.y, sd.min.y), Math.min(mn.z, sd.min.z)); mx = C.vec(Math.max(mx.x, sd.max.x), Math.max(mx.y, sd.max.y), Math.max(mx.z, sd.max.z)); });
+    return { h: mx.y - mn.y, l: mx.x - mn.x, w: mx.z - mn.z, top: mx.y - b.pos.y, bow: mn.x - b.pos.x };
+  };
+  const s1 = box(b1), s3 = box(b3);
+  assert.ok(s3.h > 2.5 * s1.h, `背の高さ 1 面 ${s1.h.toFixed(0)}m / 3 面 ${s3.h.toFixed(0)}m`);
+  assert.ok(s3.h / s3.l > 0.4 && s1.h / s1.l < 0.25, '横から見た縦横の比がはっきり違う');
+  // ドリルの先 (艦首の少し内側) は当たり、その先は素通り
+  const inside = (b, p) => C.bossSolids(b).some((sd) => C.pointInSolid(p, sd.planes));
+  assert.ok(inside(b3, C.add(b3.pos, C.vec(C.DRILLER.bow + 60, 0, 0))), 'ドリルの先の近くは当たる');
+  assert.ok(!inside(b3, C.add(b3.pos, C.vec(C.DRILLER.bow - 20, 0, 0))), 'ドリルの先より前は素通り');
+  assert.ok(Math.abs(b3.cannon.from.x - C.DRILLER.cannon.x) < 1e-9 && C.DRILLER.cannon.x < C.DRILLER.bow, '主砲はドリルの先から撃つ');
+  // 動力炉 (コア) は装甲の輪にすっぽり包まれ、装甲が外れると、どの立体の中にもない (撃てる)
+  const core = b3.parts.find((p) => p.kind === 'core');
+  const sides = [C.vec(0, 1, 0), C.vec(0, 0, 1), C.vec(0, 0, -1), C.vec(-1, 0, 0)];
+  assert.ok(sides.every((d) => inside(b3, C.add(core.pos, C.scale(d, core.radius)))), '装甲があるうちは、コアのまわりはどこも装甲の中');
+  b3.armor = false;
+  assert.ok(!inside(b3, C.add(core.pos, C.vec(0, core.radius, 0))) && !inside(b3, core.pos), '装甲が外れるとコアの上は空く');
 });
 
 test('エース機の強さ: 通常の敵より大きく、体力が 10 倍以上', () => {

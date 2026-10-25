@@ -724,7 +724,7 @@ async function run() {
     await page.waitForFunction(() => window.__app.game().level === 3, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     ok(await card(3, 'MARS ORBIT', '火星軌道') && await page.evaluate(() => window.__app.planetKind() === 'mars' && window.__app.skyKind() === 'space3'), 'エース機を落とすと 3 面 (火星・琥珀色の星雲・「STAGE 3」の札) へ進む');
-    // 3 面の戦艦まで飛ばす: 蛍光緑に塗った艦が来る
+    // 3 面のボスまで飛ばす: 火星の採掘母艦 (錆びた赤茶) が来る
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     // 知らせのあいだは、戦闘の曲を弱めて残す (戦艦戦の曲は、戦艦が現れた瞬間から)
     await page.waitForFunction(() => window.__app.game().boss, null, { timeout: 30000 });
@@ -732,14 +732,15 @@ async function run() {
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const look = await page.evaluate(() => window.__app.bossLook());
-    ok(look && look.level === 3 && look.color === '9dff7a' && look.emissive === '39ff14', `3 面の戦艦は蛍光緑 (面 ${look && look.level}・色 #${look && look.color}・光 #${look && look.emissive})`);
+    const rusty = look && look.hull[0] > 1.5 * look.hull[1] && look.hull[1] > look.hull[2];
+    ok(look && look.level === 3 && look.type === 'driller' && rusty, `3 面のボスは火星の採掘母艦で、船体は赤茶 (面 ${look && look.level}・${look && look.type}・色 ${look && look.hull.map((v) => v.toFixed(2)).join('/')})`);
     await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
     await kill('turret'); await kill('engine'); await kill('core');
-    // 3 面の戦艦を沈めると 4 面 (木星) へ。ボスは球と輪の木星要塞
+    // 3 面の採掘母艦を沈めると 4 面 (木星) へ。ボスは球と輪の木星要塞
     await page.waitForFunction(() => window.__app.game().level === 4, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.skyKind() === 'space4' && window.__app.screen() === 'play'), '3 面の戦艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
+    ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.skyKind() === 'space4' && window.__app.screen() === 'play'), '3 面の採掘母艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
     await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });

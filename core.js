@@ -224,11 +224,12 @@
     // 巨大戦艦
     turretHp: 14, engineHp: 30, coreHp: 50,
     // 3 面 (最後): 戦艦は 1 面と同じ形で強くする (部位の耐久・砲台の撃つ間隔・主砲の間隔・護衛機の数)。面が変わるとき機体を直す
-    boss3Hp: 1.3, boss3Fire: 0.8, boss3Cannon: 0.8, boss3Escorts: 4, stageIntro: 3.5,
+    boss3Fire: 0.8, boss3Cannon: 0.8, boss3Escorts: 4, stageIntro: 3.5,
     // 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。体力が多く、何発も当てないと落ちない。撃つ間隔が短く、5 連射
     // 4 面 (木星): 木星要塞 (球・輪・多数の砲塔。ゆっくり回って主砲の面を自機へ向ける)。砲塔が多いので 1 つの耐久は低め
     fortTurretHp: 12, fortEngineHp: 26, fortCoreHp: 55, fortFire: 1.1, fortCannon: 0.8, fortEscorts: 3, fortFaceCos: 0.6,
-    boss3Size: 1.5, aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
+    drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
+    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
     // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
@@ -587,20 +588,93 @@
   }
   const FORTRESS = buildFortress();
 
+  // ------------------------------------------------------------ 火星の採掘母艦 (3 面のボス)
+  //
+  // 1 面の戦艦 (横に長く平たい) とも、4 面の木星要塞 (球と輪) とも違う外形にした:
+  //  - 艦首 (-x) に巨大な円すいのドリル。ゆっくり回り、主砲はドリルの先から撃つ
+  //  - 船体の真ん中より後ろに、縦に高い艦橋の塔 (横から見ると「三角の先端 + 縦の塔」)
+  //  - 船体の下に、左右 2 本の無限軌道 (採掘の重機らしい下ぶくれの形)
+  //  - 背中に並んだ 4 本の鉱石タンク (弱点 = 'engine')、ドリルの付け根の動力炉 (コア) は分厚い輪の装甲に包まれる
+  // 円すいのドリルは凸の立体の段々 (4 段の円柱) で当たりを取り、見た目は滑らかな円すい (当たりとの差は最大 9m 程度)。
+  // 色は火星の錆びた赤茶・黒鉄 (app.js)。寸法は下の数を DS 倍 (全長 約 960m・塔の上まで 約 320m)。
+
+  function buildDriller() {
+    const DS = 1.4;
+    const solids = [], parts = [];
+    const circle = function (r, n) { const p = []; for (let i = 0; i < n; i++) p.push([r * Math.cos((i + 0.5) * 2 * Math.PI / n), r * Math.sin((i + 0.5) * 2 * Math.PI / n)]); return p; };
+    const S = function (a) { return a.map(function (q) { return [q[0] * DS, q[1] * DS]; }); };
+    const alongX = mRotZ(Math.PI / 2);                // 局所の y (押し出す向き) → 艦の -x
+    // ドリル: 付け根 x=-170 (半径 70) から先 x=-400 (尖り) までの円すいを、4 段の円柱で当たりを取る
+    const DRILL = { x0: 170 * DS, x1: 400 * DS, r: 70 * DS };
+    [[170, 230], [230, 290], [290, 345], [345, 395]].forEach(function (st, i) {
+      const mid = (st[0] + st[1]) / 2, r = 70 * (400 - mid) / 230;
+      solids.push({ name: 'drill' + i, tint: 'drill', drill: true, m: alongX, at: [0, 0, 0], poly: circle(r * DS, 12), y0: st[0] * DS, y1: st[1] * DS });
+    });
+    // ドリルの軸と、付け根を包む分厚い輪の装甲 (外れると中の動力炉 = コアが見える)
+    solids.push({ name: 'axle', tint: 'iron', m: alongX, at: [0, 0, 0], poly: circle(30 * DS, 10), y0: 116 * DS, y1: 172 * DS });
+    // 船体 (横から見た形を左右に押し出す): 前と後ろのはしを斜めに落とす
+    solids.push({ name: 'hull', tint: 'rust', axis: 'z', poly: S([[-120, -45], [255, -45], [285, -5], [255, 32], [-120, 32], [-136, -8]]), z0: -72 * DS, z1: 72 * DS });
+    // 無限軌道 (左右・船体の下)
+    [-1, 1].forEach(function (sz) {
+      solids.push({ name: sz < 0 ? 'trackL' : 'trackR', tint: 'iron', axis: 'z', poly: S([[-104, -60], [-88, -80], [228, -80], [244, -60], [228, -38], [-88, -38]]), z0: (sz < 0 ? -98 : 50) * DS, z1: (sz < 0 ? -50 : 98) * DS });
+    });
+    // 鉱石タンク (背中に 2 列 x 2)。上のふたが弱点
+    [-80, -25].forEach(function (x, i) {
+      [-1, 1].forEach(function (sz, j) {
+        solids.push({ name: 'tank' + i + j, tint: 'tank', poly: S(circle(20, 10).map(function (q) { return [q[0] + x, q[1] + sz * 40]; })), y0: 32 * DS, y1: 78 * DS });
+        parts.push({ kind: 'engine', at: vec(x * DS, 84 * DS, sz * 40 * DS), face: vec(0, 1, 0), radius: 17 * DS });
+      });
+    });
+    // 縦に高い艦橋の塔 (3 段。いちばん上は横に広い艦橋)
+    solids.push({ name: 'tower1', tint: 'tower', poly: S([[50, -42], [160, -42], [160, 42], [50, 42]]), y0: 32 * DS, y1: 120 * DS });
+    solids.push({ name: 'tower2', tint: 'tower', poly: S([[62, -32], [148, -32], [148, 32], [62, 32]]), y0: 120 * DS, y1: 200 * DS });
+    solids.push({ name: 'bridge', tint: 'bridge', poly: S([[56, -52], [154, -52], [154, 52], [56, 52]]), y0: 200 * DS, y1: 226 * DS });
+    // 装甲 (最後に置く: 撃沈の段の装甲の爆発は、部位の最後 = コアの位置で起こす)
+    solids.push({ name: 'collar', tint: 'collar', armor: true, m: alongX, at: [0, 0, 0], poly: circle(84 * DS, 14), y0: 118 * DS, y1: 172 * DS });
+
+    // 砲台 7 つ: 甲板の後ろ・横腹・軌道の下・艦橋の上 (甲板の真ん中にも 2 つ置くと、1 面の戦艦より 4 割長い戦いになった)
+    const T6 = function (x, y, z, f) { parts.unshift({ kind: 'turret', at: vec(x * DS, y * DS, z * DS), face: f, radius: 12 * DS }); };
+    T6(105, 226, 0, vec(0, 1, 0));
+    T6(80, -80, -74, vec(0, -1, 0)); T6(80, -80, 74, vec(0, -1, 0));
+    T6(-70, -5, -72, vec(0, 0, -1)); T6(-70, -5, 72, vec(0, 0, 1));
+    T6(215, 32, -45, vec(0, 1, 0)); T6(215, 32, 45, vec(0, 1, 0));
+    // 動力炉 (コア): ドリルの付け根、軸の上。装甲の輪がすっぽり包む (輪の半径 84 > 50 + 16)
+    parts.push({ kind: 'core', at: vec(-145 * DS, 50 * DS, 0), face: vec(0, 1, 0), radius: 16 * DS });
+
+    return {
+      solids: solids, parts: parts, DS: DS, drill: DRILL,
+      cannon: vec(-402 * DS, 0, 0), bow: -400 * DS, stern: 285 * DS, ahead: 820, drop: 170,
+      escorts: function (i) {                     // 護衛機の出る所: 船体の下の左右 (軌道の外) から横へ
+        const sz = i % 2 === 0 ? -1 : 1;
+        return { pos: vec((200 - i * 50) * DS, -110 * DS, sz * 125 * DS), dir: vec(-0.4, 0.2, sz) };
+      }
+    };
+  }
+  const DRILLER = buildDriller();
+
   /**
    * ボスの種類。形 (立体の表)・部位・主砲の位置・出てくる所の大きさ・知らせの文をまとめる。
-   * 戦艦は 1 面と 3 面 (形は同じ)、木星要塞は 4 面。
+   * 戦艦は 1 面、火星の採掘母艦は 3 面、木星要塞は 4 面。
    */
   const BOSS_TYPES = {
     battleship: {
       solids: BOSS_SOLIDS, parts: BOSS_PARTS, cannon: BOSS_CANNON, bow: BOSS_BOW, stern: BOSS_STERN, ahead: BOSS_AHEAD, drop: BOSS_DROP,
       cannonAt: 3, name: '巨大戦艦',
+      phaseNames: { arrive: '接近中', battle: '砲台', cannon: '砲台 / 主砲', weak: 'エンジン', core: 'コア', dying: '撃沈' },
       text: { warning: '警告  巨大戦艦 接近', battle: '砲台を破壊せよ', cannon: '主砲チャージ  射線から外れろ', weak: '艦尾のエンジンが露出  弱点を撃て', core: '装甲が吹き飛んだ  コアを撃ち抜け', dying: '撃沈' }
+    },
+    driller: {
+      solids: DRILLER.solids, parts: DRILLER.parts, cannon: DRILLER.cannon, bow: DRILLER.bow, stern: DRILLER.stern,
+      ahead: DRILLER.ahead, drop: DRILLER.drop, escorts: DRILLER.escorts,
+      cannonAt: 3, name: '採掘母艦',
+      phaseNames: { arrive: '接近中', battle: '砲台', cannon: '砲台 / ドリル砲', weak: '鉱石タンク', core: '動力炉', dying: '撃沈' },
+      text: { warning: '警告  火星採掘母艦 接近', battle: '砲台を破壊せよ', cannon: 'ドリル砲チャージ  射線から外れろ', weak: '背中の鉱石タンクが露出  弱点を撃て', core: '装甲の輪が外れた  ドリルの付け根の動力炉を撃て', dying: '撃沈' }
     },
     fortress: {
       solids: FORTRESS.solids, parts: FORTRESS.parts, cannon: FORTRESS.cannon, cannonFace: FORTRESS.cannonFace, bow: FORTRESS.bow, stern: FORTRESS.stern,
       ahead: FORTRESS.ahead, drop: FORTRESS.drop, turn: FORTRESS.turn, turnCore: FORTRESS.turnCore, escorts: FORTRESS.escorts, track: true,
       cannonAt: 4, name: '木星要塞',
+      phaseNames: { arrive: '接近中', battle: '砲塔', cannon: '砲塔 / 主砲', weak: '動力節', core: 'コア', dying: '撃沈' },
       text: { warning: '警告  木星要塞 接近', battle: '砲塔を破壊せよ', cannon: '赤い嵐の主砲チャージ  射線から外れろ', weak: '輪の動力節が露出  弱点を撃て', core: '光の盾が砕けた  中央コアを撃ち抜け', dying: '撃沈' }
     }
   };
@@ -617,7 +691,7 @@
       state: 'play',          // play / ending / clear / over
       stage: opts.start === 'boss' ? 'bossIn' : 'wave1',
       stageTimer: 0,
-      level: opts.level || 1, // 面 (1〜4)。1 面の戦艦 → 2 面 (小ボス) → 3 面 (蛍光緑の戦艦) → 4 面 (木星要塞)。opts.level は試験・写真用
+      level: opts.level || 1, // 面 (1〜4)。1 面の戦艦 → 2 面 (小ボス) → 3 面 (火星の採掘母艦) → 4 面 (木星要塞)。opts.level は試験・写真用
       nextId: 1,
       player: {
         pos: vec(0, 0, 0), yaw: 0, pitch: 0, roll: 0,
@@ -729,9 +803,9 @@
   }
 
   function makeBoss(g) {
-    const type = g.level === 4 ? 'fortress' : 'battleship';
+    const type = g.level === 4 ? 'fortress' : g.level === 3 ? 'driller' : 'battleship';
     const def = BOSS_TYPES[type];
-    const k = type === 'battleship' && g.level === 3 ? T.boss3Size : 1;   // 3 面の戦艦は大きい (形・部位の位置・当たり判定をすべて k 倍)
+    const k = 1;
     const at = bossSpot(g, k, def);
     const portal = add(at, vec((def.stern + 40) * k, 0, 0));
     const from = add(portal, vec(-def.bow * k, 0, 0)); // 艦首 (いちばん -x の端) がちょうど光の面にある所
@@ -739,12 +813,11 @@
     let rot = 0;
     if (def.track) { const d = sub(g.player.pos, at); rot = Math.atan2(d.z, -d.x); }
     const yawM = rot ? mRotY(rot) : null;
-    const hpMul = type === 'fortress' ? 1 : (g.level === 3 ? T.boss3Hp : 1);
     const parts = def.parts.map(function (d) {
       const base = type === 'fortress'
         ? (d.kind === 'turret' ? T.fortTurretHp : d.kind === 'engine' ? T.fortEngineHp : T.fortCoreHp)
         : (d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp);
-      const hp = Math.round(base * hpMul);
+      const hp = Math.round(base * (type === 'driller' && d.kind === 'engine' ? T.drillTankHp : 1));
       const local = scale(d.at, k), face = copy(d.face);
       return {
         id: g.nextId++, kind: d.kind, local: local, faceLocal: face, face: yawM ? mvec(yawM, face) : face,
@@ -770,26 +843,12 @@
    * いま当たり判定に使う戦艦の立体 (世界座標の面の並び)。装甲は外れたら消える。
    * 弾ごと・コマごとに何度も呼ぶので、位置と装甲が変わらない間は作り直さない。
    */
-  const _scaledSolids = {};
-  /** 立体の表を k 倍にしたもの (大きい戦艦用)。 */
-  function scaledSolids(k) {
-    if (k === 1) return BOSS_SOLIDS;
-    if (_scaledSolids[k]) return _scaledSolids[k];
-    return (_scaledSolids[k] = BOSS_SOLIDS.map(function (sd) {
-      const o = {};
-      for (const key in sd) o[key] = sd[key];
-      o.poly = sd.poly.map(function (p) { return [p[0] * k, p[1] * k]; });
-      ['y0', 'y1', 'z0', 'z1'].forEach(function (key) { if (sd[key] !== undefined) o[key] = sd[key] * k; });
-      return o;
-    }));
-  }
-
   function bossSolids(boss) {
     const key = boss.pos.x + ',' + boss.pos.y + ',' + boss.pos.z + ',' + boss.armor + ',' + (boss.rot || 0);
     if (boss._solidsKey === key) return boss._solids;
     const out = [];
     const def = BOSS_TYPES[boss.type || 'battleship'];
-    const defs = def.solids === BOSS_SOLIDS ? scaledSolids(boss.size || 1) : def.solids;
+    const defs = def.solids;
     const yawM = boss.rot ? mRotY(boss.rot) : null;
     for (let i = 0; i < defs.length; i++) {
       const sd = defs[i];
@@ -1431,7 +1490,7 @@
     if (b.phase === 'dying') {
       b.dyingT += dt;
       if (Math.floor((b.dyingT - dt) * 5) !== Math.floor(b.dyingT * 5)) {
-        const sl = bossSolids(b), sd = sl[Math.floor(g.rng() * (b.type === 'fortress' ? sl.length : 6))];
+        const sl = bossSolids(b), sd = sl[Math.floor(g.rng() * (b.type === 'battleship' ? 6 : sl.length))];
         const p = vec(rand(g, sd.min.x, sd.max.x), rand(g, sd.min.y, sd.max.y), rand(g, sd.min.z, sd.max.z) * 0.5 + (sd.min.z + sd.max.z) * 0.25);
         emit(g, 'explode', { pos: p, size: rand(g, 2, 4), kind: 'chain' });
       }
@@ -1471,7 +1530,7 @@
       for (let i = 0; i < b.parts.length; i++) if (b.parts[i].kind === 'core') b.parts[i].active = true;
       const armorAt = def.parts[def.parts.length - 1].at;
       const armorW = scale(vec(armorAt.x, armorAt.y + 6, armorAt.z), b.size || 1);
-      emit(g, 'explode', { pos: add(b.pos, yawM ? mvec(yawM, armorW) : armorW), size: (b.type === 'fortress' ? 5 : 3) * (b.size || 1), kind: 'armor' });
+      emit(g, 'explode', { pos: add(b.pos, yawM ? mvec(yawM, armorW) : armorW), size: (b.type === 'battleship' ? 3 : 5) * (b.size || 1), kind: 'armor' });
       emit(g, 'bossPhase', { phase: 'core', text: def.text.core });
       launchEscorts(g, b.type === 'fortress' ? T.fortEscorts : b.level === 3 ? T.boss3Escorts : 3);
     }
@@ -1706,7 +1765,7 @@
     if (g.state === 'ending') {
       g.endT += dt;
       if (g.boss && g.boss.phase === 'dead' && g.endT > 7) {
-        if (g.level === 1 || g.level === 3) startStage(g, g.level + 1);   // 1 面の戦艦 → 2 面、3 面の戦艦 → 4 面。2 面は小ボス (エース機)
+        if (g.level === 1 || g.level === 3) startStage(g, g.level + 1);   // 1 面の戦艦 → 2 面、3 面の採掘母艦 → 4 面。2 面は小ボス (エース機)
         else { g.state = 'clear'; emit(g, 'clear'); }
       }
     } else if (g.state === 'over') {
@@ -1808,7 +1867,7 @@
     if (tgt && tgt.kind === 'fighter') {
       if (bot.chaseId !== tgt.id) { bot.chaseId = tgt.id; bot.chaseT = g.t; }
       else if (g.t - bot.chaseT > 25) { bot.skipId = tgt.id; bot.skipUntil = g.t + 20; bot.chaseId = 0; }
-    } else if (tgt && g.boss && g.boss.type === 'fortress') {
+    } else if (tgt && g.boss && g.boss.type !== 'battleship') {
       // 要塞の部位を 60 秒落とせないままなら、いま狙っている部位を 40 秒後回しにする (輪の裏で回り込み続けるのを避ける)
       const alive = g.boss.parts.filter(function (p) { return p.alive; }).length;
       if (bot.aliveN !== alive) { bot.aliveN = alive; bot.progressT = g.t; }
@@ -1820,7 +1879,7 @@
     if (tgt && tgt.face) {
       if (bot.id !== tgt.id) { bot.id = tgt.id; bot.mode = 'setup'; }
       let setup = add(addScaled(tgt.pos, tgt.face, 380), vec(0, 60, 0));
-      if (g.boss && g.boss.type === 'fortress' && tgt.kind !== 'fighter') setup = fortressSetup(g, tgt, setup);
+      if (g.boss && g.boss.type !== 'battleship' && tgt.kind !== 'fighter') setup = fortressSetup(g, tgt, setup);
       const d = dist(tgt.pos, pl.pos);
       if (bot.mode === 'setup') {
         aim = setup;
@@ -1889,7 +1948,7 @@
     BOSS_SOLIDS: BOSS_SOLIDS,
     BOSS_PARTS: BOSS_PARTS,
     BOSS_CANNON: BOSS_CANNON,
-    BOSS_TYPES: BOSS_TYPES, FORTRESS: FORTRESS, icosphere: icosphere,
+    BOSS_TYPES: BOSS_TYPES, FORTRESS: FORTRESS, DRILLER: DRILLER, icosphere: icosphere,
     mulberry32: mulberry32,
     vec: vec, add: add, sub: sub, scale: scale, dot: dot, cross: cross, len: len, dist: dist, norm: norm,
     clamp: clamp, lerp: lerp, approach: approach, angleBetween: angleBetween, rotateToward: rotateToward,

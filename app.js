@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.10.0';
+  const VERSION = 'v0.11.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -820,24 +820,10 @@
     return true;
   }
 
-  // 2 面の戦艦: 同じ形を蛍光緑に塗る (装甲の絵に緑を掛け、少し自ら光らせて蛍光に見せる)
-  let hullMatGreen = null;
-  function bossHullMat(level) {
-    if (level !== 3) return hullMat;
-    if (!hullMatGreen) {
-      hullMatGreen = hullMat.clone();
-      hullMatGreen.color.set(0x9dff7a);
-      hullMatGreen.emissive = new THREE.Color(0x39ff14);
-      hullMatGreen.emissiveIntensity = 0.5;
-    }
-    hullMatGreen.map = hullMat.map;       // 装甲の絵は読み込みが遅れることがあるので、使うたびに合わせる
-    hullMatGreen.emissiveMap = hullMat.map;
-    return hullMatGreen;
-  }
-
   function makeBossModel(level, type) {
     if (type === 'fortress') return makeFortressModel();
-    const mat = bossHullMat(level || 1);
+    if (type === 'driller') return makeDrillerModel();
+    const mat = hullMat;
     const group = new THREE.Group();
     const rng = C.mulberry32(1234);
     const hull = { pos: [], nor: [], col: [], uv: [] };
@@ -1239,6 +1225,189 @@
     [beamOuter, beamCore, guide].forEach(function (m) { m.frustumCulled = false; scene.add(m); m.visible = false; });
 
     group.userData = { type: 'fortress', topRing: null, topGlow: stormGlow, sideRings: [], parts: parts, armor: shieldGroup, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: [], hull: hullMesh, storm: storm, stormDisc: stormDisc, dome: dome };
+    return group;
+  }
+
+  // ------------------------------------------------------------ 火星の採掘母艦 (3 面のボス)
+  //
+  // core.js の C.DRILLER (立体の表) から作る。船体・軌道・タンク・塔は当たり判定と同じ立体 (prismGeo)。
+  // ドリルだけは、段々の当たりの代わりに滑らかな円すい + らせんの刃で見せ、ゆっくり回す。
+  // 色は火星: 錆びた赤茶・黒鉄・酸化した橙。光は白熱の橙。
+
+  const DRILL_TINT = {
+    rust: [0.98, 0.42, 0.22], iron: [0.42, 0.38, 0.37], tank: [1.0, 0.62, 0.30], tower: [0.88, 0.36, 0.19],
+    bridge: [0.52, 0.45, 0.42], collar: [1.0, 0.66, 0.32], drill: [0.7, 0.66, 0.62]
+  };
+  let drillMat = null;
+
+  function makeDrillerModel() {
+    const D = C.DRILLER, DS = D.DS;
+    if (!drillMat) {
+      // 日の当たらない側も錆びた赤茶が見えるよう、装甲の絵を少しだけ自ら光らせる (ゲームの中では横腹が影になりやすい)
+      drillMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 28, specular: 0x3a2a20, flatShading: true, emissive: 0xc0502a });
+    }
+    drillMat.map = hullMat.map;               // 装甲の絵は読み込みが遅れることがあるので、使うたびに合わせる
+    drillMat.emissiveMap = hullMat.map;
+    const group = new THREE.Group();
+    const rng = C.mulberry32(3030);
+    const hull = { pos: [], nor: [], col: [], uv: [] };
+    const lights = { pos: [], nor: [], col: [] };
+    const tint = function (name, k) { const t = DRILL_TINT[name] || DRILL_TINT.iron; return [t[0] * k, t[1] * k, t[2] * k]; };
+    const light = function (x, y, z, size, c) {
+      const g = new THREE.BoxGeometry(size, size * 0.6, size).toNonIndexed();
+      g.translate(x, y, z);
+      const P = g.attributes.position.array, N = g.attributes.normal.array;
+      for (let i = 0; i < P.length; i += 3) { lights.pos.push(P[i], P[i + 1], P[i + 2]); lights.nor.push(N[i], N[i + 1], N[i + 2]); lights.col.push(c[0], c[1], c[2]); }
+      g.dispose();
+    };
+    const HOT = [1, 0.55, 0.22], WHITE = [1, 0.85, 0.6];
+
+    // ① 当たり判定と同じ立体 (ドリルの段々と装甲は別に作る)
+    D.solids.forEach(function (sd) {
+      if (sd.drill || sd.armor) return;
+      prismGeo(sd, tint(sd.tint, 0.88 + rng() * 0.24), hull);
+    });
+    // 船体の上に細かい凸凹 (判定には入れない)。甲板の y・前後の範囲は船体の形から
+    const deckY = 32 * DS;
+    for (let i = 0; i < 90; i++) {
+      const x = (-110 + rng() * 360) * DS, z = (rng() * 2 - 1) * 64 * DS;
+      if (x > 45 * DS && x < 165 * DS && Math.abs(z) < 47 * DS) continue;          // 塔の足もと
+      if (x < 0 && x > -105 * DS && Math.abs(z) > 14 * DS && Math.abs(z) < 66 * DS) continue;   // タンクの足もと
+      const sx = (4 + rng() * 16) * DS, sz = (3 + rng() * 12) * DS, h = (1 + rng() * 4) * DS;
+      prismGeo({ poly: [[x - sx / 2, z - sz / 2], [x + sx / 2, z - sz / 2], [x + sx / 2, z + sz / 2], [x - sx / 2, z + sz / 2]], y0: deckY, y1: deckY + h }, tint(rng() < 0.5 ? 'rust' : 'iron', 0.8 + rng() * 0.3), hull);
+      if (rng() < 0.25) light(x, deckY + h + 0.4, z, 1.6, HOT);
+    }
+    // 横腹の明かりの列・軌道の車輪の並び
+    [-1, 1].forEach(function (sz) {
+      for (let i = 0; i < 46; i++) {
+        if (rng() < 0.45) continue;
+        const x = (-110 + i * 8) * DS, y = (-30 + rng() * 50) * DS;
+        light(x, y, sz * (72 * DS + 0.6), 1.6, rng() < 0.3 ? WHITE : HOT);
+      }
+      for (let i = 0; i < 9; i++) {
+        const w = new THREE.CylinderGeometry(15 * DS, 15 * DS, 6, 14); w.rotateX(Math.PI / 2);
+        group.add(mesh(w, new THREE.MeshPhongMaterial({ color: 0x2a2624, shininess: 30, flatShading: true }), (-70 + i * 36) * DS, -59 * DS, sz * 99 * DS));
+      }
+    });
+    // 塔の窓 (橙の帯) と、艦橋のまわりの白い明かり
+    [-1, 1].forEach(function (sz) {
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 9; c++) {
+        if (rng() < 0.3) continue;
+        light((66 + c * 10) * DS, (130 + r * 18) * DS, sz * (32 * DS + 0.6), 2, rng() < 0.2 ? WHITE : HOT);
+      }
+      for (let c = 0; c < 12; c++) light((60 + c * 8) * DS, 213 * DS, sz * (52 * DS + 0.6), 1.8, WHITE);
+    });
+    const hullMesh = new THREE.Mesh(geoFrom(hull), drillMat);
+    const lightMesh = new THREE.Mesh(geoFrom(lights), new THREE.MeshBasicMaterial({ vertexColors: true }));
+    group.add(hullMesh, lightMesh);
+
+    // ② ドリル: 円すい + らせんの刃 + 白熱の先端。軸のまわりにゆっくり回す
+    const dr = D.drill, dLen = dr.x1 - dr.x0;
+    const drill = new THREE.Group();
+    drill.position.set(-dr.x0, 0, 0);
+    const steel = new THREE.MeshPhongMaterial({ color: 0xa08c80, shininess: 70, specular: 0x6a5040, flatShading: true, emissive: 0x2a1c16 });
+    const dark = new THREE.MeshPhongMaterial({ color: 0x5a4a44, shininess: 40, flatShading: true });
+    const cone = new THREE.ConeGeometry(dr.r, dLen, 24, 1); cone.rotateZ(Math.PI / 2); cone.translate(-dLen / 2, 0, 0);
+    drill.add(new THREE.Mesh(cone, steel));
+    // らせんの刃: 円すいの表面をなぞる帯 (3 本)
+    for (let k = 0; k < 3; k++) {
+      const pts = [];
+      for (let i = 0; i <= 60; i++) {
+        const t = i / 60, r = dr.r * (1 - t) + 2, a = k * 2.094 + t * 11;
+        pts.push(new THREE.Vector3(-t * dLen, Math.cos(a) * r, Math.sin(a) * r));
+      }
+      drill.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 120, 5.5 * DS, 5, false), dark));
+    }
+    const tip = mesh(new THREE.SphereGeometry(6 * DS, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffb060 }), -dLen + 4, 0, 0);
+    drill.add(tip);
+    // 付け根の太い輪 (回る)
+    const base = new THREE.TorusGeometry(dr.r - 2, 7 * DS, 8, 28); base.rotateY(Math.PI / 2);
+    drill.add(mesh(base, dark, -2, 0, 0));
+    group.add(drill);
+    // 軸のまわりの白熱した継ぎ目
+    const seam = new THREE.TorusGeometry(31 * DS, 2.4 * DS, 6, 24); seam.rotateY(Math.PI / 2);
+    group.add(mesh(seam, new THREE.MeshBasicMaterial({ color: 0xff8a30 }), -116 * DS, 0, 0));
+
+    // ③ 装甲の輪 (動力炉を包む)。外れたら消す
+    const collarSd = D.solids.filter(function (sd) { return sd.armor; })[0];
+    const collarGeo = { pos: [], nor: [], col: [], uv: [] };
+    prismGeo(collarSd, tint('collar', 1), collarGeo);
+    // 輪の表に、白熱の溝を 3 本
+    const armor = new THREE.Group();
+    armor.add(new THREE.Mesh(geoFrom(collarGeo), drillMat));
+    [0.25, 0.5, 0.75].forEach(function (f) {
+      const g = new THREE.TorusGeometry(84 * DS + 1, 1.6 * DS, 6, 32); g.rotateY(Math.PI / 2);
+      armor.add(mesh(g, new THREE.MeshBasicMaterial({ color: 0xff7a2a }), -(118 + 54 * f) * DS, 0, 0));
+    });
+    group.add(armor);
+    const coreGlow = glowSprite(0xff7a2a, 170 * DS, 0.5);
+    coreGlow.position.set(-145 * DS, 50 * DS, 0);
+    group.add(coreGlow);
+
+    // ④ 艦橋の上のアンテナと、艦尾の排気 (橙)
+    const mast = new THREE.CylinderGeometry(0.8, 1.2, 40 * DS, 5);
+    group.add(mesh(mast, dark, 80 * DS, 246 * DS, -30 * DS), mesh(mast, dark, 130 * DS, 240 * DS, 30 * DS));
+    const thrusters = [];
+    [-40, 40].forEach(function (z) {
+      [-30, 5].forEach(function (y) {
+        const t = glowSprite(0xff7a30, 60 * DS, 0.6);
+        t.position.set(287 * DS, y * DS, z * DS);
+        group.add(t); thrusters.push(t);
+      });
+    });
+
+    // ⑤ 部位: 砲台 (戦艦と同じ作りを大きく)・鉱石タンクのふた (弱点)・動力炉 (コア)
+    const parts = [];
+    const Y = new THREE.Vector3(0, 1, 0);
+    D.parts.forEach(function (p) {
+      const pg = new THREE.Group();
+      pg.position.set(p.at.x, p.at.y, p.at.z);
+      const mat = new THREE.MeshPhongMaterial({ color: 0x6a5a52, shininess: 50, emissive: 0x000000 });
+      if (p.kind === 'turret') {
+        pg.scale.setScalar(DS);
+        const base = mesh(new THREE.CylinderGeometry(9, 11, 7, 10), mat);
+        const head = new THREE.Group();
+        head.add(mesh(new THREE.SphereGeometry(7.5, 12, 8), mat));
+        const barrelGeo = new THREE.CylinderGeometry(1.2, 1.4, 16, 6); barrelGeo.rotateX(Math.PI / 2); barrelGeo.translate(0, 0, -9);
+        head.add(mesh(barrelGeo, ENEMY_MAT.dark, -2.6, 1, 0), mesh(barrelGeo, ENEMY_MAT.dark, 2.6, 1, 0));
+        head.add(mesh(new THREE.BoxGeometry(5, 1.4, 1), new THREE.MeshBasicMaterial({ color: 0xff8a3a }), 0, 3.5, -5));
+        pg.quaternion.setFromUnitVectors(Y, new THREE.Vector3(p.face.x, p.face.y, p.face.z));
+        head.position.y = 4;
+        pg.add(base, head);
+        pg.userData.head = head;
+      } else if (p.kind === 'engine') {
+        // 鉱石タンクのふた: 半球の窓。中の鉱石が橙に光る
+        const dome = new THREE.SphereGeometry(16 * DS, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+        const disc = mesh(dome, new THREE.MeshBasicMaterial({ color: 0x7a3a1a }), 0, -8 * DS, 0);
+        pg.add(disc);
+        const rim = new THREE.TorusGeometry(19 * DS, 2.4 * DS, 6, 20); rim.rotateX(Math.PI / 2);
+        pg.add(mesh(rim, mat, 0, -8 * DS, 0));
+        const gl = glowSprite(0xff7a30, 70 * DS, 0.5); gl.position.y = 4 * DS;
+        pg.add(gl);
+        pg.userData.glow = gl; pg.userData.disc = disc;
+      } else {
+        const cm = mesh(new THREE.IcosahedronGeometry(14 * DS, 1), new THREE.MeshPhongMaterial({ color: 0xff8a30, emissive: 0x803010, shininess: 90, flatShading: true }));
+        pg.add(cm);
+        const gl = glowSprite(0xff8a3a, 90 * DS, 0.9);
+        pg.add(gl);
+        pg.userData.glow = gl; pg.userData.coreMesh = cm;
+        pg.visible = false;
+      }
+      pg.userData.mat = mat; pg.userData.kind = p.kind;
+      group.add(pg); parts.push(pg);
+    });
+
+    // ⑥ 主砲 (ドリルの先): チャージの光・射線の予告・光線
+    const charge = glowSprite(0xff8a3a, 10, 0);
+    charge.position.set(D.cannon.x - 6, D.cannon.y, D.cannon.z);
+    group.add(charge);
+    const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true); beamGeo.rotateX(Math.PI / 2); beamGeo.translate(0, 0, 0.5);
+    const beamOuter = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff6a2a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const beamCore = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xffe8c8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const guide = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xff5020, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    [beamOuter, beamCore, guide].forEach(function (m) { m.frustumCulled = false; scene.add(m); m.visible = false; });
+
+    group.userData = { type: 'driller', topRing: null, topGlow: coreGlow, sideRings: [], parts: parts, armor: armor, charge: charge, beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: thrusters, hull: hullMesh, drill: drill };
     return group;
   }
 
@@ -2594,6 +2763,7 @@
       u.topGlow.material.opacity = (exposed ? 0.85 : 0.5) * beat;
       u.topGlow.scale.setScalar((exposed ? 230 : 190) * (0.95 + 0.05 * beat));
       u.sideRings.forEach(function (gl) { gl.material.opacity = 0.45 * beat; });
+      if (u.drill) u.drill.rotation.x += dt * (exposed ? 2.2 : 0.9);   // 採掘母艦: ドリルが回る (動力炉がむき出しになると速く)
       if (u.storm) {
         // 要塞: 赤い嵐の渦がゆっくり回り、光の盾が揺らぐ
         u.stormDisc.rotation.z += dt * (exposed ? 1.4 : 0.5);
@@ -3090,9 +3260,7 @@
       c.textAlign = 'center';
       c.font = '700 10px -apple-system, sans-serif';
       c.fillStyle = 'rgba(255,190,170,.95)';
-      const fort = b.type === 'fortress';
-      const phaseName = (fort ? { arrive: '接近中', battle: '砲塔', cannon: '砲塔 / 主砲', weak: '動力節', core: 'コア', dying: '撃沈' }
-                              : { arrive: '接近中', battle: '砲台', cannon: '砲台 / 主砲', weak: 'エンジン', core: 'コア', dying: '撃沈' })[b.phase] || '';
+      const phaseName = C.BOSS_TYPES[b.type].phaseNames[b.phase] || '';
       c.fillText(C.BOSS_TYPES[b.type].name + '  ' + phaseName, W / 2, 14);
       c.fillStyle = 'rgba(0,0,0,.5)';
       c.fillRect(bx, 19, bw, 5);
@@ -3430,8 +3598,16 @@
         const rr = toScreen(new THREE.Vector3(0.5, 0, 0).applyMatrix4(titlePlanet.matrixWorld));
         return { shown: titlePlanet.visible, glow: titleGlow.visible, earth: planet.visible, cx: c.x, cy: c.y, radius: Math.hypot(rr.x - c.x, rr.y - c.y), flareX: f.x, flareY: f.y, ang: titlePlanetAngle() };
       },
-      // 戦艦の装甲の色 (2 面は蛍光緑) と、いまの面
-      bossLook: function () { if (!bossObj) return null; const m = bossObj.children[0].material; return { level: bossObj.userData.level, color: m.color.getHexString(), emissive: m.emissive ? m.emissive.getHexString() : '000000' }; },
+      // ボスの船体の色 (頂点の色の平均) と型・いまの面
+      bossLook: function () {
+        if (!bossObj) return null;
+        // 船体の頂点の色の平均 (錆びた赤茶か、などを見る)
+        const col = bossObj.userData.hull.geometry.attributes.color.array;
+        let r = 0, g = 0, bl = 0;
+        for (let i = 0; i < col.length; i += 3) { r += col[i]; g += col[i + 1]; bl += col[i + 2]; }
+        const n = col.length / 3;
+        return { level: bossObj.userData.level, type: bossObj.userData.type || 'battleship', hull: [r / n, g / n, bl / n] };
+      },
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
@@ -3483,6 +3659,7 @@
         if (view && kind === 'enemy') { inspectObj = makeEnemyShip(); scene.add(inspectObj); }
         if (view && kind === 'boss') { inspectObj = makeBossModel(); scene.add(inspectObj); }
         if (view && kind === 'fortress') { inspectObj = makeFortressModel(); scene.add(inspectObj); }
+        if (view && kind === 'driller') { inspectObj = makeDrillerModel(); scene.add(inspectObj); }
         if (shipObj) shipObj.visible = !inspectObj;
         if (!view) { sky.visible = true; planet.visible = true; dust.lines.visible = true; scene.background = null; inspectLight.visible = false; }
         els.title.hidden = !!view || screen !== 'title';
