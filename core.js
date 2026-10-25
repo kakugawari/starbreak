@@ -231,6 +231,7 @@
     // ロックオンの追いかけ: スティックを followCancel より大きく倒したらやめる。ボスの部位から followBreak (m) まで近づいたら、followAwayTime 秒離れてから向き直す
     followCancel: 0.75, followBreak: 200, followAwayTime: 2.5,
     drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
+    aceAhead: 600, aceEscorts: 2,   // 2 面のボス戦: エース機が現れる距離 (自機の前)・連れてくる護衛機の数
     aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
@@ -790,13 +791,21 @@
   }
 
   /**
-   * 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。正面から来る。体力が多く、何発も当てないと落ちない。
-   * 落とすと、少し間をおいて 3 面へ進む。
+   * 2 面のボス (エース機): 敵戦闘機を大きく強くしたもの。体力が多く、何発も当てないと落ちない。
+   * 巨大戦艦と同じくボス戦として始まる: 知らせ (aceWarning。BOSS BATTLE の帯と警報) のあと、ワープの間 (BOSS_WARP_DELAY) をおいて、
+   * 自機の前 600m に護衛機 2 機を連れて光の中から現れる (aceWarp)。落とすと、少し間をおいて 3 面へ進む。
    */
+  function warnAce(g) {
+    const pl = g.player;
+    let f = vec(pl.dir.x, 0, pl.dir.z);
+    f = len(f) > 1e-3 ? norm(f) : vec(0, 0, -1);
+    g.aceAt = add(pl.pos, vec(f.x * T.aceAhead, 20, f.z * T.aceAhead));
+    emit(g, 'aceWarning', { text: '警告  エース機 接近', pos: copy(g.aceAt) });
+  }
   function spawnAce(g) {
-    const p = g.player.pos;
-    const pos = add(p, vec(0, 20, -820));
-    const f = makeFighter(g, pos, sub(p, pos));
+    const p = g.player.pos, pos = g.aceAt || add(p, vec(0, 20, -T.aceAhead));
+    const fwd = norm(sub(p, pos)), side = norm(cross(fwd, vec(0, 1, 0)));
+    const f = makeFighter(g, pos, fwd);
     f.ace = true;
     f.hp = f.maxHp = T.aceHp;
     f.radius = T.aceRadius;
@@ -804,7 +813,12 @@
     f.fireCd = 2.2;
     g.fighters.push(f);
     g.ace = f;
-    emit(g, 'aceWarning', { text: '警告  エース機 接近', id: f.id });
+    // 護衛機: エース機の斜め後ろ左右
+    for (let i = 0; i < T.aceEscorts; i++) {
+      const sg = i % 2 ? 1 : -1;
+      g.fighters.push(makeFighter(g, add(pos, add(scale(side, sg * (70 + 30 * Math.floor(i / 2))), scale(fwd, -50))), fwd));
+    }
+    emit(g, 'aceWarp', { pos: copy(pos), id: f.id });
   }
 
   /** ワープして現れる所: 自機の前 (水平の向き) 700m・下 150m。戦う場所の外へはみ出さないよう、中心寄りに詰める */
@@ -1728,7 +1742,11 @@
       if (g.stageTimer > T.stageIntro) { g.stage = 'wave1'; g.stageTimer = 0; spawnWave(g, 1); }
       return;
     }
-    // 小ボスを落としたら、少し間をおいて次の面へ
+    // 2 面のボス: 知らせのあと、ワープの間をおいてエース機が現れる。落としたら、少し間をおいて次の面へ
+    if (g.stage === 'aceIn') {
+      if (g.stageTimer >= BOSS_WARP_DELAY) { g.stage = 'ace'; g.stageTimer = 0; spawnAce(g); }
+      return;
+    }
     if (g.stage === 'ace') {
       if (g.ace && !g.ace.alive) { g.stage = 'aceDown'; g.stageTimer = 0; }
       return;
@@ -1742,7 +1760,7 @@
     else if (g.stage === 'wave2' && g.fighters.length === 0) { g.stage = 'gap2'; g.stageTimer = 0; emit(g, 'waveClear'); }
     else if ((g.stage === 'gap2' && g.stageTimer > 3) || (g.stage === 'bossIn' && !g.boss)) {
       g.stageTimer = 0;
-      if (g.level === 2) { g.stage = 'ace'; spawnAce(g); }
+      if (g.level === 2) { g.stage = 'aceIn'; warnAce(g); }
       else {
         g.stage = 'boss';
         g.boss = makeBoss(g);

@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.14.0';
+  const VERSION = 'v0.15.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1739,12 +1739,12 @@
       comp = ctx.createDynamicsCompressor();
       comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
       master = ctx.createGain();
-      master.gain.value = enabled ? 0.9 : 0;
+      master.gain.value = enabled ? 0.8 : 0;
       analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
       // 最後の割れ止め: 大きな爆発が重なっても 0dB を越えない (速く強く押さえるだけで、ふだんの音には触れない)
       const lim = ctx.createDynamicsCompressor();
-      lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.12;
+      lim.threshold.value = -5; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.0005; lim.release.value = 0.12;
       master.connect(comp); comp.connect(lim); lim.connect(analyser); analyser.connect(ctx.destination);
       // 響き: 送った音を 2.6 秒の暗い残響にして、主の出口へ戻す
       revIn = ctx.createGain();
@@ -1847,7 +1847,8 @@
     function sn(o) {
       if (!ctx || !enabled) return null;
       const t = ctx.currentTime + (o.at || 0), a = o.atk || 0.003, total = a + (o.hold || 0) + o.dur;
-      const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+      // 雑音の元は 2 秒ぶん。途中から読むので、長い音はくり返して読む (くり返さないと 1 秒前後で切れていた)
+      const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = total > 0.6;
       const f = ctx.createBiquadFilter(); f.type = o.type || 'lowpass'; f.Q.value = o.q || 0.7;
       f.frequency.setValueAtTime(o.f0, t);
       if (o.f1 && o.f1 !== o.f0) f.frequency.exponentialRampToValueAtTime(Math.max(30, o.f1), t + (o.glide || total));
@@ -2237,7 +2238,7 @@
       ready: function () { return !!ctx && ctx.state === 'running'; },
       setEnabled: function (on) {
         enabled = on;
-        if (master) { master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setTargetAtTime(on ? 0.9 : 0, ctx.currentTime, 0.03); }
+        if (master) { master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setTargetAtTime(on ? 0.8 : 0, ctx.currentTime, 0.03); }
       },
       suspend: function () { if (ctx && ctx.state === 'running') ctx.suspend(); },
       resume: function () { if (ctx && ctx.state === 'suspended') ctx.resume(); },
@@ -2310,13 +2311,38 @@
         blast(4, 1);
         sv({ at: 0.05, type: 'sine', f0: 95, f1: 26, dur: 1.4, vol: 0.6, heavy: true });
       },
-      // 巨大戦艦の撃沈: 重い爆発が 5 回続き、長い地鳴りと、崩れる船体の金属のうなり
+      // 巨大戦艦の撃沈 (アニメの大爆発): 「ドン」は最初の 1 回だけ。そのあとは打たずに「ゴォォォ…」と続ける
+      // ① 鋭いひび割れ ② 一撃の重低音 (長く下がる) ③ 爆風: 明るい広い雑音がゆっくり暗くなる (ドカーン → ゴォォ)
+      // ④ うねる轟き: 立ち上がりの遅い低い雑音を少しずつずらして重ねる (打つ音にしない) ⑤ ぱちぱち: 火花がだんだん間遠に
+      // ⑥ シュワァ: 高い空気の余韻 (響き多め) ⑦ 地鳴りの下降: 歪ませた低いのこぎり波
       big: function () {
-        [0, 0.3, 0.75, 1.3, 2.0].forEach(function (at, i) { blast(4, 1 - i * 0.08, { at: at }); });
-        sv({ type: 'sine', f0: 56, f1: 18, dur: 4.5, vol: 0.6, heavy: true });
-        sn({ dur: 4, vol: 0.45, type: 'lowpass', f0: 900, f1: 40, rev: 0.6 });
-        [[41, -6], [41, 6], [61.7, 0]].forEach(function (d) { sv({ at: 0.2, type: 'sawtooth', f0: d[0], f1: d[0] * 0.7, atk: 0.4, dur: 3.6, vol: 0.06, lp: 420, q: 5, detune: d[1], heavy: true, rev: 0.4 }); });
-        metal(0.6, 88, 3.5, 0.14, { rev: 0.5, bend: 0.85 });
+        sn({ dur: 0.08, vol: 0.6, type: 'highpass', f0: 3000, f1: 1500 });
+        sv({ type: 'sine', f0: 90, f1: 20, dur: 3.0, vol: 0.8, heavy: true });
+        sn({ hold: 0.4, dur: 4.2, vol: 0.7, type: 'lowpass', f0: 7000, f1: 180, glide: 3.5, rev: 0.6 });
+        [0.2, 0.8, 1.5, 2.3].forEach(function (at, i) {
+          sn({ at: at, atk: 0.45, dur: 1.6, vol: 0.32 - i * 0.05, type: 'lowpass', f0: 420, f1: 160, rev: 0.4, pan: (i % 2 ? 0.3 : -0.3) });
+        });
+        for (let i = 0; i < 60; i++) {
+          const k = i / 60, f = 1500 + Math.random() * 3500;
+          sn({ at: 0.1 + Math.pow(k, 1.6) * 3.5, dur: 0.02, vol: 0.07 * (1 - k), type: 'bandpass', f0: f, f1: f * 0.8, q: 3, pan: Math.random() * 1.4 - 0.7 });
+        }
+        sn({ at: 0.3, atk: 0.3, dur: 3, vol: 0.12, type: 'highpass', f0: 5000, f1: 2500, rev: 0.8 });
+        [-7, 7].forEach(function (dt) { sv({ type: 'sawtooth', f0: 55, f1: 28, atk: 0.15, dur: 3.5, vol: 0.08, lp: 300, detune: dt, heavy: true }); });
+      },
+      // 撃沈の演出中の連鎖爆発 (0.2 秒ごと): 重い「ドン」を入れない、ぱちぱち・ぼっという軽い火の爆ぜ (太鼓の連打に聞こえないように)
+      chain: function (near) {
+        near = near === undefined ? 1 : near;
+        const f = 600 + Math.random() * 1400, p = Math.random() * 1.2 - 0.6;
+        sn({ dur: 0.3, vol: 0.2 * near, type: 'bandpass', f0: f, f1: f * 0.4, q: 0.9, rev: 0.4, pan: p });
+        for (let i = 0; i < 4; i++) { const g = 1800 + Math.random() * 3000; sn({ at: Math.random() * 0.2, dur: 0.02, vol: 0.06 * near, type: 'bandpass', f0: g, f1: g * 0.8, q: 3, pan: p }); }
+      },
+      // エース機の登場 (ワープ明け): ひび割れ + 重低音 + 光の向こうから飛び出す鋭いエンジンの叫び
+      aceWarp: function () {
+        sn({ dur: 0.06, vol: 0.45, type: 'highpass', f0: 2000, f1: 1300 });
+        sv({ type: 'sine', f0: 80, f1: 26, dur: 1.4, vol: 0.7, heavy: true });
+        sn({ dur: 1.4, vol: 0.45, type: 'lowpass', f0: 3500, f1: 80, rev: 0.5 });
+        sv({ type: 'sawtooth', f0: 300, f1: 1400, glide: 0.5, atk: 0.05, dur: 0.6, vol: 0.05, lp: 2600, rev: 0.3 });
+        sn({ atk: 0.1, dur: 0.8, vol: 0.18, type: 'bandpass', f0: 3000, f1: 700, q: 1.2, pan: 0.5, pan1: -0.5 });
       },
       // ワープ明け (巨大戦艦が光の中から出る瞬間): ひび割れ → 重低音の衝撃 → 空間を押し広げる轟き → 重い太鼓 4 発 →
       // 巨大な船体がきしむ金属のうなり (合わない倍音 + ゆっくり下がる太い唸り + 共鳴の強い雑音)
@@ -2632,8 +2658,10 @@
     // 戦艦が出たら戦艦戦の曲へ。沈められる (撃沈の演出) 間と結果では止める
     else if (screen === 'play' && game && game.state === 'play') {
       // 戦艦が出る知らせのあいだは、戦闘の曲を弱めて警報と帯を聞かせ、戦艦が現れた瞬間 (bossWarp) から戦艦戦の曲へ
-      if (game.boss && !bossMusic) audio.duck(0.12);
-      else audio.music(game.boss ? 'boss' : 'combat');
+      // 2 面はエース機がボス (知らせ 'aceIn' から、落とすまで)
+      const bossTime = !!game.boss || game.stage === 'aceIn' || !!(game.ace && game.ace.alive);
+      if (bossTime && !bossMusic) audio.duck(0.12);
+      else audio.music(bossTime ? 'boss' : 'combat');
     }
     else audio.stopMusic(1.2);
   }
@@ -2871,7 +2899,7 @@
           } else if (KILL[e.kind]) {
             killBurst(e, d);
           } else {
-            if (e.kind === 'armor') audio.armorBreak(); else audio.explode(size, nearOf(d));
+            if (e.kind === 'armor') audio.armorBreak(); else if (e.kind === 'chain') audio.chain(nearOf(d)); else audio.explode(size, nearOf(d));
             shake(Math.min(1.4, size * 60 / Math.max(60, d)));
           }
           if (KILL[e.kind]) fx.killMarker = 0.35;
@@ -2907,11 +2935,24 @@
           banner(e.text, e.phase === 'dying' ? 3 : 3.2, e.phase === 'dying' ? '#ffd27a' : '#ffb26a', e.phase === 'dying');
           if (e.phase === 'dying') { fx.slowT = 1.2; shake(2); }
           break;
+        // 2 面のボス戦: 巨大戦艦と同じ順番 (BOSS BATTLE の帯と警報 → 曲を弱める → ワープの光から現れる → ボス戦の曲)
         case 'aceWarning':
+          bossMusic = false;
+          setTimeout(syncMusic, 0);
+          showCutin();
+          audio.bossAlert();
           banner(e.text, 2.4, '#ff6a5a', true);
-          audio.alarm(); setTimeout(audio.alarm, 500);
           break;
-        case 'aceDown': banner(e.text, 3, '#ffd27a', true); fx.slowT = 1.0; shake(1.5); break;
+        case 'aceWarp':
+          flash(e.pos, 500, 0.6, 0xff5040);
+          shockRing(e.pos, 700, 0.8, 0xff6050);
+          for (let k = 0; k < 40; k++) { const d = rndDir(), sp = rnd(40, 160); spawnParticle(e.pos.x, e.pos.y, e.pos.z, d[0] * sp, d[1] * sp, d[2] * sp, rnd(0.3, 0.8), rnd(4, 9), 1, [1, 0.6, 0.5], [0.8, 0.08, 0.05], 1); }
+          shake(1.4);
+          audio.aceWarp();
+          bossMusic = true;
+          setTimeout(syncMusic, 0);
+          break;
+        case 'aceDown': banner(e.text, 3, '#ffd27a', true); fx.slowT = 1.0; shake(1.5); audio.big(); bossMusic = false; setTimeout(syncMusic, 0); break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
         case 'drones': banner('迎撃機 接近', 1.4, '#ff8a7a'); break;
         case 'bossWarp':

@@ -470,10 +470,15 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   assert.strictEqual(g.state, 'play', '1 面の戦艦では終わらず、2 面へ進む');
   assert.strictEqual(g.level, 2);
   assert.strictEqual(g.boss, null);
-  // 2 面のボスはエース機。落とすと 3 面へ進む
+  // 2 面のボスはエース機。ボス戦として、知らせのあとワープの間をおいて護衛機と現れる。落とすと 3 面へ進む
   g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
-  run(g, 1, (gg) => { gg.fighters = gg.fighters.filter((f) => f.ace); return {}; });
-  assert.ok(g.ace && g.ace.alive && g.stage === 'ace', 'エース機が出る');
+  const ev2 = [];
+  run(g, 1, (gg) => { gg.events.forEach((e) => ev2.push(e.type)); gg.events.length = 0; return {}; });
+  assert.ok(ev2.includes('aceWarning') && !g.ace && g.stage === 'aceIn', '知らせのあいだは、まだ現れない');
+  run(g, 2, (gg) => { gg.events.forEach((e) => ev2.push(e.type)); gg.events.length = 0; return {}; });
+  assert.ok(ev2.includes('aceWarp') && g.ace && g.ace.alive && g.stage === 'ace', 'ワープの間のあとに現れる');
+  assert.strictEqual(g.fighters.filter((f) => !f.ace && f.alive).length, T.aceEscorts, '護衛機を連れてくる');
+  g.fighters = g.fighters.filter((f) => f.ace);
   assert.strictEqual(g.boss, null, '2 面に戦艦はいない');
   g.ace.hp = 0.1; g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60));
   for (let i = 0; i < 90 && g.ace.alive; i++) { g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60)); C.step(g, { fire: true, throttle: 0 }, 1 / 30); }

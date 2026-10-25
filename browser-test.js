@@ -646,6 +646,10 @@ async function run() {
     await page.waitForTimeout(3000);
     const warpMax = await sfxMax('warp');
     if (gMax !== null) ok(warpMax > gMax * 1.5, `巨大戦艦のワープの音は、レーザーよりはっきり大きい (ワープ ${warpMax.toFixed(3)} / レーザー ${gMax.toFixed(3)})`);
+    // 撃沈の演出中の連鎖爆発 (0.2 秒ごとに 20 回) は軽い火の爆ぜ。重い「ドン」を入れると太鼓の連打に聞こえた
+    await page.waitForTimeout(3000);
+    const chainMax = await sfxMax('chain');
+    if (gMax !== null) ok(chainMax < 0.25, `撃沈の演出中の連鎖爆発は軽い (最大 ${chainMax.toFixed(3)}。重い「ドン」だと 0.9 前後)`);
     await page.waitForTimeout(3000);
     await f.down(6, fire.x, fire.y);
     await waitGameTime(page, 0.3);
@@ -772,9 +776,14 @@ async function run() {
     ok(st2.screen === 'play' && await card(2, 'MERCURY ORBIT', '水星軌道') && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2 水星軌道」の札・前の戦艦は消える)`);
     // 2 面のボスはエース機 (通常の敵を大きく赤くした機)。落とすと 3 面へ
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
+    // ボス戦として始まる: 知らせと同時に BOSS BATTLE の帯。エース機はワープの間のあとに現れ、そこからボス戦の曲
+    await page.waitForFunction(() => window.__app.game().stage === 'aceIn', null, { timeout: 30000 });
+    await page.waitForFunction(() => document.getElementById('cutin').getAnimations().length > 0, null, { timeout: 5000 });
+    ok(await page.evaluate(() => !window.__app.game().ace), '2 面もボス戦: 知らせと同時に BOSS BATTLE の帯が出て、エース機はまだ現れていない');
     await page.waitForFunction(() => window.__app.game().ace && window.__app.aceLook(), null, { timeout: 30000 });
-    const ace = await page.evaluate(() => ({ look: window.__app.aceLook(), warn: window.__app.banners().indexOf('警告  エース機 接近') >= 0, boss: window.__app.game().boss }));
-    ok(ace.look.scale > 1.2 && ace.look.color === 'b02024' && !ace.boss, `2 面のボスは赤く大きいエース機 (大きさ ${ace.look.scale}・色 #${ace.look.color}・戦艦なし)`);
+    await page.waitForFunction(() => window.__app.musicKind() === 'boss', null, { timeout: 15000 });
+    const ace = await page.evaluate(() => ({ look: window.__app.aceLook(), warn: window.__app.banners().indexOf('警告  エース機 接近') >= 0, boss: window.__app.game().boss, escorts: window.__app.game().fighters.filter((f) => !f.ace && f.alive).length }));
+    ok(ace.look.scale > 1.2 && ace.look.color === 'b02024' && !ace.boss && ace.escorts === 2, `2 面のボスは赤く大きいエース機で、護衛機を 2 機連れてくる (大きさ ${ace.look.scale}・色 #${ace.look.color}・護衛 ${ace.escorts}・戦艦なし)。ボス戦の曲が鳴る`);
     await page.evaluate(() => { const g = window.__app.game(); g.ace.hp = 0; g.ace.alive = false; g.ace.dead = true; g.ace.active = false; });
     await page.waitForFunction(() => window.__app.game().level === 3, null, { timeout: 60000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
