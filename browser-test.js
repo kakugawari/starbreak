@@ -494,6 +494,29 @@ async function run() {
       `照準が画面の中ほどにあり、自機に隠れない (${reticle && reticle.x.toFixed(0)}, ${reticle && reticle.y.toFixed(0)})`);
 
     // ------------------------------------------------ 画面の外の敵を示す三角
+    section('戦域外: 戻る向きを大きな矢印で示す');
+    {
+      // 戦域の中心から x へ 2700m (戦域の外・自動で引き返し始める前)。-z を向くと中心は左、x を反対にすると右、z に置いて -z を向くと正面
+      const outAt = async (ox, oz) => {
+        await page.evaluate(([ox, oz]) => {
+          const g = window.__app.game(), pl = g.player, c = window.Core.TUNING.arenaCenter;
+          pl.follow = false;
+          pl.pos = { x: c.x + ox, y: c.y, z: c.z + oz }; pl.yaw = 0; pl.pitch = 0; pl.yawRate = 0; pl.pitchRate = 0;
+        }, [ox, oz]);
+        // カメラは自機を少し遅れて追うので、追いつくまで待つ (すぐ読むと、前の向きのカメラで矢印を出していた)
+        await waitGameTime(page, 0.8);
+        return page.evaluate(() => window.__app.hudInfo.outArrow);
+      };
+      const left = await outAt(2700, 0), right = await outAt(-2700, 0), front = await outAt(0, 2700);
+      const deg = (a) => Math.round(a * 180 / Math.PI);
+      ok(left && !left.ahead && Math.abs(Math.abs(deg(left.ang)) - 180) < 25, `戦域の中心が左にあると、矢印は左を指す (${left && deg(left.ang)}°・あと ${left && left.over}m)`);
+      ok(right && !right.ahead && Math.abs(deg(right.ang)) < 25, `右にあると右を指す (${right && deg(right.ang)}°)`);
+      ok(front && front.ahead, '正面にあると、矢印ではなく「まっすぐ戻る」の輪');
+      await page.evaluate(() => { const g = window.__app.game(), c = window.Core.TUNING.arenaCenter; g.player.pos = { x: c.x, y: c.y, z: c.z }; });
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      ok(!(await page.evaluate(() => window.__app.hudInfo.outArrow)), '戦域に戻ると矢印は消える');
+    }
+
     section('画面の外の敵を示す三角 (どの向きでも出て、ボタンに隠れない)');
     // 止めた状態で、敵 3 機を自機のまわりの 24 方向 (真後ろ・真上・真下を含む) に置き直して写す
     await page.evaluate(() => window.__app.setPaused(true));

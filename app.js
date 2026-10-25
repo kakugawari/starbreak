@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.18.0';
+  const VERSION = 'v0.18.1';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -3911,11 +3911,45 @@
       c.fillStyle = '#ff5a5a';
       c.fillRect(bx, 19, bw * Math.max(0, ace.hp) / ace.maxHp, 5);
     }
+    // 戦域外: 字だけだとどこへ戻ればいいか分からないと言われた。画面の真ん中に、戦域の中心へ向く大きな矢印と、戻るまでの距離を出す。
+    // 向きはカメラから見た向き (画面の外の敵の三角と同じ作り)。中心がほぼ正面なら、矢印の代わりにそこへ輪を出す
+    hudInfo.outArrow = null;
     if (pl.outside) {
+      const ac = C.TUNING.arenaCenter;
+      const over = Math.max(0, Math.round(dist3(pl.pos, ac) - C.TUNING.arenaRadius));
+      camera.updateMatrixWorld();
+      _v.set(ac.x, ac.y, ac.z).applyMatrix4(camera.matrixWorldInverse);
+      let dx = _v.x, dy = -_v.y;
+      const ahead = _v.z < 0 && Math.hypot(dx, dy) < -_v.z * 0.25;
+      if (Math.abs(dx) + Math.abs(dy) < 1e-3) dy = 1;
+      const ang = Math.atan2(dy, dx);
+      const blink = 0.85 + 0.15 * Math.sin(game.t * 8);   // 点滅は浅く (深くすると、暗い時に見落とす)
+      const cx = W / 2, cy = H * 0.5;
+      c.save();
+      if (ahead) {
+        const s = toScreen(ac);
+        c.strokeStyle = 'rgba(255,190,80,' + blink + ')'; c.lineWidth = 3;
+        c.beginPath(); c.arc(s.x, s.y, 26, 0, Math.PI * 2); c.stroke();
+        c.beginPath(); c.arc(s.x, s.y, 4, 0, Math.PI * 2); c.fillStyle = c.strokeStyle; c.fill();
+      } else {
+        // 太い矢印: 真ん中から 50px 離れた所に、長さ 122px・幅 76px
+        c.translate(cx, cy); c.rotate(ang);
+        c.beginPath();
+        c.moveTo(50, -15); c.lineTo(118, -15); c.lineTo(118, -38); c.lineTo(172, 0); c.lineTo(118, 38); c.lineTo(118, 15); c.lineTo(50, 15); c.closePath();
+        c.fillStyle = 'rgba(255,170,60,' + blink + ')';
+        c.shadowColor = 'rgba(255,150,40,.9)'; c.shadowBlur = 14;
+        c.fill();
+        c.shadowBlur = 0; c.lineWidth = 2; c.strokeStyle = 'rgba(40,16,0,.7)'; c.stroke();
+      }
+      c.restore();
       c.textAlign = 'center';
-      c.font = '800 14px -apple-system, sans-serif';
-      c.fillStyle = Math.sin(game.t * 10) > 0 ? '#ffb547' : 'rgba(255,181,71,.4)';
-      c.fillText('戦域外  引き返します', W / 2, H * 0.3);
+      c.font = '800 15px -apple-system, sans-serif';
+      c.fillStyle = Math.sin(game.t * 10) > 0 ? '#ffb547' : 'rgba(255,181,71,.55)';
+      c.fillText(ahead ? '戦域外  このまま まっすぐ戻る' : '戦域外  矢印の方へ戻る', W / 2, H * 0.3);
+      c.font = '700 12px -apple-system, sans-serif';
+      c.fillStyle = '#ffd9a0';
+      c.fillText('戦域まで あと ' + over + 'm', W / 2, H * 0.3 + 19);
+      hudInfo.outArrow = { ang: ang, ahead: ahead, over: over };
     }
 
     // 帯の文字 (段階・警告)
