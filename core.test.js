@@ -493,10 +493,12 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   run(g, 2, (gg) => { gg.events.forEach((e) => ev2.push(e.type)); gg.events.length = 0; return {}; });
   assert.ok(ev2.includes('aceWarp') && g.ace && g.ace.alive && g.stage === 'ace', 'ワープの間のあとに現れる');
   assert.strictEqual(g.fighters.filter((f) => !f.ace && f.alive).length, T.aceEscorts, '護衛機を連れてくる');
-  g.fighters = g.fighters.filter((f) => f.ace);
   assert.strictEqual(g.boss, null, '2 面に戦艦はいない');
   g.ace.hp = 0.1; g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60));
   for (let i = 0; i < 90 && g.ace.alive; i++) { g.ace.pos = C.add(g.player.pos, C.vec(0, 0, -60)); C.step(g, { fire: true, throttle: 0 }, 1 / 30); }
+  assert.strictEqual(g.stage, 'aceDown');
+  assert.strictEqual(g.fighters.filter((f) => f.alive).length, 0, 'エース機を落とすと、残った護衛機も片づく (暗転とワープのあいだに撃たれない)');
+  assert.strictEqual(g.shots.filter((s) => s.owner !== 'player').length, 0, '敵の弾も消える');
   run(g, T.aceDownDelay + 1, (gg) => { gg.fighters = []; return {}; });
   assert.strictEqual(g.level, 3);
   // 3 面の採掘母艦まで飛ばして、同じ順で沈めると 4 面へ

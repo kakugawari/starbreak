@@ -232,9 +232,9 @@
     followCancel: 0.75, followBreak: 200, followAwayTime: 2.5,
     drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
     // 面の終わりの余韻: 撃沈の演出が始まってから次の面へ進むまで (秒)・暗転を始めるのは進む何秒前か
-    bossEndWait: 8.4, stageOutLead: 1.2,
+    bossEndWait: 10.6, stageOutLead: 3.0,
     aceAhead: 600, aceEscorts: 2,   // 2 面のボス戦: エース機が現れる距離 (自機の前)・連れてくる護衛機の数
-    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 4.2,
+    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 6.6,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
     // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
@@ -1750,7 +1750,15 @@
       return;
     }
     if (g.stage === 'ace') {
-      if (g.ace && !g.ace.alive) { g.stage = 'aceDown'; g.stageTimer = 0; }
+      if (g.ace && !g.ace.alive) {
+        g.stage = 'aceDown'; g.stageTimer = 0;
+        // 暗転とワープのあいだに撃たれないよう、残った護衛機と敵の弾も一緒に片づける (戦艦の撃沈と同じ)
+        for (let i = 0; i < g.fighters.length; i++) {
+          const f = g.fighters[i];
+          if (f.alive) { f.alive = false; emit(g, 'explode', { pos: f.pos, size: 1.4, kind: 'fighter' }); }
+        }
+        g.shots = g.shots.filter(function (s) { return s.owner === 'player'; });
+      }
       return;
     }
     if (g.stage === 'aceDown') {

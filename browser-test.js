@@ -632,7 +632,7 @@ async function run() {
     // 大きな出来事の音は、連射するレーザーよりはっきり大きい (重さの差)
     const allSfx = await page.evaluate(() => {
       const res = {};
-      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn']) {
+      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut']) {
         try { window.__app.sfx(n); res[n] = 'ok'; } catch (e) { res[n] = e.message; }
       }
       const t0 = performance.now(); let mx = 0;
@@ -641,8 +641,8 @@ async function run() {
       return res;
     });
     const bad = Object.keys(allSfx).filter((k) => k !== 'max' && allSfx[k] !== 'ok');
-    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '20 種'})`);
-    if (gMax !== null) ok(allSfx.max < 0.99, `20 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
+    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '24 種'})`);
+    if (gMax !== null) ok(allSfx.max < 0.99, `24 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
     await page.waitForTimeout(3000);
     const warpMax = await sfxMax('warp');
     if (gMax !== null) ok(warpMax > gMax * 1.5, `巨大戦艦のワープの音は、レーザーよりはっきり大きい (ワープ ${warpMax.toFixed(3)} / レーザー ${gMax.toFixed(3)})`);
@@ -769,19 +769,23 @@ async function run() {
     await page.waitForFunction(() => window.__app.transition().clear, null, { timeout: 60000 });
     const clr = await page.evaluate(() => ({ level: window.__app.game().level, black: window.__app.transition().black, ja: document.getElementById('clrJa').textContent }));
     ok(clr.level === 1 && !clr.black && clr.ja.indexOf('1') >= 0, `戦艦を沈めると、まだ 1 面のうちに STAGE CLEAR が出る (面 ${clr.level}・暗転 ${clr.black}・${clr.ja})`);
+    // 暗転してから、暗い中をワープで飛ぶ (まだ 1 面のうち)
+    await page.waitForFunction(() => window.__app.transition().warp, null, { timeout: 60000 });
+    const trW = await page.evaluate(() => Object.assign({ level: window.__app.game().level }, window.__app.transition()));
+    ok(trW.level === 1 && trW.black && trW.warpShown, `STAGE CLEAR のあと暗転し、暗い中でワープの光の筋が出る (面 ${trW.level}・暗転 ${trW.black})`);
     // 1 面の戦艦を沈めると、結果ではなく 2 面へ進む
-    await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.__app.game().level === 2, null, { timeout: 120000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const tr2 = await page.evaluate(() => window.__app.transition());
-    ok(tr2.black && tr2.blackOpacity > 0.95 && tr2.cardCenter, `2 面が始まる瞬間は真っ暗で、札が真ん中に出る (暗さ ${tr2.blackOpacity.toFixed(2)}・真ん中 ${tr2.cardCenter})`);
+    ok(!tr2.black && !tr2.warp && tr2.cardCenter, `ワープを抜けて 2 面が始まると、暗転は外れ (閃光が引くと新しい宇宙)、その上に札が真ん中に大きく出る (暗転 ${tr2.black}・真ん中 ${tr2.cardCenter})`);
     const card = (n, en, ja) => page.evaluate(([n, en, ja]) => { const c = window.__app.stageCard(); return c.shown && c.num === 'STAGE ' + n && c.en === en && c.ja === ja; }, [n, en, ja]);
     const st2 = await page.evaluate(() => ({ screen: window.__app.screen(), boss: window.__app.bossVisible() }));
     const kinds = await page.evaluate(() => window.__app.planetKind());
     const skyK = await page.evaluate(() => window.__app.skyKind());
     ok(kinds === 'mercury' && skyK === 'space2', `2 面では空の惑星が水星に、空の絵が灰色の星雲になる (${kinds} / ${skyK})`);
     ok(st2.screen === 'play' && await card(2, 'MERCURY ORBIT', '水星軌道') && !st2.boss, `1 面の戦艦を沈めると 2 面へ進む (画面 ${st2.screen}・「STAGE 2 水星軌道」の札・前の戦艦は消える)`);
-    await page.waitForFunction(() => window.__app.transition().blackOpacity < 0.02, null, { timeout: 30000 });
-    ok(!(await page.evaluate(() => window.__app.transition().black)), '暗転は札のあとに明けて、新しい宇宙が見える');
+    await page.waitForFunction(() => !window.__app.transition().warpShown, null, { timeout: 30000 });
+    ok(await page.evaluate(() => { const t = window.__app.transition(); return !t.black && t.blackOpacity === 0; }), 'ワープの閃光が引いたあとは、何もかぶらず新しい宇宙が見える');
     // 2 面のボスはエース機 (通常の敵を大きく赤くした機)。落とすと 3 面へ
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     // ボス戦として始まる: 知らせと同時に BOSS BATTLE の帯。エース機はワープの間のあとに現れ、そこからボス戦の曲
@@ -810,7 +814,7 @@ async function run() {
     await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
     await kill('turret'); await kill('engine'); await kill('core');
     // 3 面の採掘母艦を沈めると 4 面 (木星) へ。ボスは球と輪の木星要塞
-    await page.waitForFunction(() => window.__app.game().level === 4, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.__app.game().level === 4, null, { timeout: 120000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.skyKind() === 'space4' && window.__app.screen() === 'play'), '3 面の採掘母艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });

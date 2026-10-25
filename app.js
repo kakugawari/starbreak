@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.16.0';
+  const VERSION = 'v0.17.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -2341,11 +2341,25 @@
         });
         [2093, 2637, 3136].forEach(function (f, i) { sv({ at: 0.62 + i * 0.07, type: 'sine', f0: f, f1: f, dur: 1.6, vol: 0.035, rev: 0.5 }); });
       },
-      // 次の面へ飛ぶ (暗転と同時): 上がっていく風の唸り + 遠ざかる低い唸り。暗くなりきる所で静かに消える
+      // 次の面へ飛ぶ (暗転と同時): 上がっていく風 + 暗くなりきる所で低い落ち (そこからワープの唸りへ続く)
       stageOut: function () {
-        sn({ atk: 0.8, dur: 0.6, vol: 0.2, type: 'bandpass', f0: 300, f1: 3200, glide: 1.0, q: 1.1, rev: 0.5 });
-        sv({ type: 'sawtooth', f0: 70, f1: 280, glide: 1.0, atk: 0.6, dur: 0.6, vol: 0.06, lp: 900, heavy: true });
-        sv({ at: 0.9, type: 'sine', f0: 120, f1: 40, dur: 0.9, vol: 0.25, heavy: true, rev: 0.4 });
+        sn({ atk: 0.5, dur: 0.5, vol: 0.2, type: 'bandpass', f0: 300, f1: 2400, glide: 0.6, q: 1.1, rev: 0.5 });
+        sv({ at: 0.45, type: 'sine', f0: 120, f1: 40, dur: 0.9, vol: 0.25, heavy: true, rev: 0.4 });
+      },
+      // ワープ (暗転の中を飛ぶ 2.4 秒): 上がり続ける唸り + 高く掃く風 + 速くなる脈。抜ける直前にいちばん高く
+      hyper: function () {
+        const d = WARP_SEC;
+        [-8, 8].forEach(function (dt) { sv({ type: 'sawtooth', f0: 55, f1: 330, glide: d, atk: 0.4, hold: d - 0.5, dur: 0.2, vol: 0.05, lp: 500, lp1: 2200, detune: dt, heavy: true }); });
+        sn({ atk: d * 0.8, hold: 0.1, dur: 0.15, vol: 0.18, type: 'bandpass', f0: 400, f1: 4000, glide: d, q: 1.4, rev: 0.4 });
+        sv({ type: 'sine', f0: 900, f1: 2600, glide: d, atk: d * 0.7, hold: 0.2, dur: 0.1, vol: 0.03, rev: 0.3 });
+        for (let i = 0; i < 14; i++) { const k = Math.pow(i / 14, 0.6); sv({ at: k * (d - 0.15), type: 'sine', f0: 90 + 140 * k, f1: 50, dur: 0.12, vol: 0.12 + 0.15 * k, heavy: true }); }
+      },
+      // ワープから抜ける (白い閃光と同時): 空気が裂けるひび + 広がる轟き + 低い衝撃。新しい宇宙へ放り出される
+      warpOut: function () {
+        sn({ dur: 0.08, vol: 0.4, type: 'highpass', f0: 2500, f1: 1500 });
+        sv({ type: 'sine', f0: 110, f1: 32, dur: 1.2, vol: 0.4, heavy: true });
+        sn({ dur: 1.8, vol: 0.24, type: 'lowpass', f0: 5000, f1: 120, rev: 0.7 });
+        sn({ at: 0.05, atk: 0.05, dur: 1.2, vol: 0.12, type: 'bandpass', f0: 2600, f1: 500, q: 1, pan: -0.6, pan1: 0.6 });
       },
       // 撃沈の演出中の連鎖爆発 (0.2 秒ごと): 重い「ドン」を入れない、ぱちぱち・ぼっという軽い火の爆ぜ (太鼓の連打に聞こえないように)
       chain: function (near) {
@@ -2869,9 +2883,12 @@
   }
 
   // ---- 面の終わりの余韻と、次の面への移り変わり ----
-  // ボスを倒す → 大爆発 → (0.8 秒後) STAGE CLEAR の札とファンファーレ → (stageOut) 1.1 秒かけて暗転 →
-  // 真っ暗な中で次の面の札が真ん中に大きく出る (stageStart。空と惑星はこの間に替わる) → 1.4 秒後から 1.6 秒かけて明け、新しい宇宙が現れる
+  // ボスを倒す → 大爆発 → (0.8 秒後) STAGE CLEAR の札とファンファーレ → (stageOut) 0.6 秒で暗転 →
+  // 暗い中をワープで飛ぶ (星が光の筋になって流れ、奥の光が強まる。WARP_SEC) → 白い閃光で抜ける (stageStart。空と惑星はここで替わる) →
+  // 新しい宇宙の上に次の面の札が真ん中に大きく出る → 札が消えて、面の始まりの間のあと第 1 波
+  const BLACK_IN_SEC = 0.6, WARP_SEC = K.stageOutLead - BLACK_IN_SEC;
   let blackAnim = null, blackOn = false, clearAnim = null;
+  const warp = { on: false, t0: 0, exitT: 0, stars: [], ctx: null, w: 0, h: 0 };
   function blackoutTo(on, ms) {
     const el = $('blackout');
     const from = blackAnim ? Number(getComputedStyle(el).opacity) : (blackOn ? 1 : 0);
@@ -2886,7 +2903,68 @@
     blackOn = false; $('blackout').hidden = true;
     if (clearAnim) { clearAnim.cancel(); clearAnim = null; }
     $('stageClear').hidden = true;
-    fx.clearAt = 0; fx.fadeInAt = 0;
+    fx.clearAt = 0; fx.warpAt = 0;
+    warp.on = false; warp.exitT = 0; $('warp').hidden = true;
+  }
+  function startWarp() {
+    const cv = $('warp');
+    cv.hidden = false;
+    // 画素の倍率は 1 (光の筋はぼけてよい。遅い端末で塗る面積を増やさない)
+    warp.w = cv.width = Math.max(1, cv.clientWidth); warp.h = cv.height = Math.max(1, cv.clientHeight);
+    warp.ctx = cv.getContext('2d');
+    warp.stars = [];
+    for (let i = 0; i < 240; i++) {
+      const a = Math.random() * Math.PI * 2, r = 0.04 + Math.pow(Math.random(), 0.7) * 1.2;
+      warp.stars.push({ x: Math.cos(a) * r, y: Math.sin(a) * r, z: 0.15 + Math.random() * 0.85, hue: Math.random() });
+    }
+    warp.on = true; warp.t0 = game.t; warp.exitT = 0; warp.lastT = game.t;
+    audio.hyper();
+  }
+  // ワープの 1 コマ。進み (0〜1) につれて星が速く長い筋になり、奥の青い光が広がる。抜けた後は白い閃光が引いていく
+  function drawWarp() {
+    const c = warp.ctx, W = warp.w, H = warp.h, cx = W / 2, cy = H * 0.47, sc = W * 0.5;
+    const dt = Math.max(0, Math.min(0.05, game.t - warp.lastT)); warp.lastT = game.t;
+    c.globalCompositeOperation = 'source-over';
+    if (warp.exitT) {
+      const k = (game.t - warp.exitT) / 0.7;
+      c.clearRect(0, 0, W, H);
+      if (k >= 1) { warp.on = false; warp.exitT = 0; $('warp').hidden = true; return; }
+      c.fillStyle = 'rgba(235,245,255,' + (1 - k) * (1 - k) + ')'; c.fillRect(0, 0, W, H);
+      return;
+    }
+    const p = Math.min(1, (game.t - warp.t0) / WARP_SEC);
+    const v = 0.12 + 2.6 * p * p;           // 奥から手前へ来る速さ (z / 秒)
+    const len = 0.02 + 0.5 * p * p;         // 筋の長さ (z の幅)
+    c.fillStyle = '#000'; c.fillRect(0, 0, W, H);
+    // 奥の光 (行き先の宇宙の光): 進むほど大きく明るく
+    const gr = c.createRadialGradient(cx, cy, 0, cx, cy, W * (0.08 + 0.5 * p));
+    gr.addColorStop(0, 'rgba(200,230,255,' + (0.25 + 0.6 * p) + ')');
+    gr.addColorStop(0.35, 'rgba(90,150,255,' + (0.12 + 0.3 * p) + ')');
+    gr.addColorStop(1, 'rgba(40,60,160,0)');
+    c.fillStyle = gr; c.fillRect(0, 0, W, H);
+    c.globalCompositeOperation = 'lighter';
+    c.lineCap = 'round';
+    for (let i = 0; i < warp.stars.length; i++) {
+      const s = warp.stars[i];
+      s.z -= v * dt;
+      if (s.z <= 0.02) { s.z += 1; }
+      const z1 = s.z, z0 = Math.min(1.2, s.z + len);
+      const x1 = cx + s.x / z1 * sc, y1 = cy + s.y / z1 * sc, x0 = cx + s.x / z0 * sc, y0 = cy + s.y / z0 * sc;
+      const near = Math.min(1, 0.25 / z1);
+      c.strokeStyle = s.hue < 0.6 ? 'rgba(170,215,255,' + (0.35 + 0.65 * near) + ')' : s.hue < 0.85 ? 'rgba(120,255,240,' + (0.3 + 0.6 * near) + ')' : 'rgba(255,255,255,' + (0.4 + 0.6 * near) + ')';
+      c.lineWidth = 0.6 + 2.6 * near;
+      c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+    }
+    // 抜ける直前は白く満ちる
+    if (p > 0.82) { c.globalCompositeOperation = 'source-over'; c.fillStyle = 'rgba(235,245,255,' + Math.pow((p - 0.82) / 0.18, 2) + ')'; c.fillRect(0, 0, W, H); }
+  }
+  // 次の面へ抜ける (stageStart): 暗転を一気に外し、白い閃光が引くと新しい宇宙。画角を大きく広げて戻し、飛び出した勢いを見せる
+  function exitWarp() {
+    warp.exitT = game.t;
+    if (blackAnim) { blackAnim.cancel(); blackAnim = null; }
+    blackOn = false; $('blackout').hidden = true;
+    fx.fovKick = 3;
+    audio.warpOut();
   }
   function showStageClear(level) {
     const el = $('stageClear');
@@ -2905,7 +2983,8 @@
   function updateTransitions() {
     if (!game) return;
     if (fx.clearAt && game.t >= fx.clearAt) { fx.clearAt = 0; showStageClear(fx.clearLevel); }
-    if (fx.fadeInAt && game.t >= fx.fadeInAt) { fx.fadeInAt = 0; blackoutTo(false, 1600); }
+    if (fx.warpAt && game.t >= fx.warpAt) { fx.warpAt = 0; startWarp(); }
+    if (warp.on) drawWarp();
   }
 
   function banner(text, dur, color, big) {
@@ -2986,11 +3065,11 @@
         case 'scrape': sparks(e.pos, 16, [1, 0.8, 0.4]); break;
         case 'stage': banner(e.text, 2.6, '#cfe8ff'); break;
         case 'stageStart':
-          // 暗転から来たら、暗い中で札を大きく見せてから明ける
-          if (blackOn) { showStageCard(e.level, true); fx.fadeInAt = game.t + 1.4; } else showStageCard(e.level);
+          // ワープから抜けて来たら、新しい宇宙の上に札を大きく出す
+          if (warp.on || blackOn) { if (!warp.on) startWarp(); exitWarp(); showStageCard(e.level, true); } else showStageCard(e.level);
           bossMusic = false; setTimeout(syncMusic, 0);
           break;
-        case 'stageOut': blackoutTo(true, 1100); audio.stageOut(); fx.fovKick = 1.4; break;
+        case 'stageOut': blackoutTo(true, BLACK_IN_SEC * 1000); audio.stageOut(); fx.fovKick = 1.4; fx.warpAt = game.t + BLACK_IN_SEC; break;
         case 'bossDead': fx.clearAt = game.t + 0.8; fx.clearLevel = game.level; break;
         case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
         case 'bossWarning':
@@ -4057,7 +4136,7 @@
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
-      transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center') }; },
+      transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center'), warp: warp.on && !warp.exitT, warpExit: !!warp.exitT, warpShown: !$('warp').hidden }; },
       stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
       aceLook: function () { const f = game.ace, o = f && enemyObjs.get(f.id); return o ? { scale: o.scale.x, color: o.userData.mats[0].color.getHexString() } : null; },
