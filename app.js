@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.17.0';
+  const VERSION = 'v0.18.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -730,6 +730,57 @@
     body.add(e1, e2);
 
     g.userData = { body: body, mats: [hull] };
+    return g;
+  }
+
+  /**
+   * 補給船団の輸送船。前は -Z。全長 約 38m (当たりの半径 15m)。
+   * 背骨の上下左右に貨物の箱を抱え、前に赤い窓の操縦室、後ろに赤く光るエンジン 3 基。
+   * 敵の色 (暗い灰と赤) にそろえ、貨物の箱だけ錆びた橙と灰で塗り分ける。上に黄色い標識灯 (落とす目標の目印)
+   */
+  const TRANSPORT_MAT = {
+    cargoA: new THREE.MeshPhongMaterial({ color: 0x8a4a22, shininess: 20, flatShading: true }),
+    cargoB: new THREE.MeshPhongMaterial({ color: 0x55585f, shininess: 20, flatShading: true })
+  };
+  function makeTransport() {
+    const g = new THREE.Group();
+    const body = new THREE.Group();
+    g.add(body);
+    const hull = ENEMY_MAT.hull.clone(), cargoA = TRANSPORT_MAT.cargoA.clone(), cargoB = TRANSPORT_MAT.cargoB.clone();
+    // 背骨
+    body.add(mesh(new THREE.BoxGeometry(3.2, 3.2, 30), ENEMY_MAT.dark, 0, 0, 0));
+    // 貨物の箱: 前後 3 段 x 上下左右 4 つ (段ごとに色を入れ替える)
+    for (let k = 0; k < 3; k++) {
+      const z = -8 + k * 8.5;
+      [[0, 4.6], [0, -4.6], [4.6, 0], [-4.6, 0]].forEach(function (q, j) {
+        const m = (k + j) % 2 ? cargoA : cargoB;
+        body.add(mesh(new THREE.BoxGeometry(q[0] ? 5.4 : 7.6, q[0] ? 7.6 : 5.4, 7.4), m, q[0], q[1], z));
+      });
+      // 箱を留める帯
+      body.add(mesh(new THREE.BoxGeometry(15.2, 1.0, 0.8), ENEMY_MAT.dark, 0, 0, z - 3.6));
+      body.add(mesh(new THREE.BoxGeometry(1.0, 15.2, 0.8), ENEMY_MAT.dark, 0, 0, z - 3.6));
+    }
+    // 操縦室 (前): 先細りの箱と赤い窓
+    const cab = new THREE.CylinderGeometry(2.4, 4.4, 8, 6); cab.rotateX(-Math.PI / 2); cab.rotateZ(Math.PI / 6);
+    body.add(mesh(cab, hull, 0, 0.6, -16.5));
+    const win = mesh(new THREE.BoxGeometry(3.6, 0.7, 0.3), ENEMY_MAT.glow, 0, 2.2, -19.4);
+    win.rotation.x = -0.5;
+    body.add(win);
+    // エンジン (後ろ): 3 基が赤く光る
+    body.add(mesh(new THREE.BoxGeometry(11, 6, 5), hull, 0, 0, 16.5));
+    [[-3.6, -0.6], [3.6, -0.6], [0, 1.8]].forEach(function (q) {
+      const e = new THREE.CylinderGeometry(1.5, 1.7, 2.4, 8); e.rotateX(Math.PI / 2);
+      body.add(mesh(e, ENEMY_MAT.dark, q[0], q[1], 19.6));
+      const n = new THREE.CircleGeometry(1.2, 8);
+      body.add(mesh(n, ENEMY_MAT.glow, q[0], q[1], 20.85));
+      const gl = glowSprite(0xff4a40, 9, 0.9); gl.position.set(q[0], q[1], 22); body.add(gl);
+    });
+    // 黄色い標識灯 (上と下): 遠くからでも「落とす目標」と分かるように
+    [7.6, -7.6].forEach(function (y) {
+      const b = glowSprite(0xffc040, 7, 1); b.position.set(0, y + 1.2 * Math.sign(y), -8); body.add(b);
+      body.add(mesh(new THREE.SphereGeometry(0.5, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffd060 }), 0, y + 0.6 * Math.sign(y), -8));
+    });
+    g.userData = { body: body, mats: [hull, cargoA, cargoB] };
     return g;
   }
 
@@ -2346,6 +2397,29 @@
         sn({ atk: 0.5, dur: 0.5, vol: 0.2, type: 'bandpass', f0: 300, f1: 2400, glide: 0.6, q: 1.1, rev: 0.5 });
         sv({ at: 0.45, type: 'sine', f0: 120, f1: 40, dur: 0.9, vol: 0.25, heavy: true, rev: 0.4 });
       },
+      // 補給船団の知らせ・ワープ準備: 明るい 2 音の呼び出し (警報より軽い。目標が来たことを知らせる)
+      convoyAlert: function () {
+        [0, 0.22].forEach(function (t, i) { sv({ at: t, type: 'square', f0: i ? 1175 : 880, f1: i ? 1175 : 880, atk: 0.005, dur: 0.16, vol: 0.05, lp: 3000 }); });
+        sv({ type: 'sine', f0: 110, f1: 70, dur: 0.4, vol: 0.18, heavy: true });
+      },
+      // 増援が後ろからワープしてくる: 下がる短い警告 2 回 + ワープのひび
+      reinforce: function () {
+        [0, 0.18].forEach(function (t) { sv({ at: t, type: 'sawtooth', f0: 700, f1: 420, atk: 0.005, dur: 0.14, vol: 0.03, lp: 2400 }); });
+        sn({ at: 0.05, dur: 0.06, vol: 0.14, type: 'highpass', f0: 2500, f1: 1500 });
+        sv({ at: 0.05, type: 'sine', f0: 95, f1: 40, dur: 0.6, vol: 0.14, heavy: true });
+      },
+      // 輸送船が逃げる: 上がっていく吸い込みの音 + 遠いひび。遠いほど小さい
+      escape: function (near) {
+        near = near === undefined ? 1 : near;
+        sn({ atk: 0.25, dur: 0.3, vol: 0.18 * near, type: 'bandpass', f0: 500, f1: 3500, glide: 0.5, q: 1.5, rev: 0.5 });
+        sv({ at: 0.45, type: 'sine', f0: 140, f1: 50, dur: 0.6, vol: 0.25 * near, heavy: true, rev: 0.3 });
+      },
+      // 補給船団の結果: 落とした数だけ上がっていく澄んだ音 → 締めの低い音
+      tally: function (n) {
+        n = n || 0;
+        for (let i = 0; i < n; i++) sv({ at: 0.3 + i * 0.18, type: 'sine', f0: 880 * Math.pow(2, i * 3 / 12), f1: 880 * Math.pow(2, i * 3 / 12), atk: 0.005, dur: 0.35, vol: 0.06, rev: 0.4 });
+        sv({ at: 0.35 + n * 0.18, type: 'sine', f0: n ? 220 : 110, f1: n ? 220 : 98, atk: 0.02, dur: 0.9, vol: 0.2, heavy: true, rev: 0.4 });
+      },
       // ワープ (暗転の中を飛ぶ 2.4 秒): 上がり続ける唸り + 高く掃く風 + 速くなる脈。抜ける直前にいちばん高く
       hyper: function () {
         const d = WARP_SEC;
@@ -2903,6 +2977,8 @@
     blackOn = false; $('blackout').hidden = true;
     if (clearAnim) { clearAnim.cancel(); clearAnim = null; }
     $('stageClear').hidden = true;
+    if (convoyAnim) { convoyAnim.cancel(); convoyAnim = null; }
+    $('convoyResult').hidden = true;
     fx.clearAt = 0; fx.warpAt = 0;
     warp.on = false; warp.exitT = 0; $('warp').hidden = true;
   }
@@ -2979,6 +3055,28 @@
     ], { duration: 3000, easing: 'ease-out' });
     clearAnim.onfinish = function () { el.hidden = true; clearAnim = null; };
     audio.clearSting();
+  }
+  // 補給船団の結果: 落とした数・逃げた数と、戦艦の砲台がいくつ減ったかを札で見せる
+  let convoyAnim = null;
+  function showConvoyResult(e) {
+    const el = $('convoyResult');
+    fx.banners.length = 0;   // 逃げた・落とした の知らせは札がまとめるので消す (札と重なった)
+    let marks = '';
+    for (let i = 0; i < e.total; i++) marks += '<span class="cv-ship' + (i < e.down ? ' down' : '') + '"></span>';
+    $('cvMarks').innerHTML = marks;
+    $('cvCount').textContent = '輸送船 ' + e.down + ' / ' + e.total + ' 撃破';
+    $('cvEffect').textContent = e.turrets > 0 ? '戦艦の砲台 ' + e.turrets + ' 基 減少' : '戦艦は 万全の態勢で来る';
+    el.classList.toggle('none', e.turrets === 0);
+    el.hidden = false;
+    if (convoyAnim) convoyAnim.cancel();
+    convoyAnim = el.animate([
+      { opacity: 0, transform: 'translateY(10px)', offset: 0 },
+      { opacity: 1, transform: 'translateY(0)', offset: 0.1 },
+      { opacity: 1, transform: 'translateY(0)', offset: 0.85 },
+      { opacity: 0, transform: 'translateY(-6px)', offset: 1 }
+    ], { duration: 4000, easing: 'ease-out' });
+    convoyAnim.onfinish = function () { el.hidden = true; convoyAnim = null; };
+    audio.tally(e.down);
   }
   function updateTransitions() {
     if (!game) return;
@@ -3102,6 +3200,19 @@
           break;
         case 'aceDown': banner(e.text, 3, '#ffd27a', true); fx.slowT = 1.0; shake(1.5); audio.big(); bossMusic = false; setTimeout(syncMusic, 0); fx.clearAt = game.t + 0.6; fx.clearLevel = game.level; break;
         case 'escorts': banner('護衛機 発進', 1.8, '#ff8a7a'); break;
+        // 1 面の補給船団
+        case 'convoy': banner(e.text, 3, '#7fe3ff', true); banner(e.sub, 3, '#cfe8ff'); audio.convoyAlert(); break;
+        case 'reinforce': banner(e.text, 2.2, '#ff8a7a', true); audio.reinforce(); flash(e.pos, 300, 0.4, 0x80c0ff); break;
+        case 'convoyWarn': banner(e.text, 2.4, '#ffd27a'); audio.convoyAlert(); break;
+        case 'transportDown': banner(e.text, 1.8, '#7fe3ff'); break;
+        case 'transportEscape':
+          // 逃げた輸送船: 青い光に吸い込まれて消える
+          flash(e.pos, 260, 0.5, 0x80c0ff);
+          shockRing(e.pos, 220, 0.6, 0x80c0ff);
+          audio.escape(nearOf(dist3(e.pos, pl.pos)));
+          banner('輸送船 ワープで逃走', 1.8, '#ffb26a');
+          break;
+        case 'convoyResult': showConvoyResult(e); break;
         case 'drones': banner('迎撃機 接近', 1.4, '#ff8a7a'); break;
         case 'bossWarp':
           // 光の中から出はじめる瞬間: 赤い閃光・大きな衝撃波・揺れ・轟音
@@ -3158,7 +3269,7 @@
       seen.add(f.id);
       let o = enemyObjs.get(f.id);
       if (!o) {
-        o = makeEnemyShip(f.ace);
+        o = f.transport ? makeTransport() : makeEnemyShip(f.ace);
         if (f.drone) o.scale.setScalar(0.6); // ドローンは小さく
         if (f.ace) o.scale.setScalar(C.TUNING.aceScale); // エース機は大きく
         enemyObjs.set(f.id, o); scene.add(o);
@@ -3518,7 +3629,7 @@
         const d = dist3(t.pos, pl.pos);
         const isFocus = pl.focus && pl.focus.target === t;
         const isTarget = pl.targetId === t.id;
-        const col = isTarget ? '255,214,106' : t.kind === 'fighter' ? '255,90,90' : t.kind === 'turret' ? '255,170,80' : '255,80,200';
+        const col = isTarget ? '255,214,106' : t.transport ? '110,225,255' : t.kind === 'fighter' ? '255,90,90' : t.kind === 'turret' ? '255,170,80' : '255,80,200';
         const on = !s.behind && s.x > 10 && s.x < W - 10 && s.y > 10 && s.y < H - 10;
         if (on) {
           markers++;
@@ -3809,12 +3920,36 @@
 
     // 帯の文字 (段階・警告)
     fx.cardT = Math.max(0, (fx.cardT || 0) - dt);
+    // 補給船団の間: 上の真ん中に、輸送船の残り (落とした = 水色・逃げた = 暗い赤・残り = 枠だけ) とワープまでの秒数
+    const cv = game.convoy;
+    if (cv && game.stage === 'convoy') {
+      const n = cv.total, bw = 22, gap = 7, x0 = W / 2 - (n * bw + (n - 1) * gap) / 2, y0 = 14;
+      c.fillStyle = 'rgba(2,8,20,.5)';
+      c.fillRect(x0 - 70, y0 - 4, n * bw + (n - 1) * gap + 140, 30);
+      c.textAlign = 'right'; c.font = '600 11px -apple-system, sans-serif'; c.fillStyle = '#8fdcff';
+      c.fillText('補給船団', x0 - 8, y0 + 13);
+      for (let i = 0; i < n; i++) {
+        const x = x0 + i * (bw + gap);
+        if (i < cv.down) { c.fillStyle = '#6fd8ff'; c.fillRect(x, y0 + 4, bw, 9); }
+        else if (i < cv.down + cv.escaped) { c.fillStyle = 'rgba(200,90,80,.55)'; c.fillRect(x, y0 + 4, bw, 9); }
+        else { c.strokeStyle = 'rgba(150,220,255,.8)'; c.lineWidth = 1.2; c.strokeRect(x + 0.5, y0 + 4.5, bw - 1, 8); }
+      }
+      const left = Math.max(0, Math.ceil(C.TUNING.convoyTime - cv.t));
+      c.textAlign = 'left'; c.font = '700 12px -apple-system, sans-serif';
+      c.fillStyle = left <= C.TUNING.convoyWarnAt ? '#ffb26a' : '#cfe8ff';
+      if (cv.down + cv.escaped < n) c.fillText('ワープまで ' + left, x0 + n * bw + (n - 1) * gap + 8, y0 + 13);
+      hudInfo.convoy = { down: cv.down, escaped: cv.escaped, left: left };
+    } else hudInfo.convoy = null;
+
     fx.banners = fx.banners.filter(function (bn) { if (bn.delay > 0) { bn.delay -= dt; return true; } return (bn.t -= dt) > 0; });
-    fx.banners.forEach(function (bn, i) {
+    // 同時に出ている知らせは、1 つ目をいつもの位置に置き、2 つ目からはその下へ順に積む (重ならないように)
+    let below = 0;
+    fx.banners.forEach(function (bn) {
       if (bn.delay > 0) return;
       const k = 1 - bn.t / bn.max;
       const a = Math.min(1, k * 6, bn.t * 2);
-      const y = H * (bn.big ? 0.36 : 0.26) + i * 30;
+      const y = below ? below + (bn.big ? 30 : 22) : H * (bn.big ? 0.36 : 0.26);
+      below = y + (bn.big ? 12 : 8);
       c.textAlign = 'center';
       c.font = (bn.big ? '800 28px' : '700 17px') + ' -apple-system, sans-serif';
       c.globalAlpha = a;
@@ -4139,6 +4274,7 @@
       transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center'), warp: warp.on && !warp.exitT, warpExit: !!warp.exitT, warpShown: !$('warp').hidden }; },
       stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
       banners: function () { return fx.banners.map(function (b) { return b.text; }); },
+      convoy: function () { const el = $('convoyResult'); return { hud: hudInfo.convoy, result: !el.hidden, text: el.hidden ? '' : $('cvCount').textContent + ' / ' + $('cvEffect').textContent, transports: game ? game.fighters.filter(function (f) { return f.transport; }).map(function (f) { const o = enemyObjs.get(f.id); return { id: f.id, model: !!o && o.userData.mats.length === 3 }; }) : [] }; },
       aceLook: function () { const f = game.ace, o = f && enemyObjs.get(f.id); return o ? { scale: o.scale.x, color: o.userData.mats[0].color.getHexString() } : null; },
       enemyScale: function (id) { const o = enemyObjs.get(id); return o ? o.scale.x : 0; },
       bossClipX: function () { return bossClip.constant; },

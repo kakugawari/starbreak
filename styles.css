@@ -70,6 +70,23 @@ body {
 }
 
 /* 面の終わり: STAGE CLEAR (札と同じ細い字・グラデーション) と、次の面へ移る暗転 */
+/* 補給船団の結果の札: 画面の上寄り真ん中。落とした輸送船は水色、逃げた物は暗く */
+#convoyResult {
+  position: absolute; left: 50%; top: 18%; width: 300px; margin-left: -150px; box-sizing: border-box;
+  padding: 12px 16px 14px; text-align: center; pointer-events: none;
+  background: linear-gradient(180deg, rgba(4, 12, 26, .78), rgba(4, 10, 22, .62));
+  border: 1px solid rgba(120, 220, 255, .55); border-radius: 6px;
+  box-shadow: 0 0 18px rgba(80, 190, 255, .25);
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", -apple-system, sans-serif; color: #dff4ff;
+}
+#convoyResult .cv-head { font-size: 12px; letter-spacing: .4em; padding-left: .4em; color: #8fdcff; }
+#convoyResult .cv-marks { margin: 8px 0 6px; display: flex; justify-content: center; gap: 10px; }
+#convoyResult .cv-ship { width: 26px; height: 10px; border-radius: 2px; border: 1px solid rgba(160, 180, 200, .5); background: rgba(80, 90, 105, .35); position: relative; }
+#convoyResult .cv-ship.down { border-color: #8fe6ff; background: linear-gradient(90deg, #4fc3ff, #a8f0ff); box-shadow: 0 0 8px rgba(110, 220, 255, .8); }
+#convoyResult .cv-count { font-size: 18px; font-weight: 700; letter-spacing: .06em; }
+#convoyResult .cv-effect { margin-top: 4px; font-size: 14px; font-weight: 600; color: #ffd27a; }
+#convoyResult.none .cv-effect { color: #ff9a8a; }
+
 #stageClear {
   position: absolute; left: 0; right: 0; top: 30%;
   text-align: center; pointer-events: none; will-change: transform, opacity;

@@ -632,7 +632,7 @@ async function run() {
     // 大きな出来事の音は、連射するレーザーよりはっきり大きい (重さの差)
     const allSfx = await page.evaluate(() => {
       const res = {};
-      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut']) {
+      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut', 'convoyAlert', 'reinforce', 'escape', 'tally']) {
         try { window.__app.sfx(n); res[n] = 'ok'; } catch (e) { res[n] = e.message; }
       }
       const t0 = performance.now(); let mx = 0;
@@ -641,8 +641,8 @@ async function run() {
       return res;
     });
     const bad = Object.keys(allSfx).filter((k) => k !== 'max' && allSfx[k] !== 'ok');
-    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '24 種'})`);
-    if (gMax !== null) ok(allSfx.max < 0.99, `24 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
+    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '28 種'})`);
+    if (gMax !== null) ok(allSfx.max < 0.99, `28 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
     await page.waitForTimeout(3000);
     const warpMax = await sfxMax('warp');
     if (gMax !== null) ok(warpMax > gMax * 1.5, `巨大戦艦のワープの音は、レーザーよりはっきり大きい (ワープ ${warpMax.toFixed(3)} / レーザー ${gMax.toFixed(3)})`);
@@ -659,6 +659,33 @@ async function run() {
     else ok(level.max > 0.005 && level.max < 1.0, `撃つと音が鳴り、割れない (最大 ${level.max.toFixed(3)})`);
 
     // ------------------------------------------------ 負け → 結果
+    section('1 面の補給船団 (第1波のあと)');
+    await page.evaluate(() => { const g = window.__app.game(); if (g.stage === 'intro' || g.stage === 'wave1') { g.stage = 'wave1'; g.fighters = []; } });
+    await page.waitForFunction(() => window.__app.game().stage === 'convoy', null, { timeout: 60000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const cv0 = await page.evaluate(() => window.__app.convoy());
+    ok(cv0.transports.length === 4 && cv0.transports.every((t) => t.model), `輸送船が 4 隻、輸送船の形で出る (${cv0.transports.length} 隻)`);
+    ok(cv0.hud && cv0.hud.down === 0 && cv0.hud.left > 40, `上に補給船団の残りとワープまでの秒数が出る (${JSON.stringify(cv0.hud)})`);
+    ok(await page.evaluate(() => window.__app.banners().some((b) => b.indexOf('補給船団') >= 0)), '「補給船団 接近」の知らせ');
+    // 4 隻とも落とす (輸送船を貫く自機の弾を置く)
+    await page.evaluate(() => {
+      const g = window.__app.game();
+      g.fighters.filter((f) => f.transport).forEach((s) => {
+        s.hp = 0.01;
+        const p = { x: s.pos.x + s.dir.x * 2, y: s.pos.y + s.dir.y * 2, z: s.pos.z + s.dir.z * 2 }, q = { x: s.pos.x - s.dir.x * 40, y: s.pos.y - s.dir.y * 40, z: s.pos.z - s.dir.z * 40 };
+        g.shots.push({ owner: 'player', pos: p, prev: q, vel: { x: -s.dir.x * 600, y: -s.dir.y * 600, z: -s.dir.z * 600 }, life: 1, dmg: 5, dead: false });
+      });
+    });
+    await page.waitForFunction(() => window.__app.game().convoy.down === 4 && window.__app.game().convoy.reinforced, null, { timeout: 30000 });
+    ok(await page.evaluate(() => window.__app.convoy().hud.down === 4), '落とした輸送船が上の印に出る (4 / 4)');
+    await page.evaluate(() => { window.__app.game().fighters.forEach((f) => { f.alive = false; }); });
+    await page.waitForFunction(() => window.__app.convoy().result, null, { timeout: 30000 });
+    const cvr = await page.evaluate(() => window.__app.convoy());
+    ok(cvr.text === '輸送船 4 / 4 撃破 / 戦艦の砲台 4 基 減少', `敵を片づけると結果の札が出る (${cvr.text})`);
+    await page.waitForFunction(() => window.__app.game().boss, null, { timeout: 60000 });
+    const tur = await page.evaluate(() => window.__app.game().boss.parts.filter((p) => p.kind === 'turret').map((p) => p.alive ? 1 : 0).join(''));
+    ok((tur.match(/0/g) || []).length === 4, `巨大戦艦は砲台が 4 基壊れた状態で来る (${tur})`);
+
     section('撃墜されたとき');
     await page.evaluate(() => {
       const g = window.__app.game();

@@ -397,6 +397,64 @@ test('ボスを沈めたら、次の面へ移る少し前に暗転の知らせ (
   assert.strictEqual(g.level, 2);
 });
 
+test('1 面の補給船団: 第1波のあと輸送船が護衛機と来て、途中で後ろから増援。残りは時間でワープして逃げ、落とした数だけ戦艦の砲台が減る', () => {
+  const g = C.createGame({ seed: 3 });
+  g.fighters = [];
+  const ev = [];
+  const grab = (gg) => { gg.events.forEach((e) => ev.push(e)); gg.events.length = 0; return {}; };
+  run(g, 3, grab, 1 / 30);
+  assert.strictEqual(g.stage, 'convoy', '第1波のあとは補給船団');
+  const ships = g.fighters.filter((f) => f.transport), escorts = g.fighters.filter((f) => f.guard);
+  assert.strictEqual(ships.length, T.convoyCount);
+  assert.strictEqual(escorts.length, T.convoyEscorts);
+  assert.ok(ev.some((e) => e.type === 'convoy'), '知らせが出る');
+  // 輸送船は自機より遅く、まっすぐ進む。護衛機は輸送船の横に付き、自機が遠いうちは撃たない
+  const p0 = Object.assign({}, ships[0].pos);
+  g.player.pos = C.add(ships[0].pos, C.vec(0, 900, 0));   // 遠くに置く (近づかない)
+  const shots0 = g.shots.length;
+  run(g, 5, (gg) => { gg.player.pos = C.add(gg.fighters.find((f) => f.transport).pos, C.vec(0, 900, 0)); return grab(gg); }, 1 / 30);
+  const moved = C.dist(p0, ships[0].pos);
+  assert.ok(moved > T.convoySpeed * 4 && moved < T.convoySpeed * 6, `輸送船は ${T.convoySpeed}m/s で進む (5 秒で ${moved.toFixed(0)}m)`);
+  assert.ok(escorts.every((e) => e.mode === 'guard'), '自機が遠いうちは、護衛機は輸送船の横に付いたまま');
+  assert.strictEqual(g.shots.filter((s) => s.owner === 'enemy').length, 0, '遠いうちは誰も撃たない');
+  assert.ok(escorts.every((e) => C.dist(e.pos, g.fighters.find((f) => f.id === e.guard).pos) < 120), '護衛機は輸送船のそばにいる');
+  // 3 隻を落とす (体力を少しにして、輸送船を貫く自機の弾を置く。撃墜の道すじをそのまま通す)
+  assert.ok(!g.convoy.reinforced, 'まだ増援は来ていない');
+  ships.slice(0, 3).forEach((s) => { s.hp = 0.01; g.shots.push({ owner: 'player', pos: C.add(s.pos, C.scale(s.dir, 2)), prev: C.add(s.pos, C.scale(s.dir, -40)), vel: C.scale(s.dir, -600), life: 1, dmg: 5, dead: false }); });
+  run(g, 0.2, grab, 1 / 60);
+  assert.strictEqual(g.convoy.down, 3, '3 隻落とした');
+  assert.ok(ev.some((e) => e.type === 'reinforce'), '輸送船を落とすと、後ろから増援が来る');
+  // 時間が来ると残りの 1 隻はワープで逃げる。敵機を片づけると結果が出る
+  run(g, T.convoyTime + 1, (gg) => { gg.fighters = gg.fighters.filter((f) => f.transport); return grab(gg); }, 1 / 30);
+  const res = ev.find((e) => e.type === 'convoyResult');
+  assert.ok(ev.some((e) => e.type === 'convoyWarn'), 'ワープの 10 秒前に知らせ');
+  assert.ok(ev.some((e) => e.type === 'transportEscape'), '残りは逃げる');
+  assert.ok(res && res.down === 3 && res.escaped === 1 && res.turrets === 3, `結果: 3 撃破・1 逃走・砲台 3 基減 (${JSON.stringify(res)})`);
+  // 戦艦は砲台が 3 つ壊れた状態で来る
+  run(g, T.convoyResultWait + 1, grab, 1 / 30);
+  assert.ok(g.boss && g.boss.type === 'battleship');
+  const tur = g.boss.parts.filter((p) => p.kind === 'turret');
+  assert.strictEqual(tur.filter((p) => !p.alive && p.preDestroyed).length, 3, '落とした数だけ砲台が壊れている');
+  assert.strictEqual(tur.filter((p) => p.alive).length, tur.length - 3);
+});
+
+test('補給船団は 1 面だけ。「巨大戦艦から」と、面のやり直しでは砲台は全部そろう', () => {
+  const g2 = C.createGame({ seed: 4, start: 'stage', level: 2 });
+  run(g2, T.stageIntro + 0.5, {}, 1 / 30);
+  g2.fighters = [];
+  run(g2, 3, (gg) => { gg.events.length = 0; return {}; }, 1 / 30);
+  assert.strictEqual(g2.stage, 'wave2', '2 面の第2波はふつうの編隊');
+  const gb = C.createGame({ seed: 5, start: 'boss' });
+  run(gb, 0.1, {}, 1 / 30);
+  assert.ok(gb.boss.parts.filter((p) => p.kind === 'turret').every((p) => p.alive), '巨大戦艦から始めると、砲台は全部ある');
+  // 補給船団を落とした回でも、負けて続けると砲台は全部ある (やり直しの面では、もう一度補給船団から)
+  const g = C.createGame({ seed: 6 });
+  g.convoy = { total: 4, down: 4, escaped: 0, t: 0, done: true };
+  g.player.alive = false; g.state = 'over';
+  const c = C.continueGame(g, 9);
+  assert.ok(!c.convoy, 'やり直しでは補給船団の結果は残らない');
+});
+
 test('負けたら、その面の始まりから続けられる: 機体は直り、成績はその面を始めたときに戻り、続けた回数が残る', () => {
   const g = C.createGame({ seed: 5 });
   g.stats.score = 1234; g.stats.kills = 9;

@@ -230,6 +230,13 @@
     fortTurretHp: 12, fortEngineHp: 26, fortCoreHp: 55, fortFire: 1.1, fortCannon: 0.8, fortEscorts: 3, fortFaceCos: 0.6,
     // ロックオンの追いかけ: スティックを followCancel より大きく倒したらやめる。ボスの部位から followBreak (m) まで近づいたら、followAwayTime 秒離れてから向き直す
     followCancel: 0.75, followBreak: 200, followAwayTime: 2.5,
+    // 1 面の前哨戦「補給船団」: 第1波のあと、戦艦へ向かう輸送船 (convoyCount 隻) が護衛機に守られて横切る。
+    // convoyTime 秒たつと残りはワープで逃げる。落とした数だけ、戦艦の砲台が壊れた状態で始まる (convoyTurretOrder の順)。
+    // 途中 (reinforceAt 秒か、1 隻目を落としたとき) に、後ろから増援 (reinforceCount 機) がワープしてくる
+    convoyCount: 4, convoyHp: 30, convoySpeed: 26, convoyRadius: 15, convoyTime: 45, convoyWarnAt: 10,
+    convoyEscorts: 2, convoyAhead: 650, convoyGap: 75, convoyGuardRange: 420,
+    convoyGunRange: 320, convoyGunCd: 3.2, convoyGunDamage: 3,
+    reinforceAt: 15, reinforceCount: 2, reinforceBehind: 650, convoyResultWait: 4.5,
     drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
     // 面の終わりの余韻: 撃沈の演出が始まってから次の面へ進むまで (秒)・暗転を始めるのは進む何秒前か
     bossEndWait: 10.6, stageOutLead: 3.0,
@@ -760,6 +767,9 @@
     };
   }
 
+  // 補給船団の輸送船を落とした数だけ、戦艦の砲台をこの順で壊れた状態にする (上の前・下の後ろ・下の前・上の後ろ… とばらす)
+  const CONVOY_TURRET_ORDER = [0, 5, 3, 1];
+
   // 敵の編隊の置き方 (自機からの相対位置)。1 面の第1波だけ高さをばらけさせる
   const WAVE_OFFS = {
     1: [
@@ -790,6 +800,55 @@
       g.fighters.push(makeFighter(g, pos, sub(p, pos)));
     }
     emit(g, 'stage', { text: L + (n === 1 ? '第1波  敵戦闘機 ' + offs.length + '機' : '第2波  ' + offs.length + '機' + (n === 2 && offs.some(function (o) { return o.z > 0; }) ? '  後方にも注意' : '')) });
+  }
+
+  /**
+   * 1 面の前哨戦「補給船団」: 自機の前方を、戦艦へ向かう輸送船の列が横切って遠ざかる。護衛機が付く。
+   * 列の進む向きは、戦う場所の中心のまわりを回る向き (まっすぐ進んでも戦う場所の外へ出ない) のうち、自機から遠ざかる方
+   */
+  function spawnConvoy(g) {
+    const pl = g.player;
+    let f = vec(pl.dir.x, 0, pl.dir.z); f = len(f) > 1e-3 ? norm(f) : vec(0, 0, -1);
+    let start = add(addScaled(pl.pos, f, T.convoyAhead), vec(0, 30, 0));
+    const c = T.arenaCenter, fromC = sub(start, c);
+    const r = len(vec(fromC.x, 0, fromC.z));
+    if (r > 1500) start = add(c, vec(fromC.x * 1500 / r, start.y, fromC.z * 1500 / r));
+    const rc = norm(vec(start.x - c.x, 0, start.z - c.z));
+    let head = vec(-rc.z, 0, rc.x);
+    if (dot(head, f) < 0) head = scale(head, -1);
+    const side = vec(-head.z, 0, head.x);
+    g.convoy = { total: T.convoyCount, down: 0, escaped: 0, t: 0, warned: false, reinforced: false, done: false };
+    const ships = [];
+    for (let i = 0; i < T.convoyCount; i++) {
+      const pos = add(addScaled(start, head, -i * T.convoyGap), vec(0, (i % 2 ? 1 : -1) * 18, 0));
+      const s = makeFighter(g, pos, head);
+      s.transport = true;
+      s.hp = s.maxHp = T.convoyHp; s.radius = T.convoyRadius;
+      s.speed = T.convoySpeed; s.vel = scale(head, T.convoySpeed);
+      s.fireCd = rand(g, 1, T.convoyGunCd); s.weave = rand(g, 0, 6);
+      g.fighters.push(s); ships.push(s);
+    }
+    for (let i = 0; i < T.convoyEscorts; i++) {
+      const at = ships[Math.min(ships.length - 1, i + (i > 0 ? 1 : 0))];
+      const off = add(scale(side, (i % 2 ? 1 : -1) * 55), vec(0, 25, 0));
+      const e = makeFighter(g, add(at.pos, off), head);
+      e.guard = at.id; e.guardOff = off; e.mode = 'guard';
+      g.fighters.push(e);
+    }
+    emit(g, 'convoy', { n: T.convoyCount, text: '補給船団 接近  輸送船を落とせ', sub: '落とした数だけ 戦艦の砲台が減る' });
+  }
+  // 増援: 自機の後ろからワープしてくる
+  function reinforce(g) {
+    const pl = g.player;
+    let f = vec(pl.dir.x, 0, pl.dir.z); f = len(f) > 1e-3 ? norm(f) : vec(0, 0, -1);
+    const side = vec(-f.z, 0, f.x);
+    const base = addScaled(pl.pos, f, -T.reinforceBehind);
+    for (let i = 0; i < T.reinforceCount; i++) {
+      const pos = add(addScaled(base, side, (i - (T.reinforceCount - 1) / 2) * 90), vec(0, rand(g, -30, 50), 0));
+      g.fighters.push(makeFighter(g, pos, sub(pl.pos, pos)));
+    }
+    g.convoy.reinforced = true;
+    emit(g, 'reinforce', { n: T.reinforceCount, pos: base, text: '増援  後方より ' + T.reinforceCount + '機' });
   }
 
   /**
@@ -864,6 +923,14 @@
         fireCd: rand(g, 1.5, 3.5), flash: 0, aim: vec(0, 1, 0)
       };
     });
+    // 1 面: 補給船団の輸送船を落とした数だけ、砲台が壊れた状態で始まる
+    if (type === 'battleship' && g.convoy && g.convoy.down > 0) {
+      const turrets = parts.filter(function (p) { return p.kind === 'turret'; });
+      for (let i = 0; i < Math.min(g.convoy.down, CONVOY_TURRET_ORDER.length); i++) {
+        const p = turrets[CONVOY_TURRET_ORDER[i]];
+        p.alive = false; p.hp = 0; p.preDestroyed = true;
+      }
+    }
     return {
       type: type, level: g.level, size: k, rot: rot, spin: 0,
       pos: copy(from), at: at, from: from, portal: portal, vel: vec(), arriveT: 0, shown: false, emerge: 0,
@@ -1066,6 +1133,11 @@
       // ボスの部位を追うと、そのまま船体へ突っ込んでこすり続けた (子どもの操作をまねて測ると、痛手の 8 割がこすり)。
       // 近づきすぎたら部位の外向き (面の向き) へいったん離れ、離れてから向き直す。前に船体があれば、よける向きへ
       pl.followAway = Math.max(0, (pl.followAway || 0) - dt);
+      // 輸送船は大きく遅いので、追いつくと突っ込む。近づいたら上へ抜けてから向き直す
+      if (sel.transport) {
+        if (dist(sel.pos, pl.pos) < 70) pl.followAway = 1.4;
+        if (pl.followAway > 0) aimAt = add(pl.pos, add(scale(pl.dir, 100), vec(0, 70, 0)));
+      }
       if (sel.face && g.boss) {
         if (dist(sel.pos, pl.pos) < T.followBreak) pl.followAway = T.followAwayTime;
         if (pl.followAway > 0) aimAt = add(pl.pos, add(scale(sel.face, 100), scale(pl.dir, 60)));
@@ -1283,8 +1355,12 @@
     t.alive = false;
     if (t.kind === 'fighter') {
       g.stats.kills++;
-      emit(g, 'explode', { pos: t.pos, size: t.ace ? 3.6 : 1.4, vel: t.vel, kind: 'fighter' });
-      addScore(g, t.ace ? 2000 : 100, t.pos);
+      emit(g, 'explode', { pos: t.pos, size: t.ace ? 3.6 : t.transport ? 3 : 1.4, vel: t.vel, kind: 'fighter' });
+      addScore(g, t.ace ? 2000 : t.transport ? 500 : 100, t.pos);
+      if (t.transport && g.convoy) {
+        g.convoy.down++;
+        emit(g, 'transportDown', { pos: t.pos, down: g.convoy.down, total: g.convoy.total, text: '輸送船 撃破  ' + g.convoy.down + ' / ' + g.convoy.total });
+      }
       if (t.ace) emit(g, 'aceDown', { pos: t.pos, text: 'エース機 撃墜' });
     } else {
       emit(g, 'explode', { pos: t.pos, size: t.kind === 'core' ? 4 : 2.6, kind: t.kind });
@@ -1292,7 +1368,7 @@
     }
   }
 
-  function hurtPlayer(g, amount, from) {
+  function hurtPlayer(g, amount, from, src) {
     const pl = g.player;
     if (g.state !== 'play' || !pl.alive) return;
     g.stats.damage += amount;
@@ -1300,7 +1376,7 @@
     const s = Math.min(pl.shield, amount);
     pl.shield -= s;
     pl.hull -= amount - s;
-    emit(g, 'playerHit', { amount: amount, shieldOnly: amount - s === 0, from: from });
+    emit(g, 'playerHit', { amount: amount, shieldOnly: amount - s === 0, from: from, src: src || 'other' });
     if (pl.hull <= 0) {
       pl.hull = 0;
       pl.alive = false;
@@ -1311,10 +1387,11 @@
     }
   }
 
-  function enemyShot(g, from, dir, dmg, speed) {
+  // src は撃った物の種類 (痛手がどこから来たかを測るため。playerHit に載せる)
+  function enemyShot(g, from, dir, dmg, speed, src) {
     g.shots.push({
       owner: 'enemy', pos: copy(from), prev: copy(from), vel: scale(norm(dir), speed),
-      life: T.enemyShotLife * (speed < 250 ? 1.9 : 1), dmg: dmg, dead: false
+      life: T.enemyShotLife * (speed < 250 ? 1.9 : 1), dmg: dmg, dead: false, src: src || 'enemy'
     });
   }
 
@@ -1345,6 +1422,7 @@
         f.bank = Math.sin(f.life * 3) * 0.3;
         continue;
       }
+      if (f.transport) { updateTransport(g, f, dt); continue; }
       const toP = sub(pl.pos, f.pos);
       const d = len(toP);
       const ic = intercept(f.pos, pl.pos, pl.vel, T.enemyShotSpeed);
@@ -1353,7 +1431,18 @@
       let speed = T.fighterSpeed * f.skill;
 
       f.modeT -= dt;
-      if (f.mode === 'attack') {
+      // 補給船団の護衛: 自機が近づくか、撃たれるか、守る輸送船が落ちるまでは、輸送船の横に付いて飛ぶ
+      if (f.mode === 'guard') {
+        let ward = null;
+        for (let k = 0; k < g.fighters.length; k++) if (g.fighters[k].id === f.guard && g.fighters[k].alive) ward = g.fighters[k];
+        if (!ward || d < T.convoyGuardRange || f.hp < f.maxHp || (ward && dist(ward.pos, pl.pos) < T.convoyGuardRange)) { f.mode = 'attack'; f.modeT = 0; }
+        else {
+          desired = sub(add(addScaled(ward.pos, ward.dir, 30), f.guardOff), f.pos);
+          speed = Math.min(T.fighterSpeed, T.convoySpeed + len(desired) * 0.4);
+        }
+      }
+      if (f.mode === 'guard') { /* 上で決めた */ }
+      else if (f.mode === 'attack') {
         desired = sub(lead, f.pos);
         // 近づきすぎる前に離脱する。正面から来るときは近づく速さが大きいので早めに
         const closing = Math.max(0, -dot(sub(pl.vel, f.vel), norm(toP)));
@@ -1418,7 +1507,7 @@
         if (f.burstCd <= 0) {
           f.burst--; f.burstCd = 0.13;
           const muzzle = addScaled(f.pos, f.dir, f.ace ? 11 : 7);
-          enemyShot(g, muzzle, scatter(g, sub(lead, muzzle), T.fighterAimError), T.fighterShotDamage, T.enemyShotSpeed);
+          enemyShot(g, muzzle, scatter(g, sub(lead, muzzle), T.fighterAimError), T.fighterShotDamage, T.enemyShotSpeed, f.ace ? 'ace' : f.guard ? 'escort' : 'fighter');
           emit(g, 'enemyLaser', { pos: muzzle });
         }
       } else if (f.mode === 'attack' && f.fireCd <= 0 && pl.alive && g.state === 'play' &&
@@ -1429,6 +1518,34 @@
       }
     }
     g.fighters = g.fighters.filter(function (f) { return f.alive; });
+  }
+
+  /**
+   * 輸送船: まっすぐ (少しうねって) 進むだけ。後ろ寄りに自機が近づくと、後部の銃座から 1 発ずつ撃ち返す。
+   * 補給船団の時間 (convoyTime) が来たら、残りはワープで逃げる
+   */
+  function updateTransport(g, f, dt) {
+    const pl = g.player;
+    f.weave += dt;
+    const head = norm(vec(f.vel.x, 0, f.vel.z));
+    f.dir = norm(add(head, vec(0, Math.sin(f.weave * 0.5) * 0.06, 0)));
+    f.pos = addScaled(f.pos, scale(f.dir, f.speed), dt);
+    f.bank = Math.sin(f.weave * 0.7) * 0.08;
+    f.fireCd -= dt;
+    const toP = sub(pl.pos, f.pos), d = len(toP);
+    // 後部の銃座なので、後ろ寄り (進む向きの前 70° より外) にいるときだけ撃つ
+    if (f.fireCd <= 0 && pl.alive && g.state === 'play' && d < T.convoyGunRange && dot(f.dir, scale(toP, 1 / Math.max(d, 1e-3))) < 0.35) {
+      f.fireCd = rand(g, T.convoyGunCd * 0.8, T.convoyGunCd * 1.3);
+      const ic = intercept(f.pos, pl.pos, pl.vel, T.enemyShotSpeed);
+      const muzzle = addScaled(f.pos, norm(toP), f.radius);
+      enemyShot(g, muzzle, scatter(g, sub(ic ? ic.point : pl.pos, muzzle), T.fighterAimError * 1.5), T.convoyGunDamage, T.enemyShotSpeed, 'transport');
+      emit(g, 'enemyLaser', { pos: muzzle });
+    }
+    if (g.convoy && g.convoy.t >= T.convoyTime) {
+      f.alive = false; f.escaped = true;
+      g.convoy.escaped++;
+      emit(g, 'transportEscape', { pos: copy(f.pos), escaped: g.convoy.escaped });
+    }
   }
 
   function aliveParts(boss, kind) {
@@ -1621,7 +1738,7 @@
       const n = spread ? 3 : 1;
       for (let k = 0; k < n; k++) {
         const dir = n === 1 ? aim : rotateToward(aim, cross(norm(aim), p.face), (k - 1) * 5 * DEG);
-        enemyShot(g, from, scatter(g, dir, 2.2 * DEG), T.turretShotDamage, T.turretShotSpeed);
+        enemyShot(g, from, scatter(g, dir, 2.2 * DEG), T.turretShotDamage, T.turretShotSpeed, 'turret');
       }
       emit(g, 'turretFire', { pos: from });
     }
@@ -1652,7 +1769,7 @@
         c.t += dt;
         if (!c.hitDone && beamHits(c.from, c.dir, pl.pos, T.cannonRadius + T.playerRadius)) {
           c.hitDone = true;
-          hurtPlayer(g, T.cannonDamage, c.from);
+          hurtPlayer(g, T.cannonDamage, c.from, 'cannon');
         }
         if (c.t >= T.cannonFire) {
           c.state = 'idle';
@@ -1693,7 +1810,7 @@
       } else {
         if (pl.alive && segmentSphere(s.prev, s.pos, pl.pos, T.playerRadius) >= 0) {
           s.dead = true;
-          hurtPlayer(g, s.dmg, s.prev);
+          hurtPlayer(g, s.dmg, s.prev, s.src);
           continue;
         }
         const hit = g.boss && g.boss.phase !== 'dead' && s.life < 2.0 ? sweepHull(g, s.prev, s.pos) : false;
@@ -1712,6 +1829,13 @@
   function collidePlayer(g, dt) {
     const pl = g.player;
     pl.scrapeCd = Math.max(0, pl.scrapeCd - dt);
+    // 輸送船は大きいので、すり抜けないよう押し出す (痛手はなし)
+    for (let i = 0; i < g.fighters.length; i++) {
+      const f = g.fighters[i];
+      if (!f.transport || !f.alive) continue;
+      const dv = sub(pl.pos, f.pos), dd = len(dv), rr = f.radius + T.playerRadius;
+      if (dd < rr && dd > 1e-3) pl.pos = addScaled(f.pos, dv, rr / dd);
+    }
     if (!g.boss || g.boss.phase === 'dead' || !pl.alive) return;
     const solids = bossSolids(g.boss);
     for (let i = 0; i < solids.length; i++) {
@@ -1733,7 +1857,7 @@
       if (pl.scrapeCd <= 0) {
         pl.scrapeCd = 0.6;
         emit(g, 'scrape', { pos: pl.pos });
-        hurtPlayer(g, T.hullDamage, addScaled(pl.pos, push.normal, -5));
+        hurtPlayer(g, T.hullDamage, addScaled(pl.pos, push.normal, -5), 'scrape');
       }
     }
   }
@@ -1767,7 +1891,27 @@
       return;
     }
     if (g.stage === 'wave1' && g.fighters.length === 0) { g.stage = 'gap1'; g.stageTimer = 0; emit(g, 'waveClear'); }
-    else if (g.stage === 'gap1' && g.stageTimer > 2.5) { g.stage = 'wave2'; g.stageTimer = 0; spawnWave(g, 2); }
+    else if (g.stage === 'gap1' && g.stageTimer > 2.5) {
+      g.stageTimer = 0;
+      // 1 面の第2波は「補給船団」(輸送船と護衛機。途中で後ろから増援)
+      if (g.level === 1) { g.stage = 'convoy'; spawnConvoy(g); }
+      else { g.stage = 'wave2'; spawnWave(g, 2); }
+    }
+    else if (g.stage === 'convoy') {
+      const cv = g.convoy;
+      cv.t += dt;
+      if (!cv.reinforced && (cv.t >= T.reinforceAt || cv.down > 0)) reinforce(g);
+      if (!cv.warned && cv.t >= T.convoyTime - T.convoyWarnAt && cv.down + cv.escaped < cv.total) {
+        cv.warned = true;
+        emit(g, 'convoyWarn', { text: '輸送船 ワープ準備  あと ' + T.convoyWarnAt + ' 秒' });
+      }
+      if (g.fighters.length === 0 && cv.reinforced) {
+        cv.done = true;
+        g.stage = 'convoyEnd'; g.stageTimer = 0;
+        emit(g, 'convoyResult', { down: cv.down, total: cv.total, escaped: cv.escaped, turrets: Math.min(cv.down, CONVOY_TURRET_ORDER.length) });
+      }
+    }
+    else if (g.stage === 'convoyEnd' && g.stageTimer > T.convoyResultWait) { g.stage = 'gap2'; g.stageTimer = 99; }
     else if (g.stage === 'wave2' && g.fighters.length === 0) { g.stage = 'gap2'; g.stageTimer = 0; emit(g, 'waveClear'); }
     else if ((g.stage === 'gap2' && g.stageTimer > 3) || (g.stage === 'bossIn' && !g.boss)) {
       g.stageTimer = 0;
@@ -1862,6 +2006,7 @@
     g.stage = 'intro';
     g.stageTimer = 0;
     g.stageOutSent = false;
+    g.convoy = null;
     pl.shield = T.shieldMax; pl.hull = T.hullMax; pl.missiles = T.missileMax; pl.boost = 100;
     pl.mlock.length = 0; pl.lockT = 0; pl.locked = false; pl.lockId = 0; pl.targetId = 0; pl.follow = false;
     g.stageStats = copyStats(g.stats);
