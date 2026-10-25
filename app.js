@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.13.0';
+  const VERSION = 'v0.14.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -1661,8 +1661,39 @@
     shockRing(e.pos, kd.ring * e.size * k, 0.45);
     fx.stopT = Math.max(fx.stopT, kd.stop);
     shake(Math.max(kd.shake, Math.min(1.4, e.size * 60 / Math.max(60, d))));
-    audio.kill(game.stats.combo || 1, e.size);
+    audio.kill(game.stats.combo || 1, e.size, nearOf(d));
     lastBurst = { kind: e.kind, dist: d, k: k, ring: kd.ring * e.size * k, tAt: game.t, frozen: 0, tFrozen: game.t };
+  }
+
+  // すれ違いの音: 敵機が 90m より近くを抜けたら 1 回 (160m 離れたらまた鳴らせる)。敵の弾が 30m より近くを抜けたら 1 回
+  const flybyNear = new WeakSet(), whizzed = new WeakSet();
+  let passByCd = 0, flybyCd = 0;
+  function passBySounds(dt) {
+    const pl = game.player;
+    if (!pl.alive) return;
+    passByCd = Math.max(0, passByCd - dt);
+    flybyCd = Math.max(0, flybyCd - dt);
+    for (let i = 0; i < game.fighters.length; i++) {
+      const f = game.fighters[i];
+      if (!f.alive) continue;
+      const d = dist3(f.pos, pl.pos);
+      if (d < 90 && !flybyNear.has(f)) { flybyNear.add(f); if (flybyCd === 0) { audio.flyby(panOf(f.pos)); flybyCd = 0.35; } }
+      else if (d > 160 && flybyNear.has(f)) flybyNear.delete(f);
+    }
+    for (let i = 0; i < game.shots.length; i++) {
+      const s = game.shots[i];
+      if (s.owner !== 'enemy' || s.dead || whizzed.has(s)) continue;
+      if (dist3(s.pos, pl.pos) < 30) { whizzed.add(s); if (passByCd === 0) { audio.whiz(panOf(s.pos)); passByCd = 0.12; } }
+    }
+  }
+
+  /** 音の近さ (1 = すぐそば、0.35 = 遠い)。遠い爆発は小さく、こもって聞こえる */
+  function nearOf(d) { return C.clamp(1 - (d - 150) / 1500, 0.35, 1); }
+  /** 音の左右 (-1 = 左、1 = 右): 自機の向きから見て、その点がどちら側にあるか */
+  function panOf(pos) {
+    const pl = game.player, rx = -pl.dir.z, rz = pl.dir.x, rl = Math.hypot(rx, rz) || 1;
+    const dx = pos.x - pl.pos.x, dy = pos.y - pl.pos.y, dz = pos.z - pl.pos.z, dl = Math.hypot(dx, dy, dz) || 1;
+    return C.clamp((dx * rx + dz * rz) / rl / dl, -0.9, 0.9);
   }
 
   function sparks(pos, n, color) {
@@ -1676,18 +1707,57 @@
 
   const audio = (function () {
     let ctx = null, master = null, comp = null, analyser = null, noiseBuf = null, engine = null, enabled = settings.sound;
+    let revIn = null, heavyIn = null, charging = null;
+    /**
+     * 宇宙の広さの響き: その場で作るインパルス応答。左右で別の雑音を、指数で減衰させながら
+     * 時間とともに暗くする (はじめは明るく、尾は低い音だけが残る)。映画の宇宙戦闘の「広い空間」の手触り
+     */
+    function makeImpulse(sec, decay) {
+      const n = Math.floor(ctx.sampleRate * sec), buf = ctx.createBuffer(2, n, ctx.sampleRate), pre = Math.floor(ctx.sampleRate * 0.018);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = buf.getChannelData(ch);
+        let y = 0;
+        for (let i = 0; i < n; i++) {
+          const k = i / n, a = 0.55 - 0.47 * k;               // 一極の低域通過: 尾ほど暗い
+          y += a * ((Math.random() * 2 - 1) - y);
+          d[i] = i < pre ? 0 : y * Math.pow(1 - k, decay) * 1.6;
+        }
+      }
+      return buf;
+    }
+    /** 歪みの曲線: 少し片寄らせた tanh (偶数の倍音も出る)。低い音に倍音を足して、小さなスピーカーでも重さが聞こえるように */
+    function driveCurve(k, bias) {
+      const n = 2048, c = new Float32Array(n), b = Math.tanh(k * bias), m = Math.tanh(k * (1 + bias)) - b;
+      for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; c[i] = (Math.tanh(k * (x + bias)) - b) / m; }
+      return c;
+    }
     function init() {
       if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
       ctx = new AC();
       comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -14; comp.ratio.value = 4;
+      comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.2;
       master = ctx.createGain();
       master.gain.value = enabled ? 0.9 : 0;
       analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
-      master.connect(comp); comp.connect(analyser); analyser.connect(ctx.destination);
+      // 最後の割れ止め: 大きな爆発が重なっても 0dB を越えない (速く強く押さえるだけで、ふだんの音には触れない)
+      const lim = ctx.createDynamicsCompressor();
+      lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.12;
+      master.connect(comp); comp.connect(lim); lim.connect(analyser); analyser.connect(ctx.destination);
+      // 響き: 送った音を 2.6 秒の暗い残響にして、主の出口へ戻す
+      revIn = ctx.createGain();
+      const conv = ctx.createConvolver(); conv.buffer = makeImpulse(2.6, 2.4);
+      const revOut = ctx.createGain(); revOut.gain.value = 0.55;
+      revIn.connect(conv); conv.connect(revOut); revOut.connect(master);
+      // 重さ: ここへ送った低い音を歪ませ (倍音を足し)、高いところを丸めて出す。iPhone のスピーカーは 150Hz より下がほとんど鳴らないので、
+      // 低音の「重さ」は 2〜4 倍の倍音で聞かせる (軽く聞こえていたいちばんの理由)
+      heavyIn = ctx.createGain();
+      const shaper = ctx.createWaveShaper(); shaper.curve = driveCurve(3.2, 0.18); shaper.oversample = '2x';
+      const hlp = ctx.createBiquadFilter(); hlp.type = 'lowpass'; hlp.frequency.value = 2400; hlp.Q.value = 0.5;
+      const hout = ctx.createGain(); hout.gain.value = 0.26;
+      heavyIn.connect(shaper); shaper.connect(hlp); hlp.connect(hout); hout.connect(master);
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
       const d = noiseBuf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -1725,7 +1795,88 @@
       const jetF = ctx.createBiquadFilter(); jetF.type = 'bandpass'; jetF.frequency.value = 800; jetF.Q.value = 0.7;
       const jetL = ctx.createBiquadFilter(); jetL.type = 'lowpass'; jetL.frequency.value = 2200;
       const jetG = ctx.createGain(); jetG.gain.value = 0.05; jet.connect(jetF); jetF.connect(jetL); jetL.connect(jetG); jetG.connect(eg); jet.start();
-      engine = { g: eg, hums: hums, humF: humF, sub: sub, rumF: rumF, whines: whines, whineG: whineG, jetF: jetF, jetG: jetG };
+      // ⑤ 機体のきしみと風切り: 急に曲がるほど強くなる、帯域の狭い雑音 (宇宙に空気は無いが、映画の戦闘機の手触りとして)
+      const strain = ctx.createBufferSource(); strain.buffer = noiseBuf; strain.loop = true;
+      const stF = ctx.createBiquadFilter(); stF.type = 'bandpass'; stF.frequency.value = 1100; stF.Q.value = 2.2;
+      const stG = ctx.createGain(); stG.gain.value = 0; strain.connect(stF); stF.connect(stG); stG.connect(eg); strain.start(0.37);
+      // ⑥ 加速の唸り: 速さが上がっている間だけ、歪ませた低い倍音を足す (重さ)
+      const surge = ctx.createOscillator(); surge.type = 'sawtooth'; surge.frequency.value = 56;
+      const sgF = ctx.createBiquadFilter(); sgF.type = 'lowpass'; sgF.frequency.value = 260;
+      const sgG = ctx.createGain(); sgG.gain.value = 0; surge.connect(sgF); sgF.connect(sgG); sgG.connect(heavyIn); surge.start();
+      engine = { g: eg, hums: hums, humF: humF, sub: sub, rumF: rumF, whines: whines, whineG: whineG, jetF: jetF, jetG: jetG, stF: stF, stG: stG, surge: surge, sgG: sgG, lastSpeed: 60 };
+    }
+    // ---- 効果音の部品 ----
+    // 1 声を鳴らす (音程のある音)。o: at (何秒後) / type / f0→f1 (glide 秒で) / dur (消えるまで) / vol / atk / hold /
+    // lp→lp1・q (低域通過) / detune / pan→pan1 / heavy (歪ませて重さを足す系統へ) / rev (響きへ送る量)
+    function route(node, o, t, total) {
+      let last = node;
+      if ((o.pan || o.pan1) && ctx.createStereoPanner) {
+        const sp = ctx.createStereoPanner(); sp.pan.setValueAtTime(o.pan || 0, t);
+        if (o.pan1 !== undefined) sp.pan.linearRampToValueAtTime(o.pan1, t + total);
+        last.connect(sp); last = sp;
+      }
+      last.connect(o.heavy ? heavyIn : master);
+      if (o.rev) { const s = ctx.createGain(); s.gain.value = o.rev; last.connect(s); s.connect(revIn); }
+    }
+    function genv(g, t, a, peak, dec, hold) {
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(Math.max(0.0002, peak), t + a);
+      if (hold) g.gain.setValueAtTime(Math.max(0.0002, peak), t + a + hold);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + a + (hold || 0) + dec);
+    }
+    function sv(o) {
+      if (!ctx || !enabled) return null;
+      const t = ctx.currentTime + (o.at || 0), a = o.atk || 0.003, total = a + (o.hold || 0) + o.dur;
+      const osc = ctx.createOscillator(); osc.type = o.type || 'sine';
+      osc.frequency.setValueAtTime(o.f0, t);
+      if (o.f1 && o.f1 !== o.f0) osc.frequency.exponentialRampToValueAtTime(Math.max(15, o.f1), t + (o.glide || total));
+      if (o.detune) osc.detune.value = o.detune;
+      let node = osc;
+      if (o.lp) {
+        const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.Q.value = o.q || 0.7;
+        f.frequency.setValueAtTime(o.lp, t);
+        if (o.lp1) f.frequency.exponentialRampToValueAtTime(o.lp1, t + total);
+        node.connect(f); node = f;
+      }
+      const g = ctx.createGain(); genv(g, t, a, o.vol, o.dur, o.hold);
+      node.connect(g); route(g, o, t, total);
+      osc.start(t); osc.stop(t + total + 0.05);
+      return osc;
+    }
+    // 雑音の 1 声。o: at / dur / vol / atk / hold / type (lowpass・bandpass・highpass) / f0→f1 (glide 秒で) / q / pan / heavy / rev
+    function sn(o) {
+      if (!ctx || !enabled) return null;
+      const t = ctx.currentTime + (o.at || 0), a = o.atk || 0.003, total = a + (o.hold || 0) + o.dur;
+      const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+      const f = ctx.createBiquadFilter(); f.type = o.type || 'lowpass'; f.Q.value = o.q || 0.7;
+      f.frequency.setValueAtTime(o.f0, t);
+      if (o.f1 && o.f1 !== o.f0) f.frequency.exponentialRampToValueAtTime(Math.max(30, o.f1), t + (o.glide || total));
+      const g = ctx.createGain(); genv(g, t, a, o.vol, o.dur, o.hold);
+      s.connect(f); f.connect(g); route(g, o, t, total);
+      s.start(t, Math.random() * 1.2); s.stop(t + total + 0.05);
+      return s;
+    }
+    // 金属の響き: 合わない倍音 (鐘や鉄板を打ったときの比) を重ね、上の倍音ほど早く消す
+    function metal(at, base, dur, vol, o) {
+      o = o || {};
+      [1, 2.76, 5.4, 8.93, 13.34].forEach(function (r, i) {
+        sv({ at: at, type: 'sine', f0: base * r, f1: base * r * (o.bend || 0.985), dur: dur / (1 + i * 0.55), vol: vol / (1 + i * 0.6), lp: o.lp || 3200, rev: o.rev, pan: o.pan, heavy: i === 0 && o.heavy });
+      });
+    }
+    // 爆発の芯 (撃墜・砲台・装甲など共通): ひび割れ → 歪ませた重い「ドン」→ 火の玉の轟き (響きつき) → 破片のはぜ。
+    // s は大きさ (1 = 小型機、4 = コア)、near は近さ (1 = 近い、0.35 = 遠い: 遠いほど小さく、高い音を削る)
+    function blast(s, near, o) {
+      o = o || {};
+      const at = o.at || 0;
+      sn({ at: at, dur: 0.035, vol: 0.3 * near, type: 'highpass', f0: 2600, f1: 1800, pan: o.pan });
+      sv({ at: at, type: 'sine', f0: 150 - s * 10, f1: 30, dur: 0.4 + s * 0.14, vol: Math.min(0.75, 0.42 + s * 0.08) * near, heavy: true });
+      sv({ at: at, type: 'sawtooth', f0: 74 - s * 4, f1: 34, dur: 0.3 + s * 0.12, vol: 0.07 * near, lp: 520, heavy: true });
+      sn({ at: at, dur: 0.6 + s * 0.28, vol: Math.min(0.75, 0.38 + s * 0.08) * near, type: 'lowpass', f0: 2600 * (0.45 + 0.55 * near), f1: 70, rev: 0.25 + 0.06 * s, pan: o.pan });
+      const n = 4 + Math.round(s * 2);
+      for (let i = 0; i < n; i++) {
+        const f = 1400 + Math.random() * 2800;
+        sn({ at: at + 0.04 + Math.random() * (0.3 + s * 0.12), dur: 0.025, vol: 0.05 * near, type: 'bandpass', f0: f, f1: f * 0.8, q: 3, pan: (Math.random() - 0.5) * 0.8 });
+      }
     }
     function env(g, t, a, peak, dec) {
       g.gain.setValueAtTime(0.0001, t);
@@ -1794,7 +1945,7 @@
     // 刻むシンセの低音 (8 分) + 引き締まったキックとスネア + 機械のような 16 分の音列 + 暗い弦のパッド (Am → F → Dm → E) +
     // ときどき低い金管のひと吹き。緊張は 16 小節かけて少しずつ上がる (音列 → ハイハット → 最後の小節のスネアの連打)。
     // 中高音は空けておく: 音列は低め・小さく、ハイハットは裏拍だけ、シンバルは無し (レーザー・ロック音・爆発が聞こえるように)
-    const CBT_BPM = 120, CBT_BEAT = 60 / CBT_BPM, CBT_BAR = CBT_BEAT * 4, CBT_S = CBT_BEAT / 4, CBT_VOL = 0.75;
+    const CBT_BPM = 120, CBT_BEAT = 60 / CBT_BPM, CBT_BAR = CBT_BEAT * 4, CBT_S = CBT_BEAT / 4, CBT_VOL = 0.55;
     const CBT_ROOT = [33, 29, 26, 28];                                     // A1 F1 D1 E1
     const CBT_PAD = [[57, 60, 64, 69], [53, 57, 60, 65], [50, 57, 62, 65], [52, 56, 59, 64]];
     const CBT_KICK = [0, 6, 8, 13], CBT_ARP = [0, 2, 1, 3, 2, 1, 3, 2, 0, 2, 1, 3, 2, 3, 1, 2];
@@ -1845,9 +1996,13 @@
         // 低音: 8 分で刻む。裏の拍で 1 オクターブ上へ
         if (st % 2 === 0) cTone(at, 'sawtooth', mtof(root + (st === 6 || st === 14 ? 12 : 0)), mtof(root + (st === 6 || st === 14 ? 12 : 0)), CBT_S * 1.8, 0.1, 380, 0);
         if (st === 0) cTone(at, 'sine', mtof(root), mtof(root), CBT_BEAT * 1.6, 0.1, 0, 0);
-        // キック・スネア (引き締めて短く)
-        if (CBT_KICK.indexOf(st) >= 0) cTone(at, 'sine', 140, 42, 0.2, 0.45, 0, 0);
-        if (st === 4 || st === 12) { cNoise(at, 0.13, 0.2, 'bandpass', 1900, 0.8); cTone(at, 'triangle', 200, 150, 0.09, 0.09, 0, 0); }
+        // 低音の芯: 拍の頭に 1 オクターブ下の正弦 (曲の出口で歪ませるので、倍音で重さが聞こえる)
+        if (st % 4 === 0) cTone(at, 'sine', mtof(root - 12), mtof(root - 12), CBT_BEAT * 0.9, 0.12, 0, 0);
+        // キック・スネア (引き締めて短く)。キックは頭に打つ音 (クリック) を足して輪郭を出す
+        if (CBT_KICK.indexOf(st) >= 0) { cTone(at, 'sine', 150, 42, 0.24, 0.42, 0, 0); cNoise(at, 0.012, 0.08, 'bandpass', 3200, 1.2); }
+        if (st === 4 || st === 12) { cNoise(at, 0.15, 0.22, 'bandpass', 1900, 0.8); cTone(at, 'triangle', 210, 150, 0.1, 0.11, 0, 0); cNoise(at, 0.32, 0.05, 'lowpass', 900, 0.7); }
+        // 4・8・12・16 小節の終わり: 低いタムの連打 (追われる緊張)
+        if (k % 4 === 3 && st >= 13) cTone(at, 'sine', 120 - (st - 13) * 12, 60, 0.18, 0.28, 0, 0);
         // 最後の小節: スネアの連打で次の周回へ
         if (k === 15 && st >= 12 && st % 1 === 0) cNoise(at, 0.07, 0.07 + 0.012 * (st - 12), 'bandpass', 2000, 0.8);
         // 機械のような音列: 2 小節目以降。低めで小さい
@@ -1866,7 +2021,7 @@
     // 速い弦の刻み (16 分・和音の音) / 低い金管の太い一撃 / 裏拍の金属の打音 / 主役の繰り返しのリフ (5〜8 小節目から。和音ごとに平行移動する 2 小節の形)。
     // 8 小節目の頭に大きな一撃で爆発的に戻り、8 小節目の最後の 1 拍と 13 小節目の後半は太鼓を抜いて張りつめる (短い間)。16 小節目は連打で頭へ戻る。
     // 高い音は削り (リフも 2.2kHz まで)、主砲や爆発の効果音が聞こえる中域の隙間を残す
-    const BSS_BPM = 140, BSS_BEAT = 60 / BSS_BPM, BSS_BAR = BSS_BEAT * 4, BSS_S = BSS_BEAT / 4, BSS_VOL = 0.7;
+    const BSS_BPM = 140, BSS_BEAT = 60 / BSS_BPM, BSS_BAR = BSS_BEAT * 4, BSS_S = BSS_BEAT / 4, BSS_VOL = 0.42;
     const BSS_ROOT = [40, 36, 38, 35];                          // E2 C2 D2 B1 (1 小節ごとに替わる)
     const BSS_SHIFT = [0, -4, -2, -5];                          // リフの平行移動 (Em の形を C・D・B へ)
     const BSS_CH = [[0, 3, 7, 12], [0, 4, 7, 12], [0, 4, 7, 12], [0, 3, 6, 11]];   // 弦の刻みに使う和音の音 (根音からの半音)
@@ -1891,6 +2046,28 @@
       const fillBar = k === 7 || k === 15;
       // 8 小節目の頭: 大きな一撃 (爆発的な復帰)。1 小節目の頭は戦艦の登場に合わせた金属の一撃
       if (k === 8 || k === 0) bossHit(t, true);
+      // 合唱のような厚い和音 (「アー」の母音の山 700Hz・1150Hz に絞ったのこぎり波)。小節ごとに和音が替わる。巨大な相手の圧力
+      {
+        const ch = BSS_CH[ci], len = BSS_BAR;
+        const f1 = ctx.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = 700; f1.Q.value = 3;
+        const f2 = ctx.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 1150; f2.Q.value = 4;
+        const g = ctx.createGain(), pk = full ? 0.1 : 0.07;
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(pk, t + 0.18); g.gain.setValueAtTime(pk, t + len - 0.1); g.gain.linearRampToValueAtTime(0.0001, t + len + 0.25);
+        f1.connect(g); f2.connect(g); g.connect(mus.bus);
+        [12, 19, 24].forEach(function (iv, i) {
+          [-10, 10].forEach(function (dt) {
+            const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = mtof(root + iv + (i === 2 ? ch[1] : 0)); o.detune.value = dt;
+            o.connect(f1); o.connect(f2); o.start(t); o.stop(t + len + 0.3); mus.voices.push(o);
+          });
+        });
+      }
+      // 太鼓の合奏: 頭に大きな一打、全開の小節は 3 拍目の裏に 2 連打 (響きに乗せて広く)
+      const taiko = function (at, v) {
+        cTone(at, 'sine', 88, 38, 0.6, v, 0, 0);
+        cNoise(at, 0.2, v * 0.45, 'lowpass', 520, 0.7);
+      };
+      if (brk > 0) taiko(t, 0.42);
+      if (full && brk > 11) { taiko(t + 10 * BSS_S, 0.3); taiko(t + 11 * BSS_S, 0.36); }
       // 低い金管: 小節の頭に太い一撃 (根音 + 5 度 + オクターブ)。全開の小節は 3 拍目にも
       [0, 7, 12].forEach(function (iv, i) {
         [-8, 8].forEach(function (dt) {
@@ -1952,7 +2129,13 @@
       if (mus && mus.kind === kind) return;
       if (mus) stopMusic(0.8);
       const combat = kind === 'combat', bossK = kind === 'boss';
-      const bus = ctx.createGain(); bus.gain.value = 0; bus.connect(master);
+      const bus = ctx.createGain(); bus.gain.value = 0;
+      // 戦闘の曲は軽く歪ませて太くする (低音とキックに倍音が乗り、小さなスピーカーでも重く聞こえる)。どの曲も少し響きへ送る
+      if (combat || bossK) {
+        const sh = ctx.createWaveShaper(); sh.curve = driveCurve(bossK ? 1.9 : 1.5, 0.08); sh.oversample = '2x';
+        bus.connect(sh); sh.connect(master);
+      } else bus.connect(master);
+      const rsend = ctx.createGain(); rsend.gain.value = combat ? 0.14 : bossK ? 0.2 : 0.3; bus.connect(rsend); rsend.connect(revIn);
       bus.gain.setTargetAtTime(combat ? CBT_VOL : bossK ? BSS_VOL : 0.55, ctx.currentTime, kind === 'title' ? 1.6 : 0.4);   // タイトルはゆっくり入る。戦闘はすぐ
       // こだま: 付点 8 分。戻りは暗く (高い音を削る)
       const dly = ctx.createDelay(2); dly.delayTime.value = BEAT * 0.75;
@@ -1972,7 +2155,7 @@
       });
       const lfo = ctx.createOscillator(); lfo.frequency.value = 0.045;
       const lg = ctx.createGain(); lg.gain.value = 90; lfo.connect(lg); lg.connect(dlp2.frequency); lfo.start(); oscs.push(lfo);
-      mus = { kind: kind, barLen: combat ? CBT_BAR : bossK ? BSS_BAR : BAR, bus: bus, send: send, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
+      mus = { kind: kind, barLen: combat ? CBT_BAR : bossK ? BSS_BAR : BAR, bus: bus, send: send, rsend: rsend, oscs: oscs, voices: [], nodes: [bus, dly, dg], bar: 0, t: ctx.currentTime + 0.1, timer: null };
       const tick = function () {
         if (!mus) return;
         while (mus.t < ctx.currentTime + 2) { (mus.kind === 'combat' ? scheduleCombatBar : mus.kind === 'boss' ? scheduleBossBar : scheduleBar)(mus.bar, mus.t); mus.bar++; mus.t += mus.barLen; }
@@ -2043,7 +2226,7 @@
       const end = ctx.currentTime + (fade || 1.2) + 0.15;
       m.voices.forEach(function (o) { try { o.stop(end); } catch (e) { /* もう止まっている */ } });
       m.oscs.forEach(function (o) { try { o.stop(end); } catch (e) { /* もう止まっている */ } });
-      setTimeout(function () { m.bus.disconnect(); }, ((fade || 1.2) + 0.3) * 1000);
+      setTimeout(function () { m.bus.disconnect(); if (m.rsend) m.rsend.disconnect(); }, ((fade || 1.2) + 0.3) * 1000);
     }
     return {
       init: init,
@@ -2058,10 +2241,17 @@
       },
       suspend: function () { if (ctx && ctx.state === 'running') ctx.suspend(); },
       resume: function () { if (ctx && ctx.state === 'suspended') ctx.resume(); },
-      engine: function (speed, boosting, on) {
+      engine: function (speed, boosting, on, turn) {
         if (!engine) return;
         const t = ctx.currentTime, k = 0.3;   // ゆっくり追いかける (急に変わらない)
         const sp = Math.min(1.6, speed / 60);
+        // 加速している間 (速さが上がっている間) だけ、低い唸りを足す。急に曲がるほど機体がきしむ
+        const acc = Math.max(0, speed - engine.lastSpeed); engine.lastSpeed = speed;
+        engine.sgG.gain.setTargetAtTime(on ? Math.min(0.09, acc * 0.05) + (boosting ? 0.04 : 0) : 0, t, 0.12);
+        engine.surge.frequency.setTargetAtTime(48 + sp * 14, t, k);
+        const tn = Math.min(1, (turn || 0) / 1.2);
+        engine.stG.gain.setTargetAtTime(on ? tn * tn * 0.12 : 0, t, 0.15);
+        engine.stF.frequency.setTargetAtTime(900 + tn * 900 + sp * 200, t, 0.15);
         // タービン: 速いほど高く。ブーストでさらに少し高く
         const hf = 100 + sp * 22 + (boosting ? 14 : 0);
         engine.hums.forEach(function (o, i) { o.frequency.setTargetAtTime(hf * (i % 2 ? 2 : 1) + (i < 2 ? -0.9 : 0.9) * (i % 2 ? -1.2 : 1), t, k); });
@@ -2074,59 +2264,113 @@
         engine.jetG.gain.setTargetAtTime(boosting ? 0.2 : 0.05, t, 0.2);
         engine.g.gain.setTargetAtTime(on ? (boosting ? 0.11 : 0.045) : 0, t, on ? 0.25 : 0.15);
       },
-      // レーザー (主人公機): 約 0.3 秒。「シュバッ」「ズシュン」という、瞬間の圧力と切れ味。音程のある電子音 (ピコピコ) は使わず、
-      // すべて下がる掃引と雑音で作る: ① 鋭い立ち上がり (短い帯域雑音のひび割れ) ② 引き締まった中低域の衝撃 (150→48Hz) ③ 空気を裂く速い掃引 (3200→700Hz の雑音)
-      // ④ 深い機械的なエネルギーの爆ぜ (のこぎり波 95→55Hz を丸める) ⑤ かすかにざらつく電気の唸り (方形波 110→70Hz + 丸めた雑音)。
-      // 連射でも力強く澄んでいるよう、1 発ごとに ±4% ふらつかせ、尾は短く切る
+      // レーザー (主人公機): 約 0.25 秒。映画の宇宙戦闘の発射音。音程の電子音 (ピコピコ) は使わない:
+      // ① 鋭いひび割れ (高い雑音 20ms) ② 空気を裂く掃引 (6.5k→1.3kHz、少し響かせる) ③ 重い衝撃 (260→62Hz を歪ませて倍音で聞かせる)
+      // ④ 低い押し (95→52Hz) ⑤ 短いエネルギーの尾 (共鳴を立てたのこぎり波 180→86Hz。閉じていく「ヴォン」)。1 発ごとに ±4% ふらつかせる
       laser: function () {
         const r = 1 + (Math.random() - 0.5) * 0.08;
-        noise(0.03, 0.12, 4200, 2600, 'bandpass', 0.7);                    // ひび割れ
-        tone('sine', 150 * r, 48 * r, 0.14, 0.22);                         // 衝撃
-        noise(0.15, 0.14, 3200 * r, 700 * r, 'bandpass', 0.8);              // 空気を裂く
-        tone('sawtooth', 95 * r, 55 * r, 0.26, 0.1, 420);                 // 機械的な爆ぜ
-        tone('square', 110 * r, 70 * r, 0.2, 0.04, 600);                   // 電気の唸り
-        noise(0.26, 0.05, 900, 300, 'lowpass', 0.7);
+        sn({ dur: 0.02, vol: 0.072, type: 'highpass', f0: 3800, f1: 3000 });
+        sn({ dur: 0.09, vol: 0.048, type: 'bandpass', f0: 6000 * r, f1: 1300 * r, q: 1.3, rev: 0.1 });
+        sv({ type: 'sine', f0: 240 * r, f1: 70 * r, glide: 0.08, dur: 0.14, vol: 0.19, heavy: true });
+        sv({ type: 'sine', f0: 110 * r, f1: 55 * r, dur: 0.2, vol: 0.1, heavy: true });
+        sv({ type: 'sawtooth', f0: 180 * r, f1: 86 * r, dur: 0.22, vol: 0.04, lp: 1400, lp1: 220, q: 5, rev: 0.08 });
       },
-      enemyLaser: function () { tone('sawtooth', 700, 180, 0.12, 0.03, 1500); },
-      hit: function () { tone('square', 2400, 1800, 0.03, 0.05); noise(0.04, 0.08, 6000, 3000, 'highpass'); },
-      armored: function () { tone('triangle', 3200, 2600, 0.05, 0.05); },
-      explode: function (size) {
-        noise(0.5 + size * 0.15, Math.min(0.9, 0.35 + size * 0.1), 2400, 60);
-        tone('sine', 120, 30, 0.35 + size * 0.1, Math.min(0.8, 0.3 + size * 0.1));
+      // 敵の弾 (砲台・敵機): 暗く荒い「ジュッ」。来た向きに左右を振り、遠いほど小さい (k)
+      enemyLaser: function (pan, k) {
+        k = k === undefined ? 1 : k;
+        sn({ dur: 0.14, vol: 0.07 * k, type: 'bandpass', f0: 2600, f1: 700, q: 1.1, pan: pan, rev: 0.18 });
+        sv({ type: 'square', f0: 330, f1: 120, dur: 0.12, vol: 0.025 * k, lp: 900, pan: pan });
+        sv({ type: 'sine', f0: 150, f1: 60, dur: 0.1, vol: 0.08 * k, heavy: true, pan: pan });
       },
-      big: function () { noise(2.4, 1, 1800, 40); tone('sine', 80, 20, 2.0, 0.9); },
-      // ワープ明け: 上がっていく唸りから、重い轟音へ
+      // 敵の弾が自機のすぐ横を抜けた: 左右へ流れる「ヒュン」
+      whiz: function (pan) {
+        sn({ dur: 0.26, vol: 0.13, atk: 0.05, type: 'bandpass', f0: 2600, f1: 600, q: 2.2, pan: pan, pan1: -pan * 0.6 });
+        sv({ type: 'sawtooth', f0: 560, f1: 170, dur: 0.24, vol: 0.02, atk: 0.04, lp: 1200, pan: pan, pan1: -pan * 0.6 });
+      },
+      // 敵機が近くをすれ違った: 近づいて高くなり、離れて低くなる (ドップラー) 轟き
+      flyby: function (pan) {
+        sn({ dur: 0.08, atk: 0.22, vol: 0.14, type: 'bandpass', f0: 500, f1: 1500, q: 1.4, pan: pan * 0.6, pan1: pan });
+        sn({ at: 0.3, dur: 0.5, vol: 0.12, type: 'bandpass', f0: 1500, f1: 380, q: 1.4, pan: pan, pan1: -pan * 0.7 });
+        sv({ type: 'sawtooth', f0: 180, f1: 105, atk: 0.25, dur: 0.55, vol: 0.035, lp: 700, heavy: true, pan: pan, pan1: -pan * 0.7 });
+      },
+      // 自分の弾が敵に当たった: 小さく乾いた金属の手応え
+      hit: function () {
+        sv({ type: 'triangle', f0: 2100, f1: 1500, dur: 0.04, vol: 0.045 });
+        sn({ dur: 0.05, vol: 0.09, type: 'bandpass', f0: 3800, f1: 2500, q: 1.5 });
+        sv({ type: 'sine', f0: 420, f1: 180, dur: 0.06, vol: 0.08, heavy: true });
+      },
+      // 装甲にはじかれた: 硬い鉄板の「キン」
+      armored: function () { metal(0, 1450, 0.25, 0.035); sn({ dur: 0.03, vol: 0.05, type: 'highpass', f0: 5000, f1: 4000 }); },
+      // 撃墜以外の爆発 (連鎖・着地・ミサイルの爆発など)
+      explode: function (size, near) { blast(Math.min(4, size || 2), near === undefined ? 1 : near); },
+      // 巨大戦艦の装甲が吹き飛ぶ: 鉄板が裂ける金属音 + 破片の雨 + 重い爆発
+      armorBreak: function () {
+        metal(0, 205, 1.8, 0.16, { rev: 0.35, heavy: true, bend: 0.9 });
+        sn({ dur: 0.45, vol: 0.22, type: 'highpass', f0: 4200, f1: 2000, rev: 0.3 });
+        blast(4, 1);
+        sv({ at: 0.05, type: 'sine', f0: 95, f1: 26, dur: 1.4, vol: 0.6, heavy: true });
+      },
+      // 巨大戦艦の撃沈: 重い爆発が 5 回続き、長い地鳴りと、崩れる船体の金属のうなり
+      big: function () {
+        [0, 0.3, 0.75, 1.3, 2.0].forEach(function (at, i) { blast(4, 1 - i * 0.08, { at: at }); });
+        sv({ type: 'sine', f0: 56, f1: 18, dur: 4.5, vol: 0.6, heavy: true });
+        sn({ dur: 4, vol: 0.45, type: 'lowpass', f0: 900, f1: 40, rev: 0.6 });
+        [[41, -6], [41, 6], [61.7, 0]].forEach(function (d) { sv({ at: 0.2, type: 'sawtooth', f0: d[0], f1: d[0] * 0.7, atk: 0.4, dur: 3.6, vol: 0.06, lp: 420, q: 5, detune: d[1], heavy: true, rev: 0.4 }); });
+        metal(0.6, 88, 3.5, 0.14, { rev: 0.5, bend: 0.85 });
+      },
+      // ワープ明け (巨大戦艦が光の中から出る瞬間): ひび割れ → 重低音の衝撃 → 空間を押し広げる轟き → 重い太鼓 4 発 →
+      // 巨大な船体がきしむ金属のうなり (合わない倍音 + ゆっくり下がる太い唸り + 共鳴の強い雑音)
       warp: function () {
-        tone('sawtooth', 120, 1400, 0.35, 0.12, 3000); noise(1.6, 0.9, 3500, 60); tone('sine', 70, 24, 1.8, 0.9);
-        // 巨大戦艦が現れる: 重低音のあとに金属の共鳴 (合わない倍音を低めに重ねて、ゆっくり消す)
-        [96, 265, 519, 857].forEach(function (f, i) { toneAt(0.12, 'sine', f, f * 0.985, 2.4 - i * 0.3, 0.16 / (1 + i * 0.6), 1800, 0.05); });
-      },
-      // ボス登場の警報 (約 1.5 秒): 深い警告音のあと、下がっていく鋭い 2 つのパルス + かすかな金属の響き。
-      // 救急車のようなサイレンにならないよう、音程は一度ずつ下がって止まる。中低域を強く、高い音は削る。「BOSS BATTLE」の帯の出現と同時に鳴らす
-      bossAlert: function () {
-        toneAt(0, 'sawtooth', 98, 90, 0.6, 0.2, 650, 0.03);
-        toneAt(0, 'sine', 49, 46, 0.6, 0.3, 0, 0.03);
-        [0.62, 0.98].forEach(function (w) {
-          toneAt(w, 'square', 820, 430, 0.22, 0.13, 2300, 0.004);
-          toneAt(w, 'triangle', 410, 215, 0.24, 0.14, 0, 0.004);
-          toneAt(w, 'sine', 90, 55, 0.3, 0.22, 0, 0.004);
+        sn({ dur: 0.06, vol: 0.5, type: 'highpass', f0: 1800, f1: 1200 });
+        sv({ type: 'sine', f0: 72, f1: 22, dur: 2.4, vol: 0.85, heavy: true });
+        sn({ dur: 2.2, vol: 0.65, type: 'lowpass', f0: 3200, f1: 50, rev: 0.55 });
+        [0, 0.38, 0.58, 1.15].forEach(function (at, i) {
+          sv({ at: at, type: 'sine', f0: 105, f1: 42, dur: 0.8, vol: i ? 0.42 : 0.6, heavy: true });
+          sn({ at: at, dur: 0.22, vol: 0.2, type: 'lowpass', f0: 900, f1: 200, rev: 0.55 });
         });
-        [330, 905, 1760].forEach(function (f, i) { toneAt(0.6, 'sine', f, f, 0.9 - i * 0.18, 0.05 / (1 + i * 0.8), 2400, 0.006); });
+        metal(0.12, 96, 3.0, 0.18, { rev: 0.4 });
+        [[46, -5], [46, 5], [69.3, 0]].forEach(function (d) { sv({ at: 0.3, type: 'sawtooth', f0: d[0], f1: d[0] * 0.82, atk: 0.4, dur: 2.6, vol: 0.06, lp: 420, q: 6, detune: d[1], heavy: true, rev: 0.3 }); });
+        sn({ at: 0.4, atk: 0.5, dur: 2.0, vol: 0.12, type: 'bandpass', f0: 300, f1: 120, q: 8, rev: 0.4 });
+      },
+      // ボス登場の警報 (「BOSS BATTLE」の帯と同時。2.3 秒後にワープ): ① 艦の警笛 (一定の音程の太い低音「ブォーン」を 2 回。サイレンにしない)
+      // ② 鋭い警告のパルス (音程が一度下がって止まる) ③ 光の向こうから迫る音: 帯域を上へ掃く雑音と上がる唸りが、ワープの瞬間へ向かって大きくなる
+      bossAlert: function () {
+        [0, 0.95].forEach(function (at) {
+          [[55, -6], [55, 6], [82.4, 0], [110, -4]].forEach(function (d, i) {
+            sv({ at: at, type: 'sawtooth', f0: d[0], f1: d[0] * 0.985, atk: 0.04, hold: 0.2, dur: 0.55, vol: 0.1 / (1 + i * 0.4), lp: 700, lp1: 300, detune: d[1], heavy: true, rev: 0.25 });
+          });
+          sv({ at: at, type: 'sine', f0: 55, f1: 52, atk: 0.04, hold: 0.2, dur: 0.6, vol: 0.3, heavy: true });
+        });
+        [0.62, 0.8, 1.6, 1.78].forEach(function (at) {
+          sv({ at: at, type: 'square', f0: 900, f1: 620, dur: 0.14, vol: 0.07, lp: 2600 });
+          sv({ at: at, type: 'triangle', f0: 450, f1: 310, dur: 0.15, vol: 0.08 });
+        });
+        sn({ at: 0.5, atk: 1.75, dur: 0.1, vol: 0.25, type: 'bandpass', f0: 150, f1: 2400, glide: 1.85, q: 1, rev: 0.3 });
+        sv({ at: 0.5, type: 'sawtooth', f0: 40, f1: 160, glide: 1.85, atk: 1.75, dur: 0.1, vol: 0.07, lp: 600, heavy: true });
       },
       // 音楽を一瞬弱める (演出のあいだ、効果音を聞かせる)
       duck: function (v) { if (mus) mus.bus.gain.setTargetAtTime(v, ctx.currentTime, 0.06); },
-      // 撃墜: 重い爆発 + はじける高い音。コンボが続くほど高くなる (2 半音ずつ、8 段まで)
-      kill: function (combo, size) {
+      // 撃墜: 大きさで規模を変える爆発 (小型機 1.4 → 砲台 2.6 → コア 4) + 撃ち落とした手応えの短い澄んだ音。
+      // 手応えの音はコンボが続くほど高くなる (2 半音ずつ、8 段まで)。遠い撃墜ほど小さく、こもる (near)
+      kill: function (combo, size, near) {
+        combo = combo || 1; size = size || 1.4; near = near === undefined ? 1 : near;
         const r = Math.pow(2, Math.min(combo - 1, 8) * 2 / 12);
-        noise(0.6 + size * 0.15, Math.min(0.95, 0.5 + size * 0.1), 3000, 50);
-        tone('sine', 140, 28, 0.5 + size * 0.1, 0.9);
-        tone('square', 1320 * r, 660 * r, 0.12, 0.09);
-        tone('triangle', 1980 * r, 1980 * r, 0.18, 0.07);
+        blast(Math.min(4, size), near);
+        sv({ type: 'triangle', f0: 1320 * r, f1: 1320 * r, dur: 0.16, vol: 0.05 });
+        sv({ at: 0.03, type: 'sine', f0: 1980 * r, f1: 1980 * r, dur: 0.22, vol: 0.035, rev: 0.2 });
+        // 大きい部位 (砲台・エンジン・コア): 金属が裂ける響きと、長い地鳴りを足す
+        if (size >= 2.5) {
+          metal(0.02, 170, 1.2, 0.08 * near, { rev: 0.35 });
+          sn({ at: 0.05, dur: 1.5, vol: 0.25 * near, type: 'lowpass', f0: 600, f1: 50, rev: 0.5 });
+        }
       },
+      // ミサイル発射: 発射台を蹴る重い「ドン」+ 遠ざかる噴射の「シュー」。一斉発射は少しずつずらして重ねる
       missile: function (n) {
-        noise(0.6, 0.3, 800, 3000, 'bandpass', 1.2);
-        // 一斉発射は少しずつずらして重ねる (数だけシュッと鳴る)
-        for (let i = 1; i < (n || 1); i++) setTimeout(function () { noise(0.45, 0.25, 900 + i * 150, 3200, 'bandpass', 1.2); }, i * 55);
+        for (let i = 0; i < (n || 1); i++) {
+          const at = i * 0.055, p = (i % 2 ? 1 : -1) * Math.min(0.6, i * 0.15);
+          sv({ at: at, type: 'sine', f0: 190, f1: 60, dur: 0.14, vol: 0.22, heavy: true, pan: p });
+          sn({ at: at, atk: 0.03, dur: 0.55, vol: 0.2, type: 'bandpass', f0: 900 + i * 120, f1: 3200, q: 1.2, rev: 0.2, pan: p });
+        }
       },
       // マルチロック: 捕まえるたびに短く、数が増えるほど高く
       mlock: function (n) { const f = 1320 * Math.pow(1.19, n - 1); toneAt(0, 'sine', f, f, 0.1, 0.07, 0, 0.003); toneAt(0, 'triangle', f * 2, f * 2, 0.05, 0.02, 3500, 0.003); },
@@ -2138,6 +2382,7 @@
         for (let i = 0; i < 6; i++) toneAt(0.07 + i * 0.03, 'square', 2300 + i * 90, 2300 + i * 90, 0.02, 0.012, 2800, 0.002);   // 走査の刻み
         toneAt(0.25, 'sine', 2640, 2640, 0.16, 0.075, 0, 0.003);                                                                 // 確認のピン
         toneAt(0.25, 'sine', 3960, 3960, 0.08, 0.02, 0, 0.003);
+        sv({ at: 0.25, type: 'sine', f0: 240, f1: 150, dur: 0.07, vol: 0.08, heavy: true });                                      // 捕まえた手応え (小さな「コン」)
       },
       // ブースト点火 (約 1.2 秒): 鋭い電子の点火 → のぼっていく青いエネルギーの轟き + 深い低音の衝撃 + 速い空気のうねり + 明るく響く電子音。
       // 立ち上がりが強く、尾は滑らかに消える。通常のエンジン音から一気に解き放たれる感じ。高い音はやや削る
@@ -2155,12 +2400,73 @@
         }
         toneAt(0.1, 'sine', 1320, 1400, 1.0, 0.05, 0, 0.01);                      // 明るく響く電子音
         toneAt(0.1, 'sine', 1980, 2100, 0.8, 0.03, 0, 0.01);
+        sv({ at: 0.02, type: 'sawtooth', f0: 52, f1: 90, dur: 0.7, atk: 0.05, vol: 0.08, lp: 380, heavy: true });   // 押し出される重さ
+        sn({ at: 0.05, dur: 0.9, vol: 0.12, type: 'lowpass', f0: 1500, f1: 200, rev: 0.3 });                       // 空間に残る轟き
       },
-      hurt: function (big) { noise(0.25, big ? 0.6 : 0.35, 900, 200); tone('square', 200, 90, 0.18, 0.12); },
+      // 被弾: シールドで受けたら電気のはじける音、機体に当たったら金属がひしゃげる音。大きな一撃 (主砲など) は重い衝撃と地鳴りを足す
+      hurt: function (big, shieldOnly) {
+        if (shieldOnly && !big) {
+          sv({ type: 'sawtooth', f0: 900, f1: 300, dur: 0.14, vol: 0.05, lp: 3000 });
+          sn({ dur: 0.1, vol: 0.1, type: 'bandpass', f0: 4500, f1: 2500, q: 1.2 });
+          sv({ type: 'sine', f0: 160, f1: 70, dur: 0.12, vol: 0.2, heavy: true });
+          return;
+        }
+        metal(0, 320, 0.5, 0.07);
+        sn({ dur: 0.22, vol: 0.3, type: 'bandpass', f0: 1400, f1: 500, q: 1 });
+        sv({ type: 'sine', f0: 120, f1: 40, dur: 0.3, vol: 0.28, heavy: true });
+        if (big) {
+          sn({ dur: 0.05, vol: 0.45, type: 'highpass', f0: 2200, f1: 1500 });
+          sn({ dur: 1.2, vol: 0.6, type: 'lowpass', f0: 2500, f1: 60, rev: 0.5 });
+          sv({ type: 'sine', f0: 70, f1: 22, dur: 1.2, vol: 0.75, heavy: true });
+        }
+      },
       alarm: function () { tone('square', 880, 870, 0.18, 0.08); setTimeout(function () { tone('square', 660, 650, 0.18, 0.08); }, 220); },
-      charge: function () { tone('sawtooth', 80, 900, 2.6, 0.08, 2000); },
-      beam: function () { noise(1.2, 0.7, 500, 150); tone('sawtooth', 70, 40, 1.1, 0.25, 600); },
-      ui: function () { tone('sine', 1200, 1600, 0.06, 0.08); },
+      // ボスの主砲は 4 段に分けて演出する: ① チャージ (dur 秒。上がる唸り + 集まる轟き + だんだん詰まる脈)
+      // ② 狙いの固定 (鋭い 3 連の警告) ③ 発射と飛翔 (ひび割れ + 重低音 + 光線の轟き 1 秒 + ばちばち鳴る放電) ④ 着弾 (被弾の重い音) か、すり抜け (beamPass)
+      charge: function (dur) {
+        const D = dur || 2.8;
+        sv({ type: 'sine', f0: 300, f1: 1900, glide: D, atk: D * 0.95, dur: 0.1, vol: 0.05, rev: 0.2 });
+        sv({ type: 'sawtooth', f0: 50, f1: 150, glide: D, atk: D * 0.9, dur: 0.15, vol: 0.09, lp: 500, heavy: true });
+        sn({ atk: D * 0.9, dur: 0.15, vol: 0.22, type: 'lowpass', f0: 150, f1: 1100, glide: D, rev: 0.25 });
+        for (let t = 0.2, step = 0.5; t < D - 0.05; t += step, step = Math.max(0.08, step * 0.8)) {
+          sv({ at: t, type: 'sine', f0: 140, f1: 80, dur: 0.12, vol: 0.05 + 0.12 * (t / D), heavy: true });
+        }
+      },
+      lockWarn: function () {
+        [0, 0.12, 0.24].forEach(function (at) {
+          sv({ at: at, type: 'square', f0: 1250, f1: 1180, dur: 0.07, vol: 0.06, lp: 3000 });
+          sv({ at: at, type: 'sine', f0: 110, f1: 70, dur: 0.1, vol: 0.15, heavy: true });
+        });
+      },
+      beam: function () {
+        sn({ dur: 0.07, vol: 0.55, type: 'highpass', f0: 2000, f1: 1200 });
+        sv({ type: 'sine', f0: 62, f1: 24, dur: 1.6, vol: 0.9, heavy: true });
+        [[78, -8], [78, 8], [117, 0]].forEach(function (d) { sv({ type: 'sawtooth', f0: d[0], f1: d[0] * 0.8, atk: 0.02, hold: 0.8, dur: 0.4, vol: 0.1, lp: 1600, lp1: 350, detune: d[1], heavy: true, rev: 0.3 }); });
+        sn({ hold: 0.8, dur: 0.5, vol: 0.42, type: 'bandpass', f0: 1400, f1: 350, q: 0.8, rev: 0.5 });
+        for (let i = 0; i < 14; i++) { const f = 2400 + Math.random() * 1600; sn({ at: 0.05 + i * 0.065, dur: 0.04, vol: 0.08, type: 'bandpass', f0: f, f1: f * 0.7, q: 2 }); }
+      },
+      // 主砲の光線が自機の横をすり抜けた: 左右へ流れる太い風切り + 下がる低音
+      beamPass: function (pan) {
+        sn({ dur: 0.6, atk: 0.05, vol: 0.3, type: 'bandpass', f0: 2400, f1: 300, q: 1.5, pan: pan, pan1: -pan });
+        sv({ type: 'sine', f0: 300, f1: 90, dur: 0.5, vol: 0.15, heavy: true });
+      },
+      // 操作の音: 選ぶ (乾いた「カチッ」+ 小さな上がる音)・決める (低い「コン」+ 澄んだ 2 音の和音)・面の始まり (光の向こうから来る風 + 澄んだ鐘)
+      ui: function () {
+        sv({ type: 'square', f0: 2400, f1: 2400, dur: 0.012, vol: 0.03, lp: 4000 });
+        sv({ type: 'sine', f0: 1500, f1: 1900, dur: 0.06, vol: 0.07 });
+      },
+      uiOk: function () {
+        sn({ dur: 0.02, vol: 0.08, type: 'highpass', f0: 3000, f1: 2500 });
+        sv({ type: 'sine', f0: 170, f1: 85, dur: 0.12, vol: 0.18, heavy: true });
+        sv({ type: 'sine', f0: 880, f1: 880, dur: 0.18, vol: 0.06, rev: 0.25 });
+        sv({ at: 0.06, type: 'sine', f0: 1318, f1: 1318, dur: 0.3, vol: 0.06, rev: 0.3 });
+      },
+      stageIn: function () {
+        sn({ atk: 0.55, dur: 0.3, vol: 0.16, type: 'bandpass', f0: 200, f1: 1500, glide: 0.6, q: 1, rev: 0.4 });
+        sv({ at: 0.55, type: 'sine', f0: 90, f1: 45, dur: 0.6, vol: 0.2, heavy: true });
+        sv({ at: 0.55, type: 'sine', f0: 1320, f1: 1320, dur: 1.0, vol: 0.06, rev: 0.4 });
+        sv({ at: 0.6, type: 'sine', f0: 1980, f1: 1980, dur: 0.8, vol: 0.035, rev: 0.4 });
+      },
       level: function () {
         if (!analyser) return null;
         const a = new Float32Array(analyser.fftSize);
@@ -2508,7 +2814,7 @@
     ], { duration: STAGE_CARD_MS, easing: 'ease-out' });
     stageCardAnim.onfinish = function () { el.hidden = true; stageCardAnim = null; };
     fx.cardT = STAGE_CARD_MS / 1000;
-    audio.lock();
+    audio.stageIn();
   }
 
   function banner(text, dur, color, big) {
@@ -2537,7 +2843,7 @@
           break;
         }
         case 'enemyLaser': case 'turretFire':
-          if (dist3(e.pos, pl.pos) < 700) audio.enemyLaser();
+          if (dist3(e.pos, pl.pos) < 700) audio.enemyLaser(panOf(e.pos), nearOf(dist3(e.pos, pl.pos)));
           flash(e.pos, e.type === 'turretFire' ? 26 : 10, 0.12, 0xff6040);
           break;
         case 'hit':
@@ -2565,7 +2871,7 @@
           } else if (KILL[e.kind]) {
             killBurst(e, d);
           } else {
-            audio.explode(size);
+            if (e.kind === 'armor') audio.armorBreak(); else audio.explode(size, nearOf(d));
             shake(Math.min(1.4, size * 60 / Math.max(60, d)));
           }
           if (KILL[e.kind]) fx.killMarker = 0.35;
@@ -2580,7 +2886,7 @@
         case 'boost': audio.boost(); fx.fovKick = 1; break;
         case 'playerHit': {
           const big = e.amount >= 20;
-          audio.hurt(big);
+          audio.hurt(big, e.shieldOnly);
           shake(big ? 2 : 0.6);
           fx.hurt.push({ from: e.from, t: 0.9 });
           fx.lastHurt = 0.35;
@@ -2618,10 +2924,15 @@
           setTimeout(syncMusic, 0);
           break;
         case 'bossLand': shake(1.0); audio.explode(3); break;
-        case 'cannonCharge': audio.charge(); break;
-        case 'cannonLock': audio.alarm(); break;
+        case 'cannonCharge': audio.charge(K.cannonCharge); break;
+        case 'cannonLock': audio.lockWarn(); break;
         case 'cannonFire': audio.beam(); shake(1.2); break;
-        case 'cannonDodged': banner('回避', 1.0, '#9fe6ff'); break;
+        case 'cannonDodged': {
+          banner('回避', 1.0, '#9fe6ff');
+          const c = game.boss && game.boss.cannon;
+          audio.beamPass(c ? panOf({ x: pl.pos.x - c.dir.x * 100, y: pl.pos.y, z: pl.pos.z - c.dir.z * 100 }) : 0);
+          break;
+        }
         case 'gameOver': shake(2.5); fx.slowT = 1.0; break;
         default: break;
       }
@@ -3498,7 +3809,8 @@
     const pv = game.player.vel;
     updateDust(camera.position, new THREE.Vector3(pv.x, pv.y, pv.z));
     if (screen === 'play') {
-      audio.engine(game.player.speed, game.player.boosting, game.player.alive && !paused);
+      audio.engine(game.player.speed, game.player.boosting, game.player.alive && !paused, Math.abs(game.player.yawRate) + Math.abs(game.player.pitchRate));
+      if (!paused) passBySounds(realDt);
       updateControlsView();
     }
     const tr = performance.now();
@@ -3556,6 +3868,14 @@
     $('btnAgain').addEventListener('click', function () { startGame({ start: lastStart }); });
     $('btnContinue').addEventListener('click', function () { if (game) startGame({ continueFrom: game, start: lastStart }); });
     $('btnResultTitle').addEventListener('click', toTitle);
+    // ボタンの音: 始める・続ける・戻るなどの「決める」ボタンは重みのある決定の音、それ以外 (設定・遊び方・戻る) は軽い選ぶ音
+    const OK_BUTTONS = ['btnStart', 'btnBossOnly', 'btnContinue', 'btnAgain', 'btnRetry', 'btnResume'];
+    document.addEventListener('click', function (e) {
+      const b = e.target && e.target.closest && e.target.closest('button');
+      if (!b || b.classList.contains('pad')) return;
+      audio.init();
+      if (OK_BUTTONS.indexOf(b.id) >= 0) audio.uiOk(); else audio.ui();
+    });
 
     // 別のアプリへ切り替えたら止める
     document.addEventListener('visibilitychange', function () {
@@ -3593,7 +3913,7 @@
       audioLevel: function () { return audio.level(); },
       musicOn: function () { return audio.musicOn(); },
       musicKind: function () { return audio.musicKind(); },
-      sfx: function (name) { audio[name](); },
+      sfx: function (name, a, b, c) { audio[name](a, b, c); },
       settings: settings,
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
       // 自機のまわり r m にある、大きな (煙の玉のような) 粒の数。ブーストで煙を出さない見張り用

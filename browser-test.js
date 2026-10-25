@@ -628,6 +628,25 @@ async function run() {
       ok(lMax > 0.03 && lMax < 0.3, `ロックオンの音は鳴り、小さく疲れにくい (最大 ${lMax.toFixed(3)})`);
       ok(gMax > 0.1 && gMax < 0.5, `レーザーの発射音は力強く、割れない (最大 ${gMax.toFixed(3)})`);
     }
+    // 作り直した効果音: どれも鳴り (エラーを出さず)、いちばん大きな爆発 (撃沈・ワープ・主砲・装甲) でも割れない (割れ止めが効く)。
+    // 大きな出来事の音は、連射するレーザーよりはっきり大きい (重さの差)
+    const allSfx = await page.evaluate(() => {
+      const res = {};
+      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn']) {
+        try { window.__app.sfx(n); res[n] = 'ok'; } catch (e) { res[n] = e.message; }
+      }
+      const t0 = performance.now(); let mx = 0;
+      while (performance.now() - t0 < 1500) mx = Math.max(mx, window.__app.audioLevel().max);
+      res.max = mx;
+      return res;
+    });
+    const bad = Object.keys(allSfx).filter((k) => k !== 'max' && allSfx[k] !== 'ok');
+    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '20 種'})`);
+    if (gMax !== null) ok(allSfx.max < 0.99, `20 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
+    await page.waitForTimeout(3000);
+    const warpMax = await sfxMax('warp');
+    if (gMax !== null) ok(warpMax > gMax * 1.5, `巨大戦艦のワープの音は、レーザーよりはっきり大きい (ワープ ${warpMax.toFixed(3)} / レーザー ${gMax.toFixed(3)})`);
+    await page.waitForTimeout(3000);
     await f.down(6, fire.x, fire.y);
     await waitGameTime(page, 0.3);
     const level = await page.evaluate(() => window.__app.audioLevel());
