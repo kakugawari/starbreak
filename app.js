@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.18.1';
+  const VERSION = 'v0.18.2';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -371,10 +371,13 @@
   }
 
   /** ゲームの空の惑星を地球 / 水星 / 火星に切り替える (面が変わったとき)。 */
+  // 惑星ごとの大きさ (地球を 1)。木星は「もう少し大きく」と言われて大きくした (円の中心はそのまま、まわりへ拡げる)
+  const PLANET_SCALE = { earth: 1, mercury: 1, mars: 1, jupiter: 1.5 };
   function setPlanetKind(kind) {
     const u = planet.userData;
     if (u.kind === kind) return;
     u.kind = kind;
+    u.ball.scale.setScalar(PLANET_SCALE[kind] || 1);
     const t = u.tex[kind];
     if (t) { u.mat.uniforms.map.value = t; u.ball.visible = true; }
   }
@@ -4304,6 +4307,7 @@
       },
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
+      planetScale: function () { return planet.userData.ball.scale.x; },
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center'), warp: warp.on && !warp.exitT, warpExit: !!warp.exitT, warpShown: !$('warp').hidden }; },
       stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
