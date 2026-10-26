@@ -867,7 +867,8 @@ async function run() {
     await page.waitForFunction(() => window.__app.game().level === 4, null, { timeout: 120000 });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.skyKind() === 'space4' && window.__app.screen() === 'play'), '3 面の採掘母艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
-    ok(await page.evaluate(() => window.__app.planetScale() >= 1.4), `4 面の木星は地球より大きく出す (${await page.evaluate(() => window.__app.planetScale())} 倍)`);
+    ok(await page.evaluate(() => window.__app.planetScale() === window.__app.planetScales.jupiter), `4 面へ進むと、空の惑星は木星の大きさになる (${await page.evaluate(() => window.__app.planetScale())} 倍)`);
+    ok(await page.evaluate(() => { const k = window.__app.planetScales; return k.mercury < k.mars && k.mars < k.earth && k.earth < k.jupiter; }), '惑星の大きさは本物の順 (水星 < 火星 < 地球 < 木星)');
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
     await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });

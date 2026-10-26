@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.18.2';
+  const VERSION = 'v0.18.3';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -371,8 +371,9 @@
   }
 
   /** ゲームの空の惑星を地球 / 水星 / 火星に切り替える (面が変わったとき)。 */
-  // 惑星ごとの大きさ (地球を 1)。木星は「もう少し大きく」と言われて大きくした (円の中心はそのまま、まわりへ拡げる)
-  const PLANET_SCALE = { earth: 1, mercury: 1, mars: 1, jupiter: 1.5 };
+  // 惑星ごとの大きさ (地球を 1。円の中心はそのまま、まわりへ拡げる)。本物の順 (水星 < 火星 < 地球 < 木星) にして、差は縮めた。
+  // 本物の比率 (0.38・0.53・1・11) も写して見比べたが、木星が画面を埋めて敵や照準が見えにくく、水星・火星は自機の陰に隠れたのでやめた
+  const PLANET_SCALE = { earth: 1, mercury: 0.6, mars: 0.75, jupiter: 2.2 };
   function setPlanetKind(kind) {
     const u = planet.userData;
     if (u.kind === kind) return;
@@ -4308,6 +4309,7 @@
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       planetScale: function () { return planet.userData.ball.scale.x; },
+      planetScales: PLANET_SCALE,
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center'), warp: warp.on && !warp.exitT, warpExit: !!warp.exitT, warpShown: !$('warp').hidden }; },
       stageCard: function () { const el = $('stageCard'); return { shown: !el.hidden, num: $('scNum').textContent, en: $('scEn').textContent, ja: $('scJa').textContent, pe: getComputedStyle(el).pointerEvents }; },
