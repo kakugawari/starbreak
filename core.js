@@ -228,6 +228,10 @@
     // 2 面の小ボス (エース機): 敵戦闘機を大きく強くしたもの。体力が多く、何発も当てないと落ちない。撃つ間隔が短く、5 連射
     // 4 面 (木星): 木星要塞 (球・輪・多数の砲塔。ゆっくり回って主砲の面を自機へ向ける)。砲塔が多いので 1 つの耐久は低め
     fortTurretHp: 12, fortEngineHp: 26, fortCoreHp: 55, fortFire: 1.1, fortCannon: 0.8, fortEscorts: 3, fortFaceCos: 0.6,
+    // 5 面 (冥王星) のボス「ハデス」: 砲台 10・スラスター (バリア発生器) 5・コア。コアの光線は太い (hadesBeamRadius)。
+    // コアがむき出しになると、リングの開口から遅い紫の弾を全方位へ撒く (hadesBurst* 。間隔・数・速さ・痛手)
+    hadesTurretHp: 16, hadesEngineHp: 26, hadesCoreHp: 130, hadesFire: 0.95, hadesCannon: 0.75, hadesEscorts: 3, hadesBeamRadius: 20,
+    hadesBurstGap: 3.5, hadesBurstN: 56, hadesBurstSpeed: 150, hadesBurstDamage: 4,
     // ロックオンの追いかけ: スティックを followCancel より大きく倒したらやめる。ボスの部位から followBreak (m) まで近づいたら、followAwayTime 秒離れてから向き直す
     followCancel: 0.75, followBreak: 200, followAwayTime: 2.5,
     // 1 面の前哨戦「補給船団」: 第1波のあと、戦艦へ向かう輸送船 (convoyCount 隻) が護衛機に守られて横切る。
@@ -663,6 +667,64 @@
     };
   }
   const DRILLER = buildDriller();
+  const LAST_LEVEL = 5;   // 最後の面 (冥王星)。ここのボスを沈めたら結果へ
+
+  /**
+   * 5 面 (冥王星) のボス: 極光級超大型要塞戦艦「ハデス」。送ってもらった絵がもと。
+   * 艦首 (-x) から艦尾 (+x) まで約 1000m の、重装甲の箱を連ねた船体。前の箱と後ろの箱のあいだに八角の枠 (リング) があり、
+   * 枠の中に次元跳躍リアクター (コア) が光る。枠は左右 (±z) に口を開けていて、コアは横から見える。
+   * はじめはコアを紫のバリアの膜がふさぐ (装甲)。艦尾の 5 連スラスターがバリア発生器 (弱点)。全部壊すと膜が消えてコアがむき出しになる。
+   * 後ろの箱の上に段々の艦橋。砲台 10 (艦首の上部構造・後ろの甲板・艦首の横腹・腹)
+   */
+  function buildHades() {
+    const solids = [], parts = [];
+    const oct = function (r, cx, cy) { const p = []; for (let i = 0; i < 8; i++) { const a = (i + 0.5) * Math.PI / 4; p.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } return p; };
+    const alongX = mRotZ(Math.PI / 2);                // 局所の y (押し出す向き) → 艦の -x
+    const RING = { x: -130, r0: 72, r1: 118, z: 75 };
+    // 前の箱 (艦首を斜めに落とす) と、その上の上部構造
+    solids.push({ name: 'bow', tint: 'hull', poly: [[-520, -55], [-470, -95], [-205, -95], [-205, 95], [-470, 95], [-520, 55]], y0: -80, y1: 80 });
+    solids.push({ name: 'bowTop', tint: 'dark', poly: [[-460, -60], [-262, -60], [-262, 60], [-460, 60]], y0: 80, y1: 115 });
+    // リング: 八角の枠を 8 つの台形で (横から見た形を左右に押し出す)。真ん中が抜けている
+    const inner = oct(RING.r0, RING.x, 0), outer = oct(RING.r1, RING.x, 0);
+    for (let i = 0; i < 8; i++) {
+      const j = (i + 1) % 8;
+      solids.push({ name: 'ring' + i, tint: 'ring', axis: 'z', poly: [inner[i], outer[i], outer[j], inner[j]], z0: -RING.z, z1: RING.z });
+    }
+    // 後ろの箱・竜骨・艦橋 (3 段)
+    solids.push({ name: 'stern', tint: 'hull', poly: [[-55, -95], [330, -95], [362, -70], [362, 70], [330, 95], [-55, 95]], y0: -85, y1: 85 });
+    solids.push({ name: 'keel', tint: 'dark', poly: [[0, -50], [300, -50], [300, 50], [0, 50]], y0: -112, y1: -85 });
+    solids.push({ name: 'tower1', tint: 'tower', poly: [[40, -55], [190, -55], [190, 55], [40, 55]], y0: 85, y1: 140 });
+    solids.push({ name: 'tower2', tint: 'tower', poly: [[70, -38], [165, -38], [165, 38], [70, 38]], y0: 140, y1: 185 });
+    solids.push({ name: 'bridge', tint: 'bridge', poly: [[58, -62], [152, -62], [152, 62], [58, 62]], y0: 185, y1: 200 });
+    // 5 連スラスター (艦尾。八角の筒を前後へ)。ふちがバリア発生器 (弱点)
+    const ENG = [[48, -58], [48, 58], [-48, -58], [-48, 58], [0, 0]];
+    ENG.forEach(function (q, i) {
+      solids.push({ name: 'eng' + i, tint: 'engine', m: alongX, at: [0, q[0], q[1]], poly: oct(36, 0, 0), y0: -468, y1: -352 });
+      parts.push({ kind: 'engine', at: vec(474, q[0], q[1]), face: vec(1, 0, 0), radius: 26 });
+    });
+    // 装甲 = コアをふさぐバリアの膜 (最後に置く: 外れるときの爆発は、部位の最後 = コアの位置で起こす)
+    solids.push({ name: 'barrier', tint: 'barrier', armor: true, axis: 'z', poly: oct(RING.r0 + 2, RING.x, 0), z0: -40, z1: 40 });
+
+    // 砲台 10: 艦首の上部構造 2・後ろの甲板 4・艦首の横腹 2・腹 2
+    const TU = function (x, y, z, f) { parts.unshift({ kind: 'turret', at: vec(x, y, z), face: f, radius: 14 }); };
+    TU(-180, -112, 0, vec(0, -1, 0)); TU(-340, -80, 0, vec(0, -1, 0));
+    TU(-360, 0, -95, vec(0, 0, -1)); TU(-360, 0, 95, vec(0, 0, 1));
+    TU(260, 85, -58, vec(0, 1, 0)); TU(260, 85, 58, vec(0, 1, 0));
+    TU(-10, 85, -58, vec(0, 1, 0)); TU(-10, 85, 58, vec(0, 1, 0));
+    TU(-300, 115, 0, vec(0, 1, 0)); TU(-420, 115, 0, vec(0, 1, 0));
+    // コア: リングの真ん中。横 (+z) から狙う
+    parts.push({ kind: 'core', at: vec(RING.x, 0, 0), face: vec(0, 0, 1), radius: 34 });
+
+    return {
+      solids: solids, parts: parts, ring: RING, engines: ENG,
+      cannon: vec(-526, 0, 0), coreCannon: vec(RING.x, 0, 0), bow: -520, stern: 474, ahead: 860, drop: 170,
+      escorts: function (i) {                     // 護衛機の出る所: 腹の左右から横へ
+        const sz = i % 2 === 0 ? -1 : 1;
+        return { pos: vec(220 - i * 60, -130, sz * 130), dir: vec(-0.4, 0.2, sz) };
+      }
+    };
+  }
+  const HADES = buildHades();
 
   /**
    * ボスの種類。形 (立体の表)・部位・主砲の位置・出てくる所の大きさ・知らせの文をまとめる。
@@ -681,6 +743,13 @@
       cannonAt: 3, name: '採掘母艦',
       phaseNames: { arrive: '接近中', battle: '砲台', cannon: '砲台 / ドリル砲', weak: '鉱石タンク', core: '動力炉', dying: '撃沈' },
       text: { warning: '警告  火星採掘母艦 接近', battle: '砲台を破壊せよ', cannon: 'ドリル砲チャージ  射線から外れろ', weak: '背中の鉱石タンクが露出  弱点を撃て', core: '装甲の輪が外れた  ドリルの付け根の動力炉を撃て', dying: '撃沈' }
+    },
+    hades: {
+      solids: HADES.solids, parts: HADES.parts, cannon: HADES.cannon, coreCannon: HADES.coreCannon, bow: HADES.bow, stern: HADES.stern,
+      ahead: HADES.ahead, drop: HADES.drop, escorts: HADES.escorts,
+      cannonAt: 4, name: 'ハデス', cannonLos: true,
+      phaseNames: { arrive: '接近中', battle: '砲台', cannon: '砲台 / 艦首砲', weak: 'バリア発生器', core: '次元リアクター', dying: '撃沈' },
+      text: { warning: '警告  要塞戦艦ハデス 接近', battle: 'バリアに守られている  砲台を破壊せよ', cannon: '艦首砲チャージ  射線から外れろ', weak: '艦尾のスラスターがバリアを張っている  弱点を撃て', core: 'バリア消失  リングの中のリアクターを撃ち抜け', dying: '撃沈' }
     },
     fortress: {
       solids: FORTRESS.solids, parts: FORTRESS.parts, cannon: FORTRESS.cannon, cannonFace: FORTRESS.cannonFace, bow: FORTRESS.bow, stern: FORTRESS.stern,
@@ -704,7 +773,7 @@
       // start: 'boss' は巨大戦艦から、'stage' はその面の始まり (間のあとに第1波。負けたあとの「この面から続ける」)
       stage: opts.start === 'boss' ? 'bossIn' : opts.start === 'stage' ? 'intro' : 'wave1',
       stageTimer: 0,
-      level: opts.level || 1, // 面 (1〜4)。1 面の戦艦 → 2 面 (小ボス) → 3 面 (火星の採掘母艦) → 4 面 (木星要塞)。opts.level は試験・写真用
+      level: opts.level || 1, // 面 (1〜5)。1 面の戦艦 → 2 面 (エース機) → 3 面 (火星の採掘母艦) → 4 面 (木星要塞) → 5 面 (冥王星のハデス)。opts.level は試験・写真用
       nextId: 1,
       player: {
         pos: vec(0, 0, 0), yaw: 0, pitch: 0, roll: 0,
@@ -787,6 +856,10 @@
     4: [
       [vec(-280, -20, -760), vec(-140, 60, -800), vec(0, -40, -820), vec(140, 50, -800), vec(280, -30, -760)],
       [vec(-260, 80, -720), vec(0, -60, -780), vec(260, -40, -760), vec(-220, 30, 700), vec(0, 70, 720), vec(220, 90, 680)]
+    ],
+    5: [
+      [vec(-300, -20, -760), vec(-150, 60, -800), vec(0, -40, -840), vec(150, 50, -800), vec(300, -30, -760)],
+      [vec(-280, 80, -720), vec(-90, -60, -780), vec(90, 40, -780), vec(280, -40, -720), vec(-220, 30, 700), vec(0, 70, 720), vec(220, 90, 680)]
     ]
   };
 
@@ -898,7 +971,7 @@
   }
 
   function makeBoss(g) {
-    const type = g.level === 4 ? 'fortress' : g.level === 3 ? 'driller' : 'battleship';
+    const type = g.level === 5 ? 'hades' : g.level === 4 ? 'fortress' : g.level === 3 ? 'driller' : 'battleship';
     const def = BOSS_TYPES[type];
     const k = 1;
     const at = bossSpot(g, k, def);
@@ -911,7 +984,9 @@
     const parts = def.parts.map(function (d) {
       const base = type === 'fortress'
         ? (d.kind === 'turret' ? T.fortTurretHp : d.kind === 'engine' ? T.fortEngineHp : T.fortCoreHp)
-        : (d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp);
+        : type === 'hades'
+          ? (d.kind === 'turret' ? T.hadesTurretHp : d.kind === 'engine' ? T.hadesEngineHp : T.hadesCoreHp)
+          : (d.kind === 'turret' ? T.turretHp : d.kind === 'engine' ? T.engineHp : T.coreHp);
       const hp = Math.round(base * (type === 'driller' && d.kind === 'engine' ? T.drillTankHp : 1));
       const local = scale(d.at, k), face = copy(d.face);
       return {
@@ -937,7 +1012,8 @@
       phase: 'arrive',        // arrive / battle / cannon / weak / core / dying / dead
       parts: parts,
       armor: true,
-      cannon: { state: 'idle', t: 0, next: 4, dir: vec(1, 0, 0), from: scale(def.cannon, k), hitDone: false },
+      cannon: { state: 'idle', t: 0, next: 4, dir: vec(1, 0, 0), from: scale(def.cannon, k), hitDone: false, radius: T.cannonRadius },
+      burstCd: 2,
       dyingT: 0
     };
   }
@@ -1607,6 +1683,14 @@
     emit(g, 'escorts', { n: n });
   }
 
+  // ボスの種類ごとの強さ (撃つ間隔の倍率・主砲の間隔の倍率・護衛機の数)
+  function bossTune(b) {
+    if (b.type === 'fortress') return { fire: T.fortFire, cannon: T.fortCannon, escorts: T.fortEscorts };
+    if (b.type === 'hades') return { fire: T.hadesFire, cannon: T.hadesCannon, escorts: T.hadesEscorts };
+    if (b.type === 'driller') return { fire: T.boss3Fire, cannon: T.boss3Cannon, escorts: T.boss3Escorts };
+    return { fire: 1, cannon: 1, escorts: 3 };
+  }
+
   function updateBoss(g, dt) {
     const b = g.boss;
     const pl = g.player;
@@ -1629,7 +1713,7 @@
         b.battleT = g.t;
         b.vel = vec();
         emit(g, 'bossPhase', { phase: 'battle', text: BOSS_TYPES[b.type].text.battle });
-        launchEscorts(g, b.type === 'fortress' ? T.fortEscorts : b.level === 3 ? T.boss3Escorts : 3);
+        launchEscorts(g, bossTune(b).escorts);
       }
     }
 
@@ -1656,6 +1740,9 @@
         p.vel = b.vel;
       }
       p.flash = Math.max(0, p.flash - dt * 5);
+      // ハデスのコアはリングの左右どちらからも撃てる。向き (構える所・LOCK の離れる向き) は自機のいる側にする。
+      // 決まった側 (+z) にしていると、反対側にいるとき船体を越えられず回り続けた (核の段だけで 271 秒)
+      if (b.type === 'hades' && p.kind === 'core') p.face = vec(0, 0, pl.pos.z >= p.pos.z ? 1 : -1);
     }
 
     if (b.phase === 'dying') {
@@ -1703,7 +1790,7 @@
       const armorW = scale(vec(armorAt.x, armorAt.y + 6, armorAt.z), b.size || 1);
       emit(g, 'explode', { pos: add(b.pos, yawM ? mvec(yawM, armorW) : armorW), size: (b.type === 'battleship' ? 3 : 5) * (b.size || 1), kind: 'armor' });
       emit(g, 'bossPhase', { phase: 'core', text: def.text.core });
-      launchEscorts(g, b.type === 'fortress' ? T.fortEscorts : b.level === 3 ? T.boss3Escorts : 3);
+      launchEscorts(g, bossTune(b).escorts);
     }
     if (b.phase === 'core' && aliveParts(b, 'core') === 0) {
       b.phase = 'dying';
@@ -1731,7 +1818,7 @@
       p.fireCd -= dt;
       if (p.fireCd > 0 || !pl.alive || g.state !== 'play') continue;
       if (d > T.turretRange || dot(to, p.face) < d * 0.1) { p.fireCd = 0.5; continue; }
-      p.fireCd = rand(g, 2.2, 3.4) * (b.type === 'fortress' ? T.fortFire : b.level === 3 ? T.boss3Fire : 1);
+      p.fireCd = rand(g, 2.2, 3.4) * bossTune(b).fire;
       const ic = intercept(p.pos, pl.pos, pl.vel, T.turretShotSpeed);
       const aim = sub(ic ? ic.point : pl.pos, p.pos);
       const from = addScaled(p.pos, norm(aim), p.radius + 2);
@@ -1743,20 +1830,46 @@
       emit(g, 'turretFire', { pos: from });
     }
 
+    // ハデスのコア: むき出しになると、リングの左右の開口から遅い紫の弾を全方位へ撒く (よけられる速さ・すき間)。
+    // 向きは球の上にむらなく並べた点から、開口から出る向き (横 ±z 寄り) だけを使う。撒くたびに少し回す
+    if (b.type === 'hades' && b.phase === 'core' && pl.alive && g.state === 'play') {
+      b.burstCd -= dt;
+      if (b.burstCd <= 0) {
+        b.burstCd = T.hadesBurstGap;
+        const core = b.parts[b.parts.length - 1];
+        const N = T.hadesBurstN * 2, rot = g.rng() * Math.PI * 2;
+        let shot = 0;
+        for (let i = 0; i < N && shot < T.hadesBurstN; i++) {
+          const y = 1 - 2 * (i + 0.5) / N, r = Math.sqrt(1 - y * y), a = i * 2.39996 + rot;
+          const d = vec(r * Math.cos(a), y, r * Math.sin(a));
+          if (Math.abs(d.z) < 0.45) continue;
+          enemyShot(g, addScaled(core.pos, d, core.radius + 4), d, T.hadesBurstDamage, T.hadesBurstSpeed, 'burst');
+          shot++;
+        }
+        emit(g, 'coreBurst', { pos: copy(core.pos), n: shot });
+      }
+    }
+
     // 主砲: チャージ → 狙いを固定 → 発射。固定のあとは動けばよけられる
     if (b.phase === 'cannon' || b.phase === 'weak' || b.phase === 'core') {
       const c = b.cannon;
-      const cl = scale(def.cannon, b.size || 1);
+      // ハデス: コアがむき出しになると、主砲はコアから撃つ (太い光線)
+      const fromCore = b.phase === 'core' && def.coreCannon;
+      const cl = scale(fromCore ? def.coreCannon : def.cannon, b.size || 1);
       c.from = add(b.pos, yawM ? mvec(yawM, cl) : cl);
+      if (c.state === 'idle') c.radius = fromCore ? T.hadesBeamRadius : T.cannonRadius;
       // 要塞の主砲は、面が自機の方を向いているときだけ撃ち始める (回って向き直るのを待つ)
       let facing = true;
       if (def.cannonFace) {
         const cf = yawM ? mvec(yawM, def.cannonFace) : def.cannonFace;
         facing = dot(cf, norm(sub(pl.pos, c.from))) > T.fortFaceCos;
       }
+      // ハデスの主砲は自分の船体を撃ち抜けない: 射線が船体にさえぎられている間は溜めず、撃っても船体の陰には当たらない。
+      // さえぎらないと、艦尾のスラスターを撃っている自機へ、艦首の砲が船体ごしに当たり続けた (腕前 0.45 で主砲の痛手 270〜675)
+      const clear = !def.cannonLos || lineClearOfBoss(b, c.from, pl.pos);
       if (c.state === 'idle') {
         c.next -= dt;
-        if (c.next <= 0 && facing && pl.alive && g.state === 'play') {
+        if (c.next <= 0 && facing && clear && pl.alive && g.state === 'play') {
           c.state = 'charge'; c.t = 0; c.hitDone = false;
           emit(g, 'cannonCharge', { pos: c.from });
         }
@@ -1767,17 +1880,27 @@
         if (c.t >= T.cannonCharge) { c.state = 'fire'; c.t = 0; c.lockedEmit = false; emit(g, 'cannonFire', { pos: c.from }); }
       } else if (c.state === 'fire') {
         c.t += dt;
-        if (!c.hitDone && beamHits(c.from, c.dir, pl.pos, T.cannonRadius + T.playerRadius)) {
+        if (!c.hitDone && clear && beamHits(c.from, c.dir, pl.pos, c.radius + T.playerRadius)) {
           c.hitDone = true;
           hurtPlayer(g, T.cannonDamage, c.from, 'cannon');
         }
         if (c.t >= T.cannonFire) {
           c.state = 'idle';
-          c.next = (b.phase === 'core' ? 6.5 : 9) * (b.type === 'fortress' ? T.fortCannon : b.level === 3 ? T.boss3Cannon : 1);
+          c.next = (b.phase === 'core' ? 6.5 : 9) * bossTune(b).cannon;
           if (!c.hitDone) emit(g, 'cannonDodged');
         }
       }
     }
+  }
+
+  /** from から to までの線が、ボスの船体 (いまある立体) にさえぎられていないか。 */
+  function lineClearOfBoss(b, from, to) {
+    const solids = bossSolids(b);
+    for (let i = 0; i < solids.length; i++) {
+      const t = segmentSolid(from, to, solids[i].planes);
+      if (t >= 0 && t < 1) return false;
+    }
+    return true;
   }
 
   /** 光線 (from から dir へ cannonLength) の太さ r の中に点があるか。 */
@@ -1977,12 +2100,12 @@
     if (g.state === 'ending') {
       g.endT += dt;
       // 撃沈のあとの余韻: 大爆発 (dying 4.2 秒) → STAGE CLEAR の札 → 暗転 (stageOut。次の面へ進む stageOutLead 秒前) → 次の面
-      if (g.boss && g.boss.phase === 'dead' && (g.level === 1 || g.level === 3) && !g.stageOutSent && g.endT > T.bossEndWait - T.stageOutLead) {
+      if (g.boss && g.boss.phase === 'dead' && g.level !== 2 && g.level < LAST_LEVEL && !g.stageOutSent && g.endT > T.bossEndWait - T.stageOutLead) {
         g.stageOutSent = true;
         emit(g, 'stageOut', { level: g.level + 1 });
       }
       if (g.boss && g.boss.phase === 'dead' && g.endT > T.bossEndWait) {
-        if (g.level === 1 || g.level === 3) startStage(g, g.level + 1);   // 1 面の戦艦 → 2 面、3 面の採掘母艦 → 4 面。2 面は小ボス (エース機)
+        if (g.level < LAST_LEVEL) startStage(g, g.level + 1);   // 1 面の戦艦 → 2 面、3 面の採掘母艦 → 4 面、4 面の木星要塞 → 5 面。2 面はエース機 (ボスは船でない)
         else { g.state = 'clear'; emit(g, 'clear'); }
       }
     } else if (g.state === 'over') {
@@ -2028,7 +2151,7 @@
     let rank = 'C';
     // 2 面まで遊ぶと点も増えるので線を伸ばす。2 面は長く手ごわいので 2 倍ではなく 1.8 倍
     // (自動操縦 8 通りで、1 面だけのときと同じく 上手 → ほぼ S・下手 → A になる値。4 面まで遊ぶと 3 倍 = 腕前 1・0.7 は S、0.45 は A)
-    const lv = g.level === 4 ? 3 : g.level === 3 ? 2.3 : g.level === 2 ? 1.3 : 1;
+    const lv = g.level === 5 ? 3.9 : g.level === 4 ? 3 : g.level === 3 ? 2.3 : g.level === 2 ? 1.3 : 1;
     if (cleared) rank = total >= 16000 * lv ? 'S' : total >= 12000 * lv ? 'A' : total >= 8000 * lv ? 'B' : 'C';
     return {
       cleared: !!cleared, time: s.time, kills: s.kills, accuracy: acc,
@@ -2169,7 +2292,7 @@
     BOSS_SOLIDS: BOSS_SOLIDS,
     BOSS_PARTS: BOSS_PARTS,
     BOSS_CANNON: BOSS_CANNON,
-    BOSS_TYPES: BOSS_TYPES, FORTRESS: FORTRESS, DRILLER: DRILLER, icosphere: icosphere,
+    BOSS_TYPES: BOSS_TYPES, FORTRESS: FORTRESS, DRILLER: DRILLER, HADES: HADES, LAST_LEVEL: LAST_LEVEL, icosphere: icosphere,
     mulberry32: mulberry32,
     vec: vec, add: add, sub: sub, scale: scale, dot: dot, cross: cross, len: len, dist: dist, norm: norm,
     clamp: clamp, lerp: lerp, approach: approach, angleBetween: angleBetween, rotateToward: rotateToward,

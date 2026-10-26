@@ -570,7 +570,7 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   run(g, 15, {});
   assert.strictEqual(g.state, 'play', '3 面の採掘母艦でも終わらず、4 面へ進む');
   assert.strictEqual(g.level, 4);
-  // 4 面の木星要塞も同じ順で沈めるとクリア
+  // 4 面の木星要塞も同じ順で沈めると 5 面へ。5 面 (冥王星) のハデスを沈めるとクリア
   g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
   run(g, 14, (gg) => { gg.fighters = []; return {}; });
   assert.strictEqual(g.boss.type, 'fortress');
@@ -578,8 +578,87 @@ test('戦艦は 砲台 → 主砲 → エンジン → コア → 撃沈 の順�
   for (const k of ['turret', 'engine', 'core']) { killParts(g, k); run(g, 0.1, {}); }
   assert.strictEqual(g.boss.phase, 'dying');
   run(g, 15, {});
+  assert.strictEqual(g.state, 'play', '4 面の木星要塞でも終わらず、5 面へ進む');
+  assert.strictEqual(g.level, 5);
+  g.stage = 'gap2'; g.stageTimer = 99; g.fighters = [];
+  run(g, 14, (gg) => { gg.fighters = []; return {}; });
+  assert.strictEqual(g.boss.type, 'hades');
+  assert.strictEqual(g.boss.phase, 'battle');
+  for (const k of ['turret', 'engine', 'core']) { killParts(g, k); run(g, 0.1, {}); }
+  assert.strictEqual(g.boss.phase, 'dying');
+  run(g, 15, {});
   assert.strictEqual(g.boss.phase, 'dead');
   assert.strictEqual(g.state, 'clear');
+});
+
+function hadesGame() {
+  const g = C.createGame({ seed: 7, start: 'boss', level: 5 });
+  run(g, 14, {});
+  g.fighters = [];
+  return g;
+}
+// 自機を、ある点からある点へ向けて置き、弾を 1 発その向きに置く
+function shootAt(g, from, to) {
+  const d = C.norm(C.sub(to, from));
+  g.player.pos = from;
+  g.shots.push({ owner: 'player', pos: C.add(from, C.scale(d, 2)), prev: from, vel: C.scale(d, T.laserSpeed), life: 3, dmg: 1, dead: false });
+}
+
+test('5 面のハデス: バリア (膜) があるうちはコアに弾が届かない。スラスター 5 つを壊すとバリアが消え、コアに効く', () => {
+  const g = hadesGame();
+  assert.strictEqual(g.boss.type, 'hades');
+  const core = g.boss.parts.find((p) => p.kind === 'core');
+  assert.strictEqual(g.boss.parts.filter((p) => p.kind === 'turret').length, 10, '砲台 10');
+  assert.strictEqual(g.boss.parts.filter((p) => p.kind === 'engine').length, 5, 'スラスター (バリア発生器) 5');
+  // 横 (+z) の開口から撃つ: バリアの膜に当たって止まる
+  const hp0 = core.hp;
+  for (let i = 0; i < 10; i++) { shootAt(g, C.add(core.pos, C.vec(0, 0, 200)), core.pos); run(g, 0.5, {}); }
+  assert.strictEqual(core.hp, hp0, 'バリアがあるうちは効かない');
+  killParts(g, 'turret'); run(g, 0.1, {});
+  assert.strictEqual(g.boss.phase, 'weak');
+  killParts(g, 'engine'); run(g, 0.1, {});
+  assert.strictEqual(g.boss.phase, 'core');
+  assert.strictEqual(g.boss.armor, false, 'スラスターを全部壊すとバリアが消える');
+  shootAt(g, C.add(core.pos, C.vec(0, 0, 200)), core.pos); run(g, 0.5, {});
+  assert.ok(core.hp < hp0, `むき出しのコアに効く (${core.hp} / ${hp0})`);
+  // 反対の開口 (-z) からも撃てる
+  const hp1 = core.hp;
+  shootAt(g, C.add(core.pos, C.vec(0, 0, -200)), core.pos); run(g, 0.5, {});
+  assert.ok(core.hp < hp1, '反対側からも効く');
+});
+
+test('5 面のハデス: コアの向き (構える所) は自機のいる側。主砲は自分の船体ごしには撃たない', () => {
+  const g = hadesGame();
+  const b = g.boss, core = b.parts.find((p) => p.kind === 'core');
+  g.player.pos = C.add(core.pos, C.vec(0, 50, -400)); run(g, 0.05, {});
+  assert.ok(core.face.z < 0, 'コアの向きは -z (自機の側)');
+  g.player.pos = C.add(core.pos, C.vec(0, 50, 400)); run(g, 0.05, {});
+  assert.ok(core.face.z > 0, 'コアの向きは +z (自機の側)');
+  // 艦尾の真後ろ (+x): 艦首の砲から見ると船体の陰。溜め始めない
+  killParts(g, 'turret'); run(g, 0.1, {});
+  const behind = C.add(b.pos, C.vec(900, 0, 0));
+  b.cannon.state = 'idle'; b.cannon.next = 0;
+  run(g, 3, (gg) => { gg.player.pos = behind; gg.player.alive = true; return {}; });
+  assert.strictEqual(b.cannon.state, 'idle', '船体の陰では主砲を溜めない');
+  // 艦首の前 (-x) へ出ると溜め始める
+  run(g, 1, (gg) => { gg.player.pos = C.add(gg.boss.pos, C.vec(-1200, 0, 0)); return {}; });
+  assert.notStrictEqual(b.cannon.state, 'idle', '射線が通れば溜める');
+});
+
+test('5 面のハデス: コアがむき出しになると、リングの左右の開口から遅い紫の弾を全方位へ撒く', () => {
+  const g = hadesGame();
+  killParts(g, 'turret'); run(g, 0.1, {}); killParts(g, 'engine'); run(g, 0.1, {});
+  assert.strictEqual(g.boss.phase, 'core');
+  g.player.pos = C.add(g.boss.pos, C.vec(0, 0, 900));
+  g.boss.burstCd = 0.05;
+  let ev = null;
+  run(g, 0.2, (gg) => { gg.player.pos = C.add(gg.boss.pos, C.vec(0, 0, 900)); for (const e of gg.events) if (e.type === 'coreBurst') ev = e; gg.events.length = 0; return {}; });
+  const shots = g.shots.filter((s) => s.src === 'burst');
+  assert.ok(ev && ev.n === T.hadesBurstN, `一度に ${T.hadesBurstN} 発 (${ev && ev.n})`);
+  assert.strictEqual(shots.length, T.hadesBurstN);
+  assert.ok(shots.every((s) => Math.abs(s.vel.z) / C.len(s.vel) >= 0.45 - 1e-9), 'どの弾もリングの開口 (横 ±z) から出る向き');
+  assert.ok(shots.some((s) => s.vel.z > 0) && shots.some((s) => s.vel.z < 0), '左右の両方へ');
+  assert.ok(shots.every((s) => Math.abs(C.len(s.vel) - T.hadesBurstSpeed) < 1e-6 && T.hadesBurstSpeed < T.turretShotSpeed), '砲台の弾より遅い (よけられる)');
 });
 
 test('装甲があるうちはコアを撃っても効かない。外れたら効く', () => {
@@ -750,23 +829,23 @@ test('護衛機は船体の外から出て、船体にめり込まない', () =>
 
 // ------------------------------------------------------------ 通しで遊ぶ
 
-test('上手な自動操縦は、8通りの始め方のうち7つ以上で 4 面の最後まで勝てる', () => {
+test('上手な自動操縦は、8通りの始め方のうち7つ以上で 5 面の最後まで勝てる', () => {
   let cleared = 0;
   const times = [];
   for (let seed = 1; seed <= 8; seed++) {
     const g = C.createGame({ seed: seed });
-    run(g, 2200, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
+    run(g, 2600, (gg) => { gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
     if (g.state === 'clear') { cleared++; times.push(Math.round(g.stats.time)); }
   }
   assert.ok(cleared >= 7, `勝てたのは ${cleared}/8 (${times.join(', ')} 秒)`);
-  assert.ok(Math.max.apply(null, times) < 1500, 'どれも 4 面あわせて 25 分以内');
+  assert.ok(Math.max.apply(null, times) < 1800, 'どれも 5 面あわせて 30 分以内');
 });
 
-test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・採掘母艦) → 4 面 (木星要塞) → クリア。面が変わるたびに機体が直る', () => {
+test('5 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面 (火星・採掘母艦) → 4 面 (木星要塞) → 5 面 (冥王星・ハデス) → クリア。面が変わるたびに機体が直る', () => {
   const g = C.createGame({ seed: 4 });
-  const seen = [], starts = {}, waves = { 2: [], 3: [], 4: [] };
-  let boss3 = null, boss4 = null, aceWarn = 0, aceDown = 0, aceMax = 0, bossIn2 = false;
-  run(g, 2400, (gg) => {
+  const seen = [], starts = {}, waves = { 2: [], 3: [], 4: [], 5: [] };
+  let boss3 = null, boss4 = null, boss5 = null, aceWarn = 0, aceDown = 0, aceMax = 0, bossIn2 = false;
+  run(g, 3000, (gg) => {
     for (const e of gg.events) {
       if (e.type === 'stageStart') starts[e.level] = { hull: gg.player.hull, shield: gg.player.shield, missiles: gg.player.missiles, state: gg.state, boss: gg.boss, ace: gg.ace };
       if (e.type === 'stage' && gg.level > 1) waves[gg.level].push(gg.fighters.filter((f) => !f.drone && !f.ace).length);
@@ -778,10 +857,11 @@ test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面
     if (gg.level === 2 && gg.boss) bossIn2 = true;
     if (gg.level === 3 && gg.boss && !boss3) boss3 = gg.boss;
     if (gg.level === 4 && gg.boss && !boss4) boss4 = gg.boss;
+    if (gg.level === 5 && gg.boss && !boss5) boss5 = gg.boss;
     gg.events.length = 0;
     return gg.state === 'play' ? C.autopilot(gg, 1) : {};
   }, 1 / 30);
-  [2, 3, 4].forEach((lv) => {
+  [2, 3, 4, 5].forEach((lv) => {
     const s = starts[lv];
     assert.ok(s, lv + ' 面へ進んだ');
     assert.strictEqual(s.state, 'play');
@@ -796,7 +876,9 @@ test('4 面の流れ: 1 面の戦艦 → 2 面 (水星・エース機) → 3 面
   assert.ok(boss3 && boss3.level === 3 && boss3.type === 'driller', '3 面は火星の採掘母艦');
   assert.ok(boss4 && boss4.type === 'fortress' && boss4.level === 4, '4 面は木星要塞');
   assert.strictEqual(waves[4].length, 2, '4 面も第1波・第2波');
-  assert.deepStrictEqual(seen, ['clear@4'], '1 面の戦艦・エース機・3 面の採掘母艦ではクリアにならず、4 面の木星要塞を沈めてクリア');
+  assert.ok(boss5 && boss5.type === 'hades' && boss5.level === 5, '5 面は冥王星のハデス');
+  assert.deepStrictEqual(waves[5], [5, 7], '5 面の敵は 5 機・7 機');
+  assert.deepStrictEqual(seen, ['clear@5'], '4 面の木星要塞まではクリアにならず、5 面のハデスを沈めてクリア');
 });
 
 test('3 面の採掘母艦: 1 面の戦艦とは形が違う (前にドリル・縦に高い塔)。砲台 7・鉱石タンク 4・動力炉は装甲の輪の中', () => {
@@ -1022,7 +1104,11 @@ test('木星要塞: 自分の方を向いていないと主砲を溜めない', 
   assert.ok(charged, '向き直れば溜める');
 });
 
-test('4 面の成績: 腕前の線は 3 倍 (4 面まで遊ぶと 48000 点で S)', () => {
+test('5 面の成績: 腕前の線は 3.9 倍 (5 面まで遊ぶと 62400 点で S)。4 面までなら 3 倍', () => {
+  const mk5 = (score) => { const g = C.createGame({ seed: 1 }); g.level = 5; g.state = 'clear'; g.stats.score = score; g.stats.time = 5000; g.player.hull = 0; return C.result(g); };
+  assert.strictEqual(mk5(62000).rank, 'A');
+  assert.strictEqual(mk5(63000).rank, 'S');
+  assert.strictEqual(mk5(46000).rank, 'B');
   const mk = (score) => { const g = C.createGame({ seed: 1 }); g.level = 4; g.state = 'clear'; g.stats.score = score; g.stats.time = 5000; g.player.hull = 0; return C.result(g); };
   assert.strictEqual(mk(47000).rank, 'A');
   assert.strictEqual(mk(49000).rank, 'S');

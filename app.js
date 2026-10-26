@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.18.3';
+  const VERSION = 'v0.19.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -202,7 +202,7 @@
     const m = new THREE.Mesh(new THREE.SphereGeometry(20000, 64, 32), mat);
     m.renderOrder = -10;
     sky.add(m);
-    // 1 面は紫の星雲 (space.jpg)、2 面は灰色の星雲 (space2.jpg)、3 面は琥珀色の星雲 (space3.jpg)、4 面は木星色の星雲 (space4.jpg)。面が変わったら setSkyKind で替える
+    // 1 面は紫の星雲 (space.jpg)、2 面は灰色の星雲 (space2.jpg)、3 面は琥珀色の星雲 (space3.jpg)、4 面は木星色の星雲 (space4.jpg)、5 面は青紫の星雲 (space5.jpg)。面が変わったら setSkyKind で替える
     sky.userData.tex = {};
     sky.userData.kind = 'space';
     function useSky(name) {
@@ -213,7 +213,7 @@
       mat.needsUpdate = true;
     }
     sky.userData.use = useSky;
-    ['space', 'space2', 'space3', 'space4'].forEach(function (name) {
+    ['space', 'space2', 'space3', 'space4', 'space5'].forEach(function (name) {
       loadTex(name + '.jpg', function (t) {
         // 内側から見ると左右が反転するので戻す
         t.wrapS = THREE.RepeatWrapping;
@@ -286,6 +286,7 @@
     loadTex('mars.jpg', function (t) { planet.userData.tex.mars = t; if (planet.userData.kind === 'mars') { mat.uniforms.map.value = t; m.visible = true; } });
     loadTex('mercury.jpg', function (t) { planet.userData.tex.mercury = t; if (planet.userData.kind === 'mercury') { mat.uniforms.map.value = t; m.visible = true; } });
     loadTex('jupiter.jpg', function (t) { planet.userData.tex.jupiter = t; if (planet.userData.kind === 'jupiter') { mat.uniforms.map.value = t; m.visible = true; } });
+    loadTex('pluto.jpg', function (t) { planet.userData.tex.pluto = t; if (planet.userData.kind === 'pluto') { mat.uniforms.map.value = t; m.visible = true; } });
     planet.userData.mat = mat;
     planet.userData.offset = new THREE.Vector3(-3400, -5200, -9000);
     planet.userData.ball = m;
@@ -373,7 +374,7 @@
   /** ゲームの空の惑星を地球 / 水星 / 火星に切り替える (面が変わったとき)。 */
   // 惑星ごとの大きさ (地球を 1。円の中心はそのまま、まわりへ拡げる)。本物の順 (水星 < 火星 < 地球 < 木星) にして、差は縮めた。
   // 本物の比率 (0.38・0.53・1・11) も写して見比べたが、木星が画面を埋めて敵や照準が見えにくく、水星・火星は自機の陰に隠れたのでやめた
-  const PLANET_SCALE = { earth: 1, mercury: 0.6, mars: 0.75, jupiter: 2.2 };
+  const PLANET_SCALE = { earth: 1, mercury: 0.6, mars: 0.75, jupiter: 2.2, pluto: 0.5 };
   function setPlanetKind(kind) {
     const u = planet.userData;
     if (u.kind === kind) return;
@@ -878,6 +879,7 @@
   function makeBossModel(level, type) {
     if (type === 'fortress') return makeFortressModel();
     if (type === 'driller') return makeDrillerModel();
+    if (type === 'hades') return makeHadesModel();
     const mat = hullMat;
     const group = new THREE.Group();
     const rng = C.mulberry32(1234);
@@ -1466,6 +1468,215 @@
     return group;
   }
 
+  // ------------------------------------------------------------ 5 面のボス「ハデス」
+  //
+  // 送ってもらった絵がもと: 暗い灰の金属の箱を連ねた重装甲の船体、真ん中の八角のリングに紫〜水色に光る渦のリアクター、
+  // 艦尾の 5 連スラスターの青紫の噴射、全体を包む紫のバリアの球。立体は core.js の HADES の表から (当たりと同じ)。
+  // 背景 (青紫の星雲) に沈まないよう、船体は装甲の絵を少し青白く自ら光らせ、ふちに水色の明かりの列を置く
+  const HADES_TINT = {
+    hull: [0.50, 0.53, 0.60], dark: [0.34, 0.35, 0.41], ring: [0.42, 0.42, 0.52], tower: [0.56, 0.58, 0.66],
+    bridge: [0.66, 0.68, 0.76], engine: [0.38, 0.38, 0.46], barrier: [0.6, 0.4, 1]
+  };
+  let hadesMat = null;
+  // リングの中の渦の絵: 紫から水色へ巻く腕 (その場で描く)
+  function vortexTexture() {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+    const c = cv.getContext('2d');
+    const g0 = c.createRadialGradient(128, 128, 4, 128, 128, 126);
+    g0.addColorStop(0, 'rgba(230,250,255,1)'); g0.addColorStop(0.18, 'rgba(90,240,230,0.95)');
+    g0.addColorStop(0.5, 'rgba(120,60,255,0.75)'); g0.addColorStop(1, 'rgba(20,0,60,0)');
+    c.fillStyle = g0; c.fillRect(0, 0, 256, 256);
+    c.globalCompositeOperation = 'lighter';
+    for (let arm = 0; arm < 4; arm++) {
+      for (let i = 0; i < 220; i++) {
+        const t = i / 220, a = arm * Math.PI / 2 + t * 7.5, r = 10 + t * 112;
+        c.fillStyle = t < 0.4 ? 'rgba(120,255,240,0.10)' : 'rgba(170,110,255,0.09)';
+        c.beginPath(); c.arc(128 + Math.cos(a) * r, 128 + Math.sin(a) * r, 3 + t * 9, 0, Math.PI * 2); c.fill();
+      }
+    }
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  // バリアの球: ふちほど濃く光る (中から見るとほぼ透けて、外から見ると輪郭が紫に光る)。ゆっくり波打つ
+  function barrierBubble(r) {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { t: { value: 0 }, k: { value: 1 } },
+      vertexShader: 'varying vec3 vN; varying vec3 vV; varying vec3 vP; void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vP = position; vN = normalize(mat3(modelMatrix)*normal); vV = normalize(cameraPosition - wp.xyz); gl_Position = projectionMatrix*viewMatrix*wp; }',
+      fragmentShader: 'uniform float t; uniform float k; varying vec3 vN; varying vec3 vV; varying vec3 vP;' +
+        'void main(){ float f = 1.0 - abs(dot(normalize(vN), vV)); f = pow(f, 2.6);' +
+        'float w = 0.5 + 0.5*sin(vP.y*0.035 + t*1.7) * sin(vP.x*0.021 - t*1.1);' +
+        'vec3 col = mix(vec3(0.35,0.18,1.0), vec3(0.45,0.9,1.0), w*0.35);' +
+        'float a = (f*0.85 + 0.035 + 0.05*w*f) * k; gl_FragColor = vec4(col*a, a); }',
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+    });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), mat);
+    m.renderOrder = 2;
+    return m;
+  }
+
+  function makeHadesModel() {
+    const D = C.HADES, RG = D.ring;
+    if (!hadesMat) {
+      hadesMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40, specular: 0x50586a, flatShading: true, emissive: 0x4a5070 });
+    }
+    hadesMat.map = hullMat.map;
+    hadesMat.emissiveMap = hullMat.map;
+    const group = new THREE.Group();
+    const rng = C.mulberry32(5050);
+    const hull = { pos: [], nor: [], col: [], uv: [] };
+    const lights = { pos: [], nor: [], col: [] };
+    const tint = function (name, k) { const t = HADES_TINT[name] || HADES_TINT.hull; return [t[0] * k, t[1] * k, t[2] * k]; };
+    const light = function (x, y, z, sx, sy, sz, c) {
+      const g = new THREE.BoxGeometry(sx, sy, sz).toNonIndexed();
+      g.translate(x, y, z);
+      const P = g.attributes.position.array, N = g.attributes.normal.array;
+      for (let i = 0; i < P.length; i += 3) { lights.pos.push(P[i], P[i + 1], P[i + 2]); lights.nor.push(N[i], N[i + 1], N[i + 2]); lights.col.push(c[0], c[1], c[2]); }
+      g.dispose();
+    };
+    const CYAN = [0.45, 0.95, 1], VIOLET = [0.7, 0.45, 1], WHITE = [0.9, 0.92, 1];
+    const box = function (x0, x1, y0, y1, z0, z1, k, name) { prismGeo({ poly: [[x0, z0], [x1, z0], [x1, z1], [x0, z1]], y0: y0, y1: y1 }, tint(name || 'dark', k), hull); };
+
+    // ① 当たり判定と同じ立体 (バリアの膜は別に作る)
+    D.solids.forEach(function (sd) {
+      if (sd.armor) return;
+      prismGeo(sd, tint(sd.tint, 0.88 + rng() * 0.24), hull);
+    });
+    // ② 装甲の箱の重なり (判定には入れない): 甲板と横腹に、少し浮いた板を何枚も
+    [[-500, -215, 80], [-45, 350, 85]].forEach(function (seg) {
+      for (let i = 0; i < 70; i++) {
+        const x = seg[0] + rng() * (seg[1] - seg[0]), z = (rng() * 2 - 1) * 80;
+        if (seg[0] < 0 && x > -470 && x < -255 && Math.abs(z) < 64) continue;         // 艦首の上部構造の足もと
+        if (seg[0] > -100 && x > 35 && x < 195 && Math.abs(z) < 60) continue;          // 艦橋の足もと
+        const sx = 10 + rng() * 34, sz = 8 + rng() * 26, h = 2 + rng() * 7;
+        box(x - sx / 2, x + sx / 2, seg[2], seg[2] + h, z - sz / 2, z + sz / 2, 0.75 + rng() * 0.35, rng() < 0.5 ? 'dark' : 'hull');
+        if (rng() < 0.2) light(x, seg[2] + h + 0.5, z, 2.2, 1, 2.2, rng() < 0.5 ? CYAN : VIOLET);
+      }
+      // 横腹の板と、水色の明かりの列
+      [-1, 1].forEach(function (sz) {
+        const zw = 95 * sz;
+        for (let i = 0; i < 26; i++) {
+          const x = seg[0] + rng() * (seg[1] - seg[0]), y = (rng() * 2 - 1) * 55, w = 14 + rng() * 40, hh = 10 + rng() * 26;
+          prismGeo({ axis: 'z', poly: [[x - w / 2, y - hh / 2], [x + w / 2, y - hh / 2], [x + w / 2, y + hh / 2], [x - w / 2, y + hh / 2]], z0: sz > 0 ? zw : zw - 3, z1: sz > 0 ? zw + 3 : zw }, tint(rng() < 0.5 ? 'dark' : 'hull', 0.8 + rng() * 0.3), hull);
+        }
+        for (let i = 0; i < 40; i++) {
+          if (rng() < 0.35) continue;
+          const x = seg[0] + 10 + i * (seg[1] - seg[0] - 20) / 40;
+          light(x, -18 + (i % 3) * 3, zw + sz * 3.6, 4.5, 1.6, 1, rng() < 0.7 ? CYAN : WHITE);
+        }
+      });
+    });
+    // 艦橋の窓の帯
+    [-1, 1].forEach(function (sz) {
+      for (let c = 0; c < 10; c++) light(76 + c * 9, 170, sz * 38.8, 5, 2, 1, WHITE);
+      for (let c = 0; c < 9; c++) light(64 + c * 10, 192, sz * 62.8, 6, 2.4, 1, CYAN);
+    });
+    const hullMesh = new THREE.Mesh(geoFrom(hull), hadesMat);
+    const lightMesh = new THREE.Mesh(geoFrom(lights), new THREE.MeshBasicMaterial({ vertexColors: true }));
+    group.add(hullMesh, lightMesh);
+
+    // ③ リングの内側の光のふち (左右) と、中の渦のリアクター (表と裏で逆に回る 2 枚)
+    [-1, 1].forEach(function (sz) {
+      const edge = new THREE.TorusGeometry(RG.r0 + 1, 2.2, 6, 8); edge.rotateZ(Math.PI / 8);
+      group.add(mesh(edge, new THREE.MeshBasicMaterial({ color: 0x9a6cff }), RG.x, 0, sz * (RG.z + 0.5)));
+      const outer = new THREE.TorusGeometry(RG.r1 - 6, 1.6, 6, 8); outer.rotateZ(Math.PI / 8);
+      group.add(mesh(outer, new THREE.MeshBasicMaterial({ color: 0x5ad8ff }), RG.x, 0, sz * (RG.z + 0.5)));
+    });
+    const vtex = vortexTexture();
+    const vortex = [];
+    [-1, 1].forEach(function (sz) {
+      const v = new THREE.Mesh(new THREE.CircleGeometry(RG.r0 - 2, 48), new THREE.MeshBasicMaterial({ map: vtex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      v.position.set(RG.x, 0, sz * 22);
+      group.add(v); vortex.push(v);
+    });
+    const coreGlow = glowSprite(0x9a6cff, 260, 0.55);
+    coreGlow.position.set(RG.x, 0, 0);
+    group.add(coreGlow);
+
+    // ④ バリアの膜 (コアをふさぐ装甲)。外れたら消す
+    const membraneSd = D.solids.filter(function (sd) { return sd.armor; })[0];
+    const memGeo = { pos: [], nor: [], col: [], uv: [] };
+    prismGeo(membraneSd, [1, 1, 1], memGeo);
+    const membrane = new THREE.Mesh(geoFrom(memGeo), new THREE.MeshBasicMaterial({ color: 0x8a5cff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    const armor = new THREE.Group();
+    armor.add(membrane);
+    group.add(armor);
+    // バリアの球: 艦全体を包む (見た目だけ。コアを守るのは膜)
+    const bubble = barrierBubble(600);
+    bubble.position.set(-25, 30, 0);
+    group.add(bubble);
+
+    // ⑤ スラスター: 噴射口の奥の青紫の光と、後ろへ伸びる噴射
+    const thrusters = [];
+    D.engines.forEach(function (q) {
+      const t = glowSprite(0x8a6cff, 90, 0.7);
+      t.position.set(500, q[0], q[1]);
+      group.add(t); thrusters.push(t);
+    });
+    // 艦橋のアンテナ
+    const mast = new THREE.CylinderGeometry(0.8, 1.4, 60, 5);
+    const darkMat = new THREE.MeshPhongMaterial({ color: 0x2a2c34, shininess: 40, flatShading: true });
+    group.add(mesh(mast, darkMat, 100, 230, -20), mesh(mast, darkMat, 130, 222, 24));
+
+    // ⑥ 部位: 砲台 (二連装の大きな砲塔)・スラスターの口 (バリア発生器 = 弱点)・リアクター (コア)
+    const parts = [];
+    const Y = new THREE.Vector3(0, 1, 0);
+    D.parts.forEach(function (p) {
+      const pg = new THREE.Group();
+      pg.position.set(p.at.x, p.at.y, p.at.z);
+      const mat = new THREE.MeshPhongMaterial({ color: 0x5a5e6a, shininess: 50, emissive: 0x000000 });
+      if (p.kind === 'turret') {
+        pg.scale.setScalar(1.25);
+        const base = mesh(new THREE.CylinderGeometry(10, 12, 7, 8), mat);
+        const head = new THREE.Group();
+        head.add(mesh(new THREE.BoxGeometry(15, 8, 16), mat));
+        const barrelGeo = new THREE.CylinderGeometry(1.3, 1.6, 22, 6); barrelGeo.rotateX(Math.PI / 2); barrelGeo.translate(0, 0, -15);
+        head.add(mesh(barrelGeo, ENEMY_MAT.dark, -3.4, 1, 0), mesh(barrelGeo, ENEMY_MAT.dark, 3.4, 1, 0));
+        head.add(mesh(new THREE.BoxGeometry(8, 1.2, 1), new THREE.MeshBasicMaterial({ color: 0x6ae8ff }), 0, 4.2, -8.2));
+        pg.quaternion.setFromUnitVectors(Y, new THREE.Vector3(p.face.x, p.face.y, p.face.z));
+        head.position.y = 5;
+        pg.add(base, head);
+        pg.userData.head = head;
+      } else if (p.kind === 'engine') {
+        // スラスターの口: 太い縁と、奥で光る円 (紫)。顔は後ろ (+x)
+        pg.quaternion.setFromUnitVectors(Y, new THREE.Vector3(1, 0, 0));
+        const rim = new THREE.TorusGeometry(31, 4.5, 6, 16); rim.rotateX(Math.PI / 2);
+        pg.add(mesh(rim, mat, 0, -4, 0));
+        const disc = mesh(new THREE.CircleGeometry(28, 20), new THREE.MeshBasicMaterial({ color: 0x5a3aa8, side: THREE.DoubleSide }), 0, -7, 0);
+        disc.rotation.x = -Math.PI / 2;
+        pg.add(disc);
+        const gl = glowSprite(0x9a6cff, 90, 0.6); gl.position.y = 4;
+        pg.add(gl);
+        pg.userData.glow = gl; pg.userData.disc = disc;
+      } else {
+        const cm = mesh(new THREE.IcosahedronGeometry(30, 1), new THREE.MeshPhongMaterial({ color: 0x9fe8ff, emissive: 0x4020a0, shininess: 100, flatShading: true }));
+        pg.add(cm);
+        const gl = glowSprite(0x7ae6ff, 150, 0.9);
+        pg.add(gl);
+        pg.userData.glow = gl; pg.userData.coreMesh = cm;
+      }
+      pg.userData.mat = mat; pg.userData.kind = p.kind;
+      group.add(pg); parts.push(pg);
+    });
+
+    // ⑦ 主砲 (艦首。コアがむき出しになるとコアから): チャージの光・射線の予告・光線 (紫と水色)
+    const charge = glowSprite(0x9a6cff, 10, 0);
+    charge.position.set(D.cannon.x - 6, D.cannon.y, D.cannon.z);
+    group.add(charge);
+    const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 16, 1, true); beamGeo.rotateX(Math.PI / 2); beamGeo.translate(0, 0, 0.5);
+    const beamOuter = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0x8a4cff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const beamCore = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0xd8f8ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const guide = new THREE.Mesh(beamGeo, new THREE.MeshBasicMaterial({ color: 0x9a5cff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    [beamOuter, beamCore, guide].forEach(function (m) { m.frustumCulled = false; scene.add(m); m.visible = false; });
+
+    group.userData = {
+      type: 'hades', topRing: null, topGlow: coreGlow, sideRings: [], parts: parts, armor: armor, charge: charge,
+      beamOuter: beamOuter, beamCore: beamCore, guide: guide, thrusters: thrusters, hull: hullMesh,
+      vortex: vortex, membrane: membrane, bubble: bubble, shatterT: 0,
+      coreAt: { x: RG.x, y: 0, z: 0 }, bowAt: { x: D.cannon.x - 6, y: D.cannon.y, z: D.cannon.z }
+    };
+    return group;
+  }
+
   // ------------------------------------------------------------ 弾 (まとめて1回で描く)
 
   function makeBoltPool(max, color, w, length) {
@@ -1482,13 +1693,18 @@
   const playerBoltsGlow = makeBoltPool(160, 0x2a7dff, 1.6, 22);
   const enemyBolts = makeBoltPool(200, 0xff6a50, 0.6, 12);
   const enemyBoltsGlow = makeBoltPool(200, 0xff2010, 1.5, 14);
+  // ハデスのコアが撒く弾: 短く太い紫の光の玉 (赤い敵の弾と見分けられるように)
+  const burstBolts = makeBoltPool(240, 0xe0b8ff, 3.2, 5);
+  const burstBoltsGlow = makeBoltPool(240, 0x8a3cff, 9, 6);
 
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _f = new THREE.Vector3(0, 0, -1), _d = new THREE.Vector3();
-  function drawBolts(shots, owner, pool, glowPool) {
+  // burst: true ならハデスのコアが撒く紫の弾だけ、false ならそれ以外 (未指定は全部)
+  function drawBolts(shots, owner, pool, glowPool, burst) {
     let n = 0;
     for (let i = 0; i < shots.length && n < pool.max; i++) {
       const s = shots[i];
       if (s.owner !== owner) continue;
+      if (burst !== undefined && (s.src === 'burst') !== burst) continue;
       _d.set(s.vel.x, s.vel.y, s.vel.z).normalize();
       _q.setFromUnitVectors(_f, _d);
       _p.set(s.pos.x, s.pos.y, s.pos.z);
@@ -2401,6 +2617,20 @@
         sn({ atk: 0.5, dur: 0.5, vol: 0.2, type: 'bandpass', f0: 300, f1: 2400, glide: 0.6, q: 1.1, rev: 0.5 });
         sv({ at: 0.45, type: 'sine', f0: 120, f1: 40, dur: 0.9, vol: 0.25, heavy: true, rev: 0.4 });
       },
+      // ハデスのバリアが砕ける: ガラスが砕けるような高い雑音の散り + 澄んだ金属の響き + 重い低音の抜け
+      barrierBreak: function () {
+        sn({ dur: 0.9, vol: 0.32, type: 'highpass', f0: 5200, f1: 2600, rev: 0.6 });
+        for (let i = 0; i < 18; i++) { const f = 2400 + Math.random() * 4200; sv({ at: Math.random() * 0.5, type: 'sine', f0: f, f1: f * 0.92, dur: 0.25 + Math.random() * 0.4, vol: 0.025, rev: 0.6, pan: Math.random() * 1.6 - 0.8 }); }
+        metal(0.05, 420, 1.6, 0.18);
+        sv({ type: 'sine', f0: 140, f1: 34, dur: 1.4, vol: 0.4, heavy: true, rev: 0.5 });
+      },
+      // ハデスのコアが弾を撒く: 吸い込んで弾ける低い唸り + 澄んだ放電。遠いほど小さい
+      burst: function (near) {
+        near = near === undefined ? 1 : near;
+        sv({ type: 'sawtooth', f0: 220, f1: 70, dur: 0.5, vol: 0.05 * near, lp: 1400, heavy: true });
+        sn({ dur: 0.45, vol: 0.16 * near, type: 'bandpass', f0: 2600, f1: 600, q: 1.2, rev: 0.5 });
+        sv({ type: 'sine', f0: 1760, f1: 1320, dur: 0.35, vol: 0.03 * near, rev: 0.4 });
+      },
       // 補給船団の知らせ・ワープ準備: 明るい 2 音の呼び出し (警報より軽い。目標が来たことを知らせる)
       convoyAlert: function () {
         [0, 0.22].forEach(function (t, i) { sv({ at: t, type: 'square', f0: i ? 1175 : 880, f1: i ? 1175 : 880, atk: 0.005, dur: 0.16, vol: 0.05, lp: 3000 }); });
@@ -2936,7 +3166,8 @@
     1: { en: 'PLANETARY ORBIT', ja: '惑星軌道' },
     2: { en: 'MERCURY ORBIT', ja: '水星軌道' },
     3: { en: 'MARS ORBIT', ja: '火星軌道' },
-    4: { en: 'JUPITER ORBIT', ja: '木星軌道' }
+    4: { en: 'JUPITER ORBIT', ja: '木星軌道' },
+    5: { en: 'PLUTO ORBIT', ja: '冥王星軌道' }
   };
   const STAGE_CARD_MS = 3000;
   let stageCardAnim = null;
@@ -3183,6 +3414,15 @@
           break;
         case 'bossPhase':
           banner(e.text, e.phase === 'dying' ? 3 : 3.2, e.phase === 'dying' ? '#ffd27a' : '#ffb26a', e.phase === 'dying');
+          if (e.phase === 'core' && game.boss && game.boss.type === 'hades') {
+            // ハデスのバリアが砕ける: 紫の大きな閃光と衝撃波・光のかけらが四方へ・割れる音
+            const bp = game.boss.pos, cp = { x: bp.x - 25, y: bp.y + 30, z: bp.z };
+            flash(cp, 2200, 0.9, 0xa070ff);
+            shockRing(cp, 2600, 1.2, 0x9a6cff);
+            for (let k = 0; k < 90; k++) { const d = rndDir(), sp = rnd(120, 420); spawnParticle(cp.x + d[0] * 560, cp.y + d[1] * 560, cp.z + d[2] * 560, d[0] * sp, d[1] * sp, d[2] * sp, rnd(0.6, 1.4), rnd(8, 18), 1, [0.85, 0.75, 1], [0.35, 0.15, 0.9], 1); }
+            shake(1.6);
+            audio.barrierBreak();
+          }
           if (e.phase === 'dying') { fx.slowT = 1.2; shake(2); }
           break;
         // 2 面のボス戦: 巨大戦艦と同じ順番 (BOSS BATTLE の帯と警報 → 曲を弱める → ワープの光から現れる → ボス戦の曲)
@@ -3218,6 +3458,12 @@
           break;
         case 'convoyResult': showConvoyResult(e); break;
         case 'drones': banner('迎撃機 接近', 1.4, '#ff8a7a'); break;
+        case 'coreBurst':
+          // ハデスのコアが弾を撒く瞬間: 紫の閃光と、広がる輪
+          flash(e.pos, 420, 0.35, 0xb090ff);
+          shockRing(e.pos, 520, 0.6, 0x9a6cff);
+          audio.burst(nearOf(dist3(e.pos, pl.pos)));
+          break;
         case 'bossWarp':
           // 光の中から出はじめる瞬間: 赤い閃光・大きな衝撃波・揺れ・轟音
           flash(e.pos, 900, 0.7, 0xff5040);
@@ -3362,14 +3608,22 @@
           } else if (p.active) {
             // 弱点: 赤熱して脈打つ
             const pulse = 0.7 + 0.3 * Math.sin(game.t * 8);
-            g.material.color.setRGB(1, 0.35, 0.2);
-            g.scale.setScalar(80 * pulse);
-            o.userData.disc.material.color.setRGB(1, 0.5 + fl * 0.5, 0.2 + fl * 0.6);
-            o.userData.mat.emissive.setRGB(0.3 * pulse + fl, 0.05 + fl * 0.6, fl * 0.4);
+            if (u.type === 'hades') {
+              // ハデスのバリア発生器: 紫に脈打つ
+              g.material.color.setRGB(0.7, 0.4, 1);
+              g.scale.setScalar(110 * pulse);
+              o.userData.disc.material.color.setRGB(0.75 + fl * 0.25, 0.45 + fl * 0.5, 1);
+              o.userData.mat.emissive.setRGB(0.18 * pulse + fl, 0.05 + fl * 0.6, 0.3 * pulse + fl * 0.4);
+            } else {
+              g.material.color.setRGB(1, 0.35, 0.2);
+              g.scale.setScalar(80 * pulse);
+              o.userData.disc.material.color.setRGB(1, 0.5 + fl * 0.5, 0.2 + fl * 0.6);
+              o.userData.mat.emissive.setRGB(0.3 * pulse + fl, 0.05 + fl * 0.6, fl * 0.4);
+            }
           }
         } else {
           // 戦艦のコアは装甲が外れるまで隠れている。要塞のコアは、光の盾 (半透明) の奥に最初から見える
-          o.visible = p.alive && (!b.armor || u.type === 'fortress');
+          o.visible = p.alive && (!b.armor || u.type === 'fortress' || u.type === 'hades');
           if (o.visible) {
             const pulse = 0.75 + 0.25 * Math.sin(game.t * 10);
             o.userData.glow.scale.setScalar(90 * pulse);
@@ -3380,7 +3634,14 @@
         }
       });
       // 噴射: 来るときは強く
-      u.thrusters.forEach(function (t) {
+      if (u.type === 'hades') {
+        // ハデス: スラスターごとに、壊れたら噴射が消える
+        const engs = b.parts.filter(function (p) { return p.kind === 'engine'; });
+        u.thrusters.forEach(function (t, i) {
+          t.visible = !!(engs[i] && engs[i].alive);
+          t.scale.setScalar((b.phase === 'arrive' ? 150 : 95) * (0.9 + Math.random() * 0.2));
+        });
+      } else u.thrusters.forEach(function (t) {
         const s = (b.phase === 'arrive' ? 70 : 42) * (0.9 + Math.random() * 0.2) * (aliveEngines(b) / 2 * 0.7 + 0.3);
         t.scale.setScalar(s);
       });
@@ -3391,6 +3652,22 @@
       u.topGlow.scale.setScalar((exposed ? 230 : 190) * (0.95 + 0.05 * beat));
       u.sideRings.forEach(function (gl) { gl.material.opacity = 0.45 * beat; });
       if (u.drill) u.drill.rotation.x += dt * (exposed ? 2.2 : 0.9);   // 採掘母艦: ドリルが回る (動力炉がむき出しになると速く)
+      if (u.vortex) {
+        // ハデス: リングの中の渦が回り、バリアの球と膜が揺らぐ。コアの段階ではチャージの光をコアに移す
+        u.vortex.forEach(function (v, i) { v.rotation.z += dt * (exposed ? 2.6 : 0.8) * (i ? -1 : 1); });
+        // バリアの球: 張っているあいだは揺らぎ、消えるときは 0.9 秒で膨らみながら薄れて消える
+        u.bubble.material.uniforms.t.value = game.t;
+        if (b.armor) { u.bubble.visible = true; u.bubble.scale.setScalar(1); u.bubble.material.uniforms.k.value = 0.85 + 0.15 * Math.sin(game.t * 2.2); }
+        else {
+          if (!u.shatterT) u.shatterT = game.t;
+          const k = (game.t - u.shatterT) / 0.9;
+          u.bubble.visible = k < 1;
+          if (k < 1) { u.bubble.scale.setScalar(1 + 0.3 * k); u.bubble.material.uniforms.k.value = 2.5 * (1 - k) * (1 - k); }
+        }
+        u.membrane.material.opacity = 0.5 + 0.15 * Math.sin(game.t * 3.3) + 0.06 * Math.sin(game.t * 19);
+        const cpos = exposed ? u.coreAt : u.bowAt;
+        u.charge.position.set(cpos.x, cpos.y, cpos.z);
+      }
       if (u.storm) {
         // 要塞: 赤い嵐の渦がゆっくり回り、光の盾が揺らぐ
         u.stormDisc.rotation.z += dt * (exposed ? 1.4 : 0.5);
@@ -3426,7 +3703,8 @@
         [u.beamOuter, u.beamCore].forEach(function (m, i) {
           m.visible = true;
           m.position.copy(from); m.quaternion.copy(_q);
-          const r = (i === 0 ? K.cannonRadius * 1.6 : K.cannonRadius * 0.5) * (0.9 + Math.random() * 0.2);
+          const cr = c.radius || K.cannonRadius;
+          const r = (i === 0 ? cr * 1.6 : cr * 0.5) * (0.9 + Math.random() * 0.2);
           m.scale.set(r, r, K.cannonLength);
           m.material.opacity = a * (i === 0 ? 0.7 : 1);
         });
@@ -3440,7 +3718,8 @@
     }
 
     drawBolts(game.shots, 'player', playerBolts, playerBoltsGlow);
-    drawBolts(game.shots, 'enemy', enemyBolts, enemyBoltsGlow);
+    drawBolts(game.shots, 'enemy', enemyBolts, enemyBoltsGlow, false);
+    drawBolts(game.shots, 'enemy', burstBolts, burstBoltsGlow, true);
   }
 
   function aliveEngines(b) {
@@ -3496,8 +3775,8 @@
     planet.position.copy(camera.position).multiplyScalar(0.85).add(planet.userData.offset);
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
-    setPlanetKind(['earth', 'earth', 'mercury', 'mars', 'jupiter'][game.level] || 'earth');
-    setSkyKind(['space', 'space', 'space2', 'space3', 'space4'][game.level] || 'space');
+    setPlanetKind(['earth', 'earth', 'mercury', 'mars', 'jupiter', 'pluto'][game.level] || 'earth');
+    setSkyKind(['space', 'space', 'space2', 'space3', 'space4', 'space5'][game.level] || 'space');
   }
 
   // 見本と見比べる用: 機体だけを決まった向きから写す (テストから __app.inspect で使う)
@@ -4297,6 +4576,8 @@
         return { shown: titlePlanet.visible, glow: titleGlow.visible, earth: planet.visible, cx: c.x, cy: c.y, radius: Math.hypot(rr.x - c.x, rr.y - c.y), flareX: f.x, flareY: f.y, ang: titlePlanetAngle() };
       },
       // ボスの船体の色 (頂点の色の平均) と型・いまの面
+      // ハデスのバリア: 球と膜が見えているか (球は砕けて 0.9 秒で消える)
+      hadesBarrier: function () { const u = bossObj && bossObj.userData; return u && u.bubble ? { bubble: u.bubble.visible, membrane: u.armor.visible } : null; },
       bossLook: function () {
         if (!bossObj) return null;
         // 船体の頂点の色の平均 (錆びた赤茶か、などを見る)

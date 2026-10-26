@@ -146,9 +146,9 @@ async function run() {
     ok(/^v\d+\.\d+\.\d+$/.test(title.version), `版の番号が出ている (${title.version})`);
     ok(title.wide <= 0 && title.tall <= 0, 'はみ出してスクロールしない');
     ok(title.rotate === 'none', '横向きでは「横にして」が出ない');
-    await page.waitForFunction(() => ['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
+    await page.waitForFunction(() => ['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'space5.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'pluto.jpg', 'hull.jpg', 'title_planet.jpg'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const assets = await page.evaluate(() => window.__app.assetsLoaded());
-    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['mars.jpg'] === true && assets['jupiter.jpg'] === true && assets['space2.jpg'] === true && assets['space3.jpg'] === true && assets['mercury.jpg'] === true && assets['hull.jpg'] === true, '宇宙の背景・地球・火星・木星・戦艦の装甲の絵が読み込まれる');
+    ok(assets['space.jpg'] === true && assets['earth.jpg'] === true && assets['mars.jpg'] === true && assets['jupiter.jpg'] === true && assets['space2.jpg'] === true && assets['space3.jpg'] === true && assets['mercury.jpg'] === true && assets['hull.jpg'] === true && assets['pluto.jpg'] === true && assets['space5.jpg'] === true, '宇宙の背景・地球・火星・木星・冥王星・戦艦の装甲の絵が読み込まれる');
     ok(assets['title_planet.jpg'] === true, 'タイトルの大きな惑星の絵が読み込まれる');
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const tp = await page.evaluate(() => window.__app.titlePlanetInfo());
@@ -655,7 +655,7 @@ async function run() {
     // 大きな出来事の音は、連射するレーザーよりはっきり大きい (重さの差)
     const allSfx = await page.evaluate(() => {
       const res = {};
-      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut', 'convoyAlert', 'reinforce', 'escape', 'tally']) {
+      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut', 'convoyAlert', 'reinforce', 'escape', 'tally', 'barrierBreak', 'burst']) {
         try { window.__app.sfx(n); res[n] = 'ok'; } catch (e) { res[n] = e.message; }
       }
       const t0 = performance.now(); let mx = 0;
@@ -664,8 +664,8 @@ async function run() {
       return res;
     });
     const bad = Object.keys(allSfx).filter((k) => k !== 'max' && allSfx[k] !== 'ok');
-    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '28 種'})`);
-    if (gMax !== null) ok(allSfx.max < 0.99, `28 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
+    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '30 種'})`);
+    if (gMax !== null) ok(allSfx.max < 0.99, `30 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
     await page.waitForTimeout(3000);
     const warpMax = await sfxMax('warp');
     if (gMax !== null) ok(warpMax > gMax * 1.5, `巨大戦艦のワープの音は、レーザーよりはっきり大きい (ワープ ${warpMax.toFixed(3)} / レーザー ${gMax.toFixed(3)})`);
@@ -877,6 +877,22 @@ async function run() {
     const fort = await page.evaluate(() => ({ type: window.__app.game().boss.type, level: window.__app.bossLook().level, vis: window.__app.bossVisible(), hud: document.getElementById('bossName') ? document.getElementById('bossName').textContent : '' }));
     ok(fort.type === 'fortress' && fort.level === 4 && fort.vis, `4 面のボスは木星要塞 (${fort.type} / 面 ${fort.level} / ${fort.hud})`);
     await kill('turret'); await kill('engine'); await kill('core');
+    // 4 面の木星要塞を沈めると 5 面 (冥王星)。ボスは要塞戦艦ハデス
+    await page.waitForFunction(() => window.__app.game().level === 5, null, { timeout: 120000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    ok(await card(5, 'PLUTO ORBIT', '冥王星軌道') && await page.evaluate(() => window.__app.planetKind() === 'pluto' && window.__app.skyKind() === 'space5' && window.__app.screen() === 'play'), '4 面の木星要塞を沈めると 5 面 (冥王星・青紫の星雲・「STAGE 5」の札) へ進む');
+    ok(await page.evaluate(() => window.__app.planetScale() === window.__app.planetScales.pluto && window.__app.planetScales.pluto < window.__app.planetScales.mercury), '冥王星はいちばん小さい (水星より小さい)');
+    await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
+    await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });
+    await page.evaluate(() => { window.__app.game().boss.arriveT = 100; });
+    await page.waitForFunction(() => window.__app.game().boss.phase === 'battle', null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const hd = await page.evaluate(() => ({ type: window.__app.game().boss.type, level: window.__app.bossLook().level, vis: window.__app.bossVisible(), bar: window.__app.hadesBarrier() }));
+    ok(hd.type === 'hades' && hd.level === 5 && hd.vis && hd.bar && hd.bar.bubble && hd.bar.membrane, `5 面のボスは要塞戦艦ハデスで、紫のバリア (球と、コアをふさぐ膜) を張っている (${hd.type} / ${JSON.stringify(hd.bar)})`);
+    await kill('turret'); await kill('engine');
+    await page.waitForFunction(() => { const b = window.__app.hadesBarrier(); return b && !b.membrane && !b.bubble; }, null, { timeout: 30000 });
+    ok(await page.evaluate(() => window.__app.game().boss.phase === 'core' && !window.__app.game().boss.armor), 'スラスター (バリア発生器) を全部壊すとバリアが砕けて消え、コアがむき出しになる');
+    await kill('core');
     await page.waitForFunction(() => window.__app.screen() === 'result', null, { timeout: 120000 });
     const won = await page.evaluate(() => ({ head: document.getElementById('resultHead').textContent, rank: document.getElementById('resultRank').textContent }));
     ok(won.head === 'MISSION CLEAR' && /^[SABC]$/.test(won.rank), `勝ちの結果とランクが出る (${won.head} / ${won.rank})`);
@@ -898,7 +914,7 @@ async function run() {
     await sp.goto('file://' + single);
     await sp.waitForFunction(() => window.__app && ['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => window.__app.assetsLoaded()[f] !== undefined), null, { timeout: 20000 });
     const sa = await sp.evaluate(() => window.__app.assetsLoaded());
-    ok(['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・火星・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
+    ok(['space.jpg', 'space2.jpg', 'space3.jpg', 'space4.jpg', 'space5.jpg', 'earth.jpg', 'mercury.jpg', 'mars.jpg', 'jupiter.jpg', 'pluto.jpg', 'hull.jpg', 'gauges.png', 'title_planet.jpg', 'cutin.png', 'plume.png'].every((f) => sa[f] === true), 'ほかのファイルなしで、絵まで出る (背景・地球・火星・装甲・ゲージ・タイトルの惑星・カットイン・噴射)');
     const vp = await sp.evaluate(() => ({
       meta: (document.querySelector('meta[name=viewport]') || {}).content || '',
       scale: visualViewport.scale, w: innerWidth
