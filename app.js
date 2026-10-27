@@ -153,6 +153,10 @@
     ship.userData.jetRoot = wid * JET_ROOT;
     ship.userData.jets.forEach(function (j) { j.scale.set(wid, wid, len); });
     ship.userData.jetBase = len / fl; // ゆらぎを除いた長さ (見張り用)
+    if (ship.userData.blink) {
+      const t = performance.now() / 1000;
+      ship.userData.blink.forEach(function (b, i) { const ph = (t * 0.9 + i * 0.12) % 1; b.material.opacity = ph < 0.08 ? 1 : 0; });
+    }
   }
 
   function glowSprite(color, size, opacity) {
@@ -522,6 +526,14 @@
     nozzle: new THREE.MeshBasicMaterial({ color: 0xbfe6ff })
   };
 
+  // 試作の材料
+  const SHIP_X = {
+    blue: new THREE.MeshPhongMaterial({ color: 0x2a5fe0, shininess: 70, specular: 0x6688cc }),
+    red: new THREE.MeshPhongMaterial({ color: 0xe0302a, shininess: 70, specular: 0x886666 }),
+    cyan: new THREE.MeshBasicMaterial({ color: 0x5fe6ff }),
+    glass: new THREE.MeshPhongMaterial({ color: 0x1d5fb0, emissive: 0x0d3a78, shininess: 140, specular: 0xdff0ff })
+  };
+
   /** 機首の横の「01」。透明な地に字だけ。 */
   const markTex = canvasTex(128, 64, function (c) {
     c.font = '900 52px -apple-system, "Helvetica Neue", sans-serif';
@@ -535,6 +547,15 @@
    * 白地に黄色の差し色、大きなキャノピー、太いエンジン 2 基、後ろへ流れる主翼、外へ開く尾翼 2 枚。
    */
   function makePlayerShip() {
+    // 試作: 見た目の案を切り替える (now / a 配色 / b 光 / c 両方)
+    const style = window.__shipStyle || 'now';
+    const LIV = style === 'a' || style === 'c', GLO = style === 'b' || style === 'c';
+    const M = {
+      nose: LIV ? 0xe0302a : SHIP.yellow,
+      fin: LIV ? SHIP_X.blue : SHIP_MAT.white, finTip: LIV ? SHIP_X.red : SHIP_MAT.yellow,
+      rear: LIV ? SHIP_X.blue : SHIP_MAT.navy, back: LIV ? SHIP_X.blue : SHIP_MAT.dark,
+      ring: GLO ? SHIP_X.cyan : SHIP_MAT.dark
+    };
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
@@ -551,7 +572,7 @@
       { z: 2.6, w: 0.92, h: 0.62, y: -0.02 },
       { z: 4.6, w: 0.62, h: 0.44, y: -0.02 },
       { z: 5.4, w: 0.3, h: 0.26, y: 0 }
-    ], 18, function (z) { return z < -4.3 ? SHIP.yellow : SHIP.white; });
+    ], 18, function (z) { return z < -4.3 ? M.nose : SHIP.white; });
     body.add(mesh(fus, SHIP_MAT.body));
 
     // キャノピー (大きく細長い)
@@ -559,7 +580,7 @@
     canopy.scale.set(0.55, 0.55, 1.8);
     body.add(canopy);
     // キャノピーの後ろの背中 (濃い灰の装備)
-    body.add(mesh(new THREE.BoxGeometry(0.9, 0.34, 2.2), SHIP_MAT.dark, 0, 0.74, 0.4));
+    body.add(mesh(new THREE.BoxGeometry(0.9, 0.34, 2.2), M.back, 0, 0.74, 0.4));
     body.add(mesh(new THREE.BoxGeometry(0.6, 0.22, 1.4), SHIP_MAT.white, 0, 0.94, 0.5));
 
     // 胴の脇の張り出し (機首から主翼へ)。ふちが黄色
@@ -570,8 +591,13 @@
     });
 
     // エンジン 2 基: 前半は白い覆い、後ろは紺。前に吸気口、後ろに青く光る噴射口
-    const flames = [], jets = [];
+    const flames = [], jets = [], blink = [], tips = [];
     const EX = 1.55, EY = -0.12;
+    if (GLO) {
+      // 脇の張り出しの黄色いふちに沿う光、背中の光の筋
+      [1, -1].forEach(function (sx) { glowLine(body, [sx * 0.5, 0.0, -3.45], [sx * 1.3, 0.0, -0.55], 0x6ff4ff, 2); });
+      glowLine(body, [0, 1.07, -0.6], [0, 1.07, 1.15], 0x6ff4ff, 2);
+    }
     const cowl = new THREE.CylinderGeometry(0.72, 0.6, 2.9, 20); cowl.rotateX(Math.PI / 2);
     const rear = new THREE.CylinderGeometry(0.8, 0.78, 2.6, 20); rear.rotateX(Math.PI / 2);
     const ring = new THREE.TorusGeometry(0.78, 0.07, 6, 20);
@@ -579,8 +605,9 @@
     const noz = new THREE.CircleGeometry(0.62, 20);
     [-EX, EX].forEach(function (x) {
       body.add(mesh(cowl, SHIP_MAT.white, x, EY, 1.0));
-      body.add(mesh(rear, SHIP_MAT.navy, x, EY, 3.75));
-      [2.9, 3.7, 4.5].forEach(function (z) { body.add(mesh(ring, SHIP_MAT.dark, x, EY, z)); });
+      body.add(mesh(rear, M.rear, x, EY, 3.75));
+      [2.9, 3.7, 4.5].forEach(function (z) { body.add(mesh(ring, M.ring, x, EY, z)); });
+      if (LIV) body.add(mesh(new THREE.CylinderGeometry(0.735, 0.725, 0.4, 20).rotateX(Math.PI / 2), SHIP_X.red, x, EY, 0.1));
       body.add(mesh(intake, SHIP_MAT.fan, x, EY, -0.4));
       body.add(mesh(new THREE.TorusGeometry(0.6, 0.1, 6, 20), SHIP_MAT.dark, x, EY, -0.46));
       body.add(mesh(noz, SHIP_MAT.nozzle, x, EY, 5.06));
@@ -607,6 +634,20 @@
       const a = wingGeoMirrored([[1.9, -0.2], [5.0, 4.2], [4.7, 4.35], [3.0, 3.1], [2.2, 3.7], [1.9, 3.7]], 0.14, sx);
       const e = wingGeoMirrored([[1.9, -0.2], [5.0, 4.2], [4.85, 4.25], [1.9, 0.25]], 0.16, sx);
       w.add(mesh(a, SHIP_MAT.white), mesh(e, SHIP_MAT.yellow));
+      if (LIV) {
+        // 前のふちに沿う青い帯と、赤い翼端
+        w.add(mesh(wingGeoMirrored([[1.9, 0.75], [4.35, 4.0], [4.0, 3.85], [1.9, 1.55]], 0.17, sx), SHIP_X.blue));
+        w.add(mesh(wingGeoMirrored([[4.42, 3.37], [5.0, 4.2], [4.7, 4.35], [4.22, 4.0]], 0.18, sx), SHIP_X.red));
+      }
+      if (GLO) {
+        glowLine(w, [sx * 2.0, 0.1, 0.0], [sx * 4.85, 0.1, 4.08], 0x6ff4ff, 3);
+        // 翼端の灯り (左が赤・右が緑) と、ゆっくり光る白い点滅
+        const nav = glowSprite(sx > 0 ? 0x4dff7a : 0xff3b3b, 1.6, 1); nav.position.set(sx * 4.95, 0.12, 4.25);
+        w.add(nav);
+        const strobe = glowSprite(0xffffff, 3.2, 0); strobe.position.set(sx * 4.95, 0.14, 4.3);
+        w.add(strobe); blink.push(strobe);
+        tips.push(new THREE.Vector3(sx * 4.95, EY - 0.05 - 0.35, 4.3));
+      }
       w.position.set(0, EY - 0.05, 0);
       w.rotation.z = sx * -0.07;
       body.add(w);
@@ -617,7 +658,8 @@
     const finTip = finGeo([[3.7, 0.8], [5.08, 0.8], [5.45, 1.55], [4.95, 1.6]], 0.12);
     [1, -1].forEach(function (sx) {
       const f = new THREE.Group();
-      f.add(mesh(fin, SHIP_MAT.white), mesh(finTip, SHIP_MAT.yellow));
+      f.add(mesh(fin, M.fin), mesh(finTip, M.finTip));
+      if (GLO) glowLine(f, [0, 0.05, 2.55], [0, 1.5, 4.92], 0x6ff4ff, 2);
       f.position.set(sx * 1.25, EY + 0.65, 0);
       f.rotation.z = sx * -0.44;
       body.add(f);
@@ -633,8 +675,74 @@
       body.add(m);
     });
 
-    g.userData = { body: body, flames: flames, jets: jets };
+    if (GLO) canopy.material = SHIP_X.glass;
+    g.userData = { body: body, flames: flames, jets: jets, blink: blink };
+    if (tips.length) g.userData.trails = makeTrails(g, tips);
     return g;
+  }
+
+
+  /** 板の上を走る光の筋 (細い棒 + 小さな光の玉) */
+  function glowLine(parent, a, b, color, n) {
+    const A = new THREE.Vector3().fromArray(a), B = new THREE.Vector3().fromArray(b);
+    const len = A.distanceTo(B);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.04, len), new THREE.MeshBasicMaterial({ color: color }));
+    bar.position.copy(A).add(B).multiplyScalar(0.5);
+    bar.lookAt(bar.position.clone().add(B.clone().sub(A)));
+    parent.add(bar);
+    for (let i = 0; i <= n * 2; i++) {
+      const sp = glowSprite(color, 0.9, 0.55);
+      sp.position.copy(A).lerp(B, i / (n * 2));
+      parent.add(sp);
+    }
+  }
+
+  /** 翼端から後ろへ残る光の帯。旋回とブーストで濃くなる */
+  const TRAIL_N = 40;
+  function makeTrails(ship, tips) {
+    return tips.map(function (tip) {
+      const pos = new Float32Array(TRAIL_N * 2 * 3), col = new Float32Array(TRAIL_N * 2 * 3), idx = [];
+      for (let i = 0; i < TRAIL_N - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      geo.setIndex(idx);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+      }));
+      m.frustumCulled = false;
+      // 世界の座標で持つ (機体について動かない)。描く直前に親の動きを外す
+      m.onBeforeRender = function () { this.matrixWorld.identity(); };
+      ship.add(m);
+      return { tip: tip, mesh: m, hist: [], ready: false };
+    });
+  }
+  const _tw = new THREE.Vector3(), _tu = new THREE.Vector3();
+  const TRAIL_LIFE = 0.4;
+  function updateTrails(ship, k, now) {
+    const tr = ship.userData.trails;
+    if (!tr) return;
+    ship.updateMatrixWorld(true);
+    _tu.set(0, 1, 0).applyQuaternion(ship.quaternion).multiplyScalar(0.32);
+    tr.forEach(function (t) {
+      _tw.copy(t.tip).applyMatrix4(ship.userData.body.matrixWorld);
+      t.hist.unshift({ x: _tw.x, y: _tw.y, z: _tw.z, ux: _tu.x, uy: _tu.y, uz: _tu.z, k: k, t: now });
+      if (t.hist.length > TRAIL_N) t.hist.length = TRAIL_N;
+      const pos = t.mesh.geometry.attributes.position.array, col = t.mesh.geometry.attributes.color.array;
+      for (let i = 0; i < TRAIL_N; i++) {
+        const h = t.hist[Math.min(i, t.hist.length - 1)];
+        const life = Math.max(0, 1 - (now - h.t) / TRAIL_LIFE);
+        const f = 0.7 * h.k * life * life;
+        const w = 0.15 + 0.85 * life;
+        for (let s = 0; s < 2; s++) {
+          const o = (i * 2 + s) * 3, d = s ? w : -w;
+          pos[o] = h.x + h.ux * d; pos[o + 1] = h.y + h.uy * d; pos[o + 2] = h.z + h.uz * d;
+          col[o] = 0.45 * f; col[o + 1] = 0.9 * f; col[o + 2] = 1.0 * f;
+        }
+      }
+      t.mesh.geometry.attributes.position.needsUpdate = true;
+      t.mesh.geometry.attributes.color.needsUpdate = true;
+    });
   }
 
   const ENEMY_MAT = {
@@ -3503,6 +3611,14 @@
     shipObj.rotation.set(pl.pitch, pl.yaw, pl.roll);
     const thrust = pl.boosting ? 1.9 : 0.6 + pl.throttle * 0.7;
     setThrust(shipObj, thrust);
+    if (shipObj.userData.trails) {
+      const ud = shipObj.userData;
+      const turn = ud.prevDir && dt > 0 ? Math.acos(Math.min(1, ud.prevDir.x * pl.dir.x + ud.prevDir.y * pl.dir.y + ud.prevDir.z * pl.dir.z)) / dt : 0;
+      ud.prevDir = { x: pl.dir.x, y: pl.dir.y, z: pl.dir.z };
+      const want = pl.alive ? Math.max(pl.boosting ? 0.9 : 0, Math.min(1, Math.max(0, (turn - 0.35) / 0.6))) : 0;
+      ud.trailK = (ud.trailK || 0) + (want - (ud.trailK || 0)) * Math.min(1, dt * 6);
+      updateTrails(shipObj, ud.trailK, game.t);
+    }
     // ブースト: 煙の玉ではなく、噴射口から後ろへ飛ぶ小さな光の粒
     if (pl.boosting && pl.alive) {
       const back = { x: pl.pos.x - pl.dir.x * 5.5, y: pl.pos.y - pl.dir.y * 5.5, z: pl.pos.z - pl.dir.z * 5.5 };
