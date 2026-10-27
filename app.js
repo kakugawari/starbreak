@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.19.0';
+  const VERSION = 'v0.20.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -526,13 +526,12 @@
     nozzle: new THREE.MeshBasicMaterial({ color: 0xbfe6ff })
   };
 
-  // 試作の材料
-  const SHIP_X = {
-    blue: new THREE.MeshPhongMaterial({ color: 0x2a5fe0, shininess: 70, specular: 0x6688cc }),
-    red: new THREE.MeshPhongMaterial({ color: 0xe0302a, shininess: 70, specular: 0x886666 }),
-    cyan: new THREE.MeshBasicMaterial({ color: 0x5fe6ff }),
+  // 光らせる所: エンジンの輪 (水色)・うっすら光るキャノピー
+  const SHIP_GLOW = {
+    ring: new THREE.MeshBasicMaterial({ color: 0x5fe6ff }),
     glass: new THREE.MeshPhongMaterial({ color: 0x1d5fb0, emissive: 0x0d3a78, shininess: 140, specular: 0xdff0ff })
   };
+  const GLOW_LINE = 0x6ff4ff;
 
   /** 機首の横の「01」。透明な地に字だけ。 */
   const markTex = canvasTex(128, 64, function (c) {
@@ -545,17 +544,10 @@
   /**
    * 自機 RZ-1。前は -Z。全長 12m・全幅 10m・全高 3.5m (送ってもらった三面図から測った寸法)。
    * 白地に黄色の差し色、大きなキャノピー、太いエンジン 2 基、後ろへ流れる主翼、外へ開く尾翼 2 枚。
+   * 光: エンジンの輪・翼と尾翼と脇の張り出しのふちに水色の筋、翼端灯 (左が赤・右が緑) と白い点滅、
+   * 旋回とブーストで翼端から残る光の帯 (地味だと言われ、3 案を並べて選んでもらった)。
    */
   function makePlayerShip() {
-    // 試作: 見た目の案を切り替える (now / a 配色 / b 光 / c 両方)
-    const style = window.__shipStyle || 'now';
-    const LIV = style === 'a' || style === 'c', GLO = style === 'b' || style === 'c';
-    const M = {
-      nose: LIV ? 0xe0302a : SHIP.yellow,
-      fin: LIV ? SHIP_X.blue : SHIP_MAT.white, finTip: LIV ? SHIP_X.red : SHIP_MAT.yellow,
-      rear: LIV ? SHIP_X.blue : SHIP_MAT.navy, back: LIV ? SHIP_X.blue : SHIP_MAT.dark,
-      ring: GLO ? SHIP_X.cyan : SHIP_MAT.dark
-    };
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
@@ -572,7 +564,7 @@
       { z: 2.6, w: 0.92, h: 0.62, y: -0.02 },
       { z: 4.6, w: 0.62, h: 0.44, y: -0.02 },
       { z: 5.4, w: 0.3, h: 0.26, y: 0 }
-    ], 18, function (z) { return z < -4.3 ? M.nose : SHIP.white; });
+    ], 18, function (z) { return z < -4.3 ? SHIP.yellow : SHIP.white; });
     body.add(mesh(fus, SHIP_MAT.body));
 
     // キャノピー (大きく細長い)
@@ -580,7 +572,7 @@
     canopy.scale.set(0.55, 0.55, 1.8);
     body.add(canopy);
     // キャノピーの後ろの背中 (濃い灰の装備)
-    body.add(mesh(new THREE.BoxGeometry(0.9, 0.34, 2.2), M.back, 0, 0.74, 0.4));
+    body.add(mesh(new THREE.BoxGeometry(0.9, 0.34, 2.2), SHIP_MAT.dark, 0, 0.74, 0.4));
     body.add(mesh(new THREE.BoxGeometry(0.6, 0.22, 1.4), SHIP_MAT.white, 0, 0.94, 0.5));
 
     // 胴の脇の張り出し (機首から主翼へ)。ふちが黄色
@@ -593,11 +585,9 @@
     // エンジン 2 基: 前半は白い覆い、後ろは紺。前に吸気口、後ろに青く光る噴射口
     const flames = [], jets = [], blink = [], tips = [];
     const EX = 1.55, EY = -0.12;
-    if (GLO) {
-      // 脇の張り出しの黄色いふちに沿う光、背中の光の筋
-      [1, -1].forEach(function (sx) { glowLine(body, [sx * 0.5, 0.0, -3.45], [sx * 1.3, 0.0, -0.55], 0x6ff4ff, 2); });
-      glowLine(body, [0, 1.07, -0.6], [0, 1.07, 1.15], 0x6ff4ff, 2);
-    }
+    // 脇の張り出しの黄色いふちに沿う光、背中の光の筋
+    [1, -1].forEach(function (sx) { glowLine(body, [sx * 0.5, 0.0, -3.45], [sx * 1.3, 0.0, -0.55], GLOW_LINE, 2); });
+    glowLine(body, [0, 1.07, -0.6], [0, 1.07, 1.15], GLOW_LINE, 2);
     const cowl = new THREE.CylinderGeometry(0.72, 0.6, 2.9, 20); cowl.rotateX(Math.PI / 2);
     const rear = new THREE.CylinderGeometry(0.8, 0.78, 2.6, 20); rear.rotateX(Math.PI / 2);
     const ring = new THREE.TorusGeometry(0.78, 0.07, 6, 20);
@@ -605,9 +595,8 @@
     const noz = new THREE.CircleGeometry(0.62, 20);
     [-EX, EX].forEach(function (x) {
       body.add(mesh(cowl, SHIP_MAT.white, x, EY, 1.0));
-      body.add(mesh(rear, M.rear, x, EY, 3.75));
-      [2.9, 3.7, 4.5].forEach(function (z) { body.add(mesh(ring, M.ring, x, EY, z)); });
-      if (LIV) body.add(mesh(new THREE.CylinderGeometry(0.735, 0.725, 0.4, 20).rotateX(Math.PI / 2), SHIP_X.red, x, EY, 0.1));
+      body.add(mesh(rear, SHIP_MAT.navy, x, EY, 3.75));
+      [2.9, 3.7, 4.5].forEach(function (z) { body.add(mesh(ring, SHIP_GLOW.ring, x, EY, z)); });
       body.add(mesh(intake, SHIP_MAT.fan, x, EY, -0.4));
       body.add(mesh(new THREE.TorusGeometry(0.6, 0.1, 6, 20), SHIP_MAT.dark, x, EY, -0.46));
       body.add(mesh(noz, SHIP_MAT.nozzle, x, EY, 5.06));
@@ -634,20 +623,13 @@
       const a = wingGeoMirrored([[1.9, -0.2], [5.0, 4.2], [4.7, 4.35], [3.0, 3.1], [2.2, 3.7], [1.9, 3.7]], 0.14, sx);
       const e = wingGeoMirrored([[1.9, -0.2], [5.0, 4.2], [4.85, 4.25], [1.9, 0.25]], 0.16, sx);
       w.add(mesh(a, SHIP_MAT.white), mesh(e, SHIP_MAT.yellow));
-      if (LIV) {
-        // 前のふちに沿う青い帯と、赤い翼端
-        w.add(mesh(wingGeoMirrored([[1.9, 0.75], [4.35, 4.0], [4.0, 3.85], [1.9, 1.55]], 0.17, sx), SHIP_X.blue));
-        w.add(mesh(wingGeoMirrored([[4.42, 3.37], [5.0, 4.2], [4.7, 4.35], [4.22, 4.0]], 0.18, sx), SHIP_X.red));
-      }
-      if (GLO) {
-        glowLine(w, [sx * 2.0, 0.1, 0.0], [sx * 4.85, 0.1, 4.08], 0x6ff4ff, 3);
-        // 翼端の灯り (左が赤・右が緑) と、ゆっくり光る白い点滅
-        const nav = glowSprite(sx > 0 ? 0x4dff7a : 0xff3b3b, 1.6, 1); nav.position.set(sx * 4.95, 0.12, 4.25);
-        w.add(nav);
-        const strobe = glowSprite(0xffffff, 3.2, 0); strobe.position.set(sx * 4.95, 0.14, 4.3);
-        w.add(strobe); blink.push(strobe);
-        tips.push(new THREE.Vector3(sx * 4.95, EY - 0.05 - 0.35, 4.3));
-      }
+      glowLine(w, [sx * 2.0, 0.1, 0.0], [sx * 4.85, 0.1, 4.08], GLOW_LINE, 3);
+      // 翼端の灯り (左が赤・右が緑) と、ときどき光る白い点滅。翼端は光の帯の出どころ
+      const nav = glowSprite(sx > 0 ? 0x4dff7a : 0xff3b3b, 1.6, 1); nav.position.set(sx * 4.95, 0.12, 4.25);
+      w.add(nav);
+      const strobe = glowSprite(0xffffff, 3.2, 0); strobe.position.set(sx * 4.95, 0.14, 4.3);
+      w.add(strobe); blink.push(strobe);
+      tips.push(new THREE.Vector3(sx * 4.95, EY - 0.05 - 0.35, 4.3));
       w.position.set(0, EY - 0.05, 0);
       w.rotation.z = sx * -0.07;
       body.add(w);
@@ -658,8 +640,8 @@
     const finTip = finGeo([[3.7, 0.8], [5.08, 0.8], [5.45, 1.55], [4.95, 1.6]], 0.12);
     [1, -1].forEach(function (sx) {
       const f = new THREE.Group();
-      f.add(mesh(fin, M.fin), mesh(finTip, M.finTip));
-      if (GLO) glowLine(f, [0, 0.05, 2.55], [0, 1.5, 4.92], 0x6ff4ff, 2);
+      f.add(mesh(fin, SHIP_MAT.white), mesh(finTip, SHIP_MAT.yellow));
+      glowLine(f, [0, 0.05, 2.55], [0, 1.5, 4.92], GLOW_LINE, 2);
       f.position.set(sx * 1.25, EY + 0.65, 0);
       f.rotation.z = sx * -0.44;
       body.add(f);
@@ -675,9 +657,9 @@
       body.add(m);
     });
 
-    if (GLO) canopy.material = SHIP_X.glass;
+    canopy.material = SHIP_GLOW.glass;
     g.userData = { body: body, flames: flames, jets: jets, blink: blink };
-    if (tips.length) g.userData.trails = makeTrails(g, tips);
+    g.userData.trails = makeTrails(g, tips);
     return g;
   }
 
@@ -714,25 +696,28 @@
       // 世界の座標で持つ (機体について動かない)。描く直前に親の動きを外す
       m.onBeforeRender = function () { this.matrixWorld.identity(); };
       ship.add(m);
-      return { tip: tip, mesh: m, hist: [], ready: false };
+      return { tip: tip, mesh: m, hist: [] };
     });
   }
   const _tw = new THREE.Vector3(), _tu = new THREE.Vector3();
-  const TRAIL_LIFE = 0.4;
+  const TRAIL_LIFE = 0.3;   // 秒
   function updateTrails(ship, k, now) {
     const tr = ship.userData.trails;
     if (!tr) return;
     ship.updateMatrixWorld(true);
-    _tu.set(0, 1, 0).applyQuaternion(ship.quaternion).multiplyScalar(0.32);
+    _tu.set(0, 1, 0).applyQuaternion(ship.quaternion).multiplyScalar(0.2);
     tr.forEach(function (t) {
       _tw.copy(t.tip).applyMatrix4(ship.userData.body.matrixWorld);
+      // 置き直し (面の始まり・続きから) で飛んだときは、前の帯をつながない
+      const h0 = t.hist[0];
+      if (h0 && ((h0.x - _tw.x) ** 2 + (h0.y - _tw.y) ** 2 + (h0.z - _tw.z) ** 2 > 60 * 60 || now < h0.t)) t.hist.length = 0;
       t.hist.unshift({ x: _tw.x, y: _tw.y, z: _tw.z, ux: _tu.x, uy: _tu.y, uz: _tu.z, k: k, t: now });
       if (t.hist.length > TRAIL_N) t.hist.length = TRAIL_N;
       const pos = t.mesh.geometry.attributes.position.array, col = t.mesh.geometry.attributes.color.array;
       for (let i = 0; i < TRAIL_N; i++) {
         const h = t.hist[Math.min(i, t.hist.length - 1)];
         const life = Math.max(0, 1 - (now - h.t) / TRAIL_LIFE);
-        const f = 0.7 * h.k * life * life;
+        const f = 0.55 * h.k * life * life;
         const w = 0.15 + 0.85 * life;
         for (let s = 0; s < 2; s++) {
           const o = (i * 2 + s) * 3, d = s ? w : -w;
@@ -4717,6 +4702,21 @@
       bossClipX: function () { return bossClip.constant; },
       jetLength: function () { return shipObj.userData.jetBase; },
       jetRoot: function () { return shipObj.userData.jetRoot; },
+      // 翼端の光の帯: 濃さ・いちばん明るい所・帯の頭と今の翼端のずれ (m)・描くときに世界の座標のままか
+      trails: function () {
+        const ud = shipObj.userData;
+        // 描いたときの行列 (計算し直す前に読む)
+        const world = ud.trails.map(function (t) { return t.mesh.matrixWorld.equals(new THREE.Matrix4()); });
+        shipObj.updateMatrixWorld(true);
+        return ud.trails.map(function (t, i) {
+          const c = t.mesh.geometry.attributes.color.array, p = t.mesh.geometry.attributes.position.array;
+          let max = 0;
+          for (let i = 0; i < c.length; i++) max = Math.max(max, c[i]);
+          const tip = t.tip.clone().applyMatrix4(ud.body.matrixWorld);
+          const gap = Math.hypot((p[0] + p[3]) / 2 - tip.x, (p[1] + p[4]) / 2 - tip.y, (p[2] + p[5]) / 2 - tip.z);
+          return { k: ud.trailK || 0, max: max, gap: gap, world: world[i] };
+        });
+      },
       // 膨らみながら消える大きな粒 (煙の玉に見える) の数
       growingParticles: function () {
         return particles.list.filter(function (q) { return q.on && q.s1 > q.s0 * 1.2 && q.s1 >= 6; }).length;

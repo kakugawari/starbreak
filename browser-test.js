@@ -316,6 +316,16 @@ async function run() {
       im.src = (window.__ASSETS && window.__ASSETS['plume.png']) || './plume.png';
     }));
     ok(plumeC.off < 0.03, `噴射の絵の光の中心が真ん中にある (ずれ ${(plumeC.off * 100).toFixed(1)}%)`);
+    // 翼端の光の帯: まっすぐ飛ぶ間は出ず、旋回とブーストで出る。帯は世界に残る (機体についてこない)
+    await waitGameTime(page, 0.5);
+    const trStraight = await page.evaluate(() => window.__app.trails());
+    await page.keyboard.down('ArrowLeft'); await page.keyboard.down('ArrowUp'); await page.keyboard.down('Shift');
+    await waitGameTime(page, 0.8);
+    const trTurn = await page.evaluate(() => window.__app.trails());
+    await page.keyboard.up('ArrowLeft'); await page.keyboard.up('ArrowUp'); await page.keyboard.up('Shift');
+    ok(trTurn.length === 2 && trStraight.every((t) => t.max < 0.05), `まっすぐ飛ぶ間は翼端の光の帯が出ない (明るさ ${trStraight.map((t) => t.max.toFixed(2)).join('/')})`);
+    ok(trTurn.every((t) => t.max > 0.2), `旋回とブーストで翼端から光の帯が出る (明るさ ${trTurn.map((t) => t.max.toFixed(2)).join('/')})`);
+    ok(trTurn.every((t) => t.world && t.gap < 0.5), `光の帯は翼端から出て、世界の座標で描く (ずれ ${trTurn.map((t) => t.gap.toFixed(2)).join('/')}m)`);
     ok(jetNormal >= 8.8, `ふだんの噴射は、送ってもらった絵と同じく機体 (11m) の 0.8 倍以上 (${jetNormal.toFixed(1)}m)`);
 
     // 撃墜の瞬間: タメ (時が止まる)・衝撃波の輪・遠くても画面で小さくならない・膨らむ煙の玉を出さない
@@ -779,6 +789,9 @@ async function run() {
     ok(true, 'カットインは終わると消える');
     await page.waitForFunction(() => window.__app.musicKind() === 'boss', null, { timeout: 60000 });
     ok(true, '戦艦が現れたら、戦艦戦の曲が始まる');
+    // 現れた瞬間のワープの音 (大きい) が引くまで待ってから、曲を測る。待たないと、この機械では
+    // 最大が 0.24〜0.81 と振れて落ちる回があった (待ったあとの 1 回は 0.53)
+    await waitGameTime(page, 1.5);
     const blv = [];
     for (let i = 0; i < 8; i++) { await page.waitForTimeout(400); blv.push(await page.evaluate(() => window.__app.audioLevel())); }
     if (blv[0]) {
