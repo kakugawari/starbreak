@@ -619,9 +619,10 @@ body {
   background: linear-gradient(180deg, #ffffff 15%, #ffe39a 50%, #ff9d3a 95%);
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
-  filter: drop-shadow(0 0 14px rgba(255, 190, 80, .9));
+  /* 発動の閃光 (金色) の上でも読めるよう、濃い茶の影を先に敷く */
+  filter: drop-shadow(0 2px 2px rgba(70, 25, 0, .95)) drop-shadow(0 0 14px rgba(255, 170, 60, .9));
 }
-#breakCut .bc-ja { margin-top: 2px; font-size: 13px; font-weight: 700; letter-spacing: .3em; color: #fff1c4; text-shadow: 0 0 8px rgba(255, 170, 60, .9), 0 1px 2px #000; }
+#breakCut .bc-ja { margin-top: 2px; font-size: 13px; font-weight: 700; letter-spacing: .3em; color: #fff; text-shadow: 0 1px 3px rgba(60, 20, 0, 1), 0 0 8px rgba(120, 50, 0, .9); }
 
 /* ------------------------------------------------------------ 面ごとの星・記録 */
 

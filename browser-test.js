@@ -231,6 +231,30 @@ async function run() {
     const mn3 = await menuState();
     ok(!mn3.open && mn3.invert === mn0.invert, '戻るで閉じる');
 
+    // 記録と STAGE SELECT: 記録が無いうちはタイトルに出さない。進んだ面まで選べて、面ごとの星が出る
+    await page.evaluate(() => window.__app.setRecords({}));
+    ok(await page.evaluate(() => document.getElementById('titleBest').hidden), '記録が無いうちは、タイトルに記録の行を出さない');
+    await page.evaluate(() => window.__app.setRecords({ best: { total: 121400, rank: 'S' }, stars: { 1: 3, 2: 2 }, reached: 3, clears: 1 }));
+    const best = await page.evaluate(() => { const el = document.getElementById('titleBest'), r = el.getBoundingClientRect(), a = document.querySelector('.title-actions').getBoundingClientRect(); return { hidden: el.hidden, text: el.textContent, bottom: r.bottom, actionsTop: a.top }; });
+    ok(!best.hidden && /121,400/.test(best.text) && /S/.test(best.text) && /5/.test(best.text) && best.bottom < best.actionsTop, `記録があれば、ロゴの下にベストと星の数を出す (${best.text.replace(/\s+/g, ' ')})`);
+    await tapEl('#btnStages');
+    const stg = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#stageList .stage-row')], panel = document.getElementById('titleMenu').getBoundingClientRect();
+      const links = document.querySelector('.title-links').getBoundingClientRect(), st = document.getElementById('btnStart').getBoundingClientRect();
+      return { n: rows.length, open: rows.filter((b) => !b.disabled).length, stars: rows.map((b) => b.querySelectorAll('.sr-stars b')[0] ? b.querySelector('.sr-stars b').textContent.length : 0),
+        minH: Math.min.apply(null, rows.map((b) => b.getBoundingClientRect().height)), top: panel.top, bottom: panel.bottom, H: innerHeight, left: panel.left, startRight: st.right, linksRight: links.right, linksTop: links.top };
+    });
+    ok(stg.n === 5 && stg.open === 3, `STAGE SELECT は 5 面ぶん並び、進んだ面 (3 面) まで押せる (押せる ${stg.open})`);
+    ok(stg.stars[0] === 3 && stg.stars[1] === 2 && stg.stars[2] === 0, `面ごとの星が出る (${stg.stars.join('/')})`);
+    ok(stg.top >= 0 && stg.bottom <= stg.H && stg.left > stg.startRight + 20 && stg.minH >= 40 && (stg.left > stg.linksRight || stg.bottom < stg.linksTop), `面の板は画面に収まり、ボタンは 40pt 以上で、左下のボタンにかからない (板 ${Math.round(stg.top)}〜${Math.round(stg.bottom)})`);
+    await tapEl('#stageList .stage-row[data-level="3"]');
+    await page.waitForFunction(() => window.__app.screen() === 'play', null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const sel3 = await page.evaluate(() => ({ level: window.__app.game().level, start: window.__app.game().startLevel, stage: window.__app.game().stage, planet: window.__app.planetKind(), card: window.__app.stageCard() }));
+    ok(sel3.level === 3 && sel3.start === 3 && sel3.stage === 'intro' && sel3.planet === 'mars' && sel3.card.shown && sel3.card.num === 'STAGE 3', `面を選ぶと、その面の始まりから始まる (面 ${sel3.level}・${sel3.planet}・札 ${sel3.card.num})`);
+    await page.evaluate(() => { window.__app.toTitle(); window.__app.setRecords({}); });
+    await page.waitForTimeout(200);
+
     // 機体の面: 鏡にした翼が片側だけ黒く見えた不具合の見張り
     const faces = await page.evaluate(() => window.__app.flippedFaces());
     ok(faces.player.bad === 0 && faces.enemy.bad === 0 && faces.boss.bad === 0,
@@ -274,7 +298,7 @@ async function run() {
 
     // 操作の部品: 安全域の内側に収まり、重ならず、指で押せる大きさ
     const layout = await page.evaluate(() => {
-      const ids = ['btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnPause'];
+      const ids = ['btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnBreak', 'btnPause'];
       const rs = ids.map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return { id, l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; });
       const inside = rs.every((r) => r.l >= 59 - 0.5 && r.r <= innerWidth - 59 + 0.5 && r.t >= 0 && r.b <= innerHeight - 21 + 0.5);
       let overlap = [];
@@ -555,7 +579,7 @@ async function run() {
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       const res = await page.evaluate(() => {
         const g = window.__app.game(), h = window.__app.hudInfo;
-        const rects = ['btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnPause'].map((id) => document.getElementById(id).getBoundingClientRect());
+        const rects = ['btnFire', 'btnBoost', 'btnMissile', 'btnTarget', 'btnBreak', 'btnPause'].map((id) => document.getElementById(id).getBoundingClientRect());
         return g.fighters.map((f) => {
           const b = h.brackets.find((x) => x.id === f.id), a = h.arrows.find((x) => x.id === f.id);
           const under = a && rects.some((r) => a.x > r.left - 10 && a.x < r.right + 10 && a.y > r.top - 10 && a.y < r.bottom + 10);
@@ -610,6 +634,41 @@ async function run() {
     ok(await page.evaluate(() => !window.__app.game().player.follow && !document.getElementById('btnTarget').classList.contains('following')), 'スティックを大きく倒すと、追いかけをやめる (AUTO が消える)');
 
     // ------------------------------------------------ 一時停止
+    section('スターブレイク・コンボ');
+    const brkBtn = center(await rectOf(page, '#btnBreak'));
+    const brkState = () => page.evaluate(() => {
+      const b = document.getElementById('btnBreak'), pl = window.__app.game().player;
+      return { ready: b.classList.contains('ready'), active: b.classList.contains('active'), off: parseFloat(document.getElementById('brkFill').style.strokeDashoffset || '226.2'),
+        breakT: pl.breakT, brk: pl.brk, fx: document.getElementById('breakFx').classList.contains('on'), look: window.__app.breakLook(), cut: !document.getElementById('breakCut').hidden, missiles: pl.missiles };
+    });
+    await page.evaluate(() => { window.__app.game().player.brk = 40; });
+    await waitGameTime(page, 0.2);
+    await page.touchscreen.tap(brkBtn.x, brkBtn.y);
+    await waitGameTime(page, 0.2);
+    const bk0 = await brkState();
+    ok(bk0.breakT === 0 && !bk0.ready && !bk0.fx && bk0.off > 100 && bk0.off < 160, `ゲージが溜まっていないうちは、BREAK を押しても発動しない。輪は溜まったぶんだけ (4 割で ${bk0.off})`);
+    await page.evaluate(() => { const g = window.__app.game(); g.player.brk = window.__app.game().player.brk = 100; g.player.missiles = 1; });
+    await waitGameTime(page, 0.2);
+    const bk1 = await brkState();
+    ok(bk1.ready && bk1.off < 1, `満タンでボタンが光り、輪が閉じる (${bk1.off})`);
+    await page.touchscreen.tap(brkBtn.x, brkBtn.y);
+    await page.waitForFunction(() => window.__app.game().player.breakT > 0, null, { timeout: 30000 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const bk2 = await brkState();
+    ok(bk2.breakT > 0 && bk2.active && !bk2.ready && bk2.fx && bk2.look && bk2.cut && bk2.missiles === 4, `指で押すと発動する: 画面のふちが金色・機体と弾が金色・字が出る・ミサイル満タン (${JSON.stringify(bk2)})`);
+    const hullB = await page.evaluate(() => { const g = window.__app.game(), pl = g.player; g.shots.push({ owner: 'enemy', pos: { x: pl.pos.x + pl.dir.x * 20, y: pl.pos.y + pl.dir.y * 20, z: pl.pos.z + pl.dir.z * 20 }, prev: { x: pl.pos.x + pl.dir.x * 20, y: pl.pos.y + pl.dir.y * 20, z: pl.pos.z + pl.dir.z * 20 }, vel: { x: -pl.dir.x * 300, y: -pl.dir.y * 300, z: -pl.dir.z * 300 }, life: 2, dmg: 30, dead: false, src: 'enemy' }); return pl.shield + pl.hull; });
+    await waitGameTime(page, 0.4);
+    ok(await page.evaluate((h) => { const pl = window.__app.game().player; return pl.shield + pl.hull >= h; }, hullB), '発動中は弾が当たっても減らない');
+    await page.evaluate(() => { window.__app.game().player.breakT = 0.05; });
+    await waitGameTime(page, 0.3);
+    const bk3 = await brkState();
+    ok(bk3.breakT === 0 && !bk3.active && !bk3.fx && !bk3.look, '終わると金色の光が消え、元の色に戻る');
+    await page.evaluate(() => { const g = window.__app.game(); g.stats.combo = 6; g.stats.comboT = 3; });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const cmb = await page.evaluate(() => window.__app.hudInfo.combo);
+    ok(cmb && cmb.n === 6 && cmb.size >= 26 && cmb.left > 0.5, `コンボは大きな数字と残り時間の帯で出す (${JSON.stringify(cmb)})`);
+    await page.evaluate(() => { const g = window.__app.game(); g.stats.combo = 0; g.stats.comboT = 0; g.player.brk = 0; });
+
     section('一時停止');
     const pauseBtn = center(await rectOf(page, '#btnPause'));
     await page.touchscreen.tap(pauseBtn.x, pauseBtn.y);
@@ -665,7 +724,7 @@ async function run() {
     // 大きな出来事の音は、連射するレーザーよりはっきり大きい (重さの差)
     const allSfx = await page.evaluate(() => {
       const res = {};
-      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut', 'convoyAlert', 'reinforce', 'escape', 'tally', 'barrierBreak', 'burst']) {
+      for (const n of ['kill', 'explode', 'armorBreak', 'big', 'warp', 'bossAlert', 'charge', 'lockWarn', 'beam', 'beamPass', 'whiz', 'flyby', 'enemyLaser', 'hit', 'armored', 'hurt', 'missile', 'ui', 'uiOk', 'stageIn', 'clearSting', 'stageOut', 'hyper', 'warpOut', 'convoyAlert', 'reinforce', 'escape', 'tally', 'barrierBreak', 'burst', 'breakReady', 'starBreak', 'breakEnd', 'guard', 'graze', 'comboUp', 'waveClear', 'star', 'countTick', 'rankStamp', 'record']) {
         try { window.__app.sfx(n); res[n] = 'ok'; } catch (e) { res[n] = e.message; }
       }
       const t0 = performance.now(); let mx = 0;
@@ -674,8 +733,8 @@ async function run() {
       return res;
     });
     const bad = Object.keys(allSfx).filter((k) => k !== 'max' && allSfx[k] !== 'ok');
-    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '30 種'})`);
-    if (gMax !== null) ok(allSfx.max < 0.99, `30 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
+    ok(bad.length === 0, `作り直した効果音がどれも鳴る (${bad.map((k) => k + ': ' + allSfx[k]).join(' / ') || '41 種'})`);
+    if (gMax !== null) ok(allSfx.max < 0.99, `41 種を一度に鳴らしても割れない (最大 ${allSfx.max.toFixed(3)})`);
     await page.waitForTimeout(3000);
     const warpMax = await sfxMax('warp');
     if (gMax !== null) ok(warpMax > gMax * 1.5, `巨大戦艦のワープの音は、レーザーよりはっきり大きい (ワープ ${warpMax.toFixed(3)} / レーザー ${gMax.toFixed(3)})`);
@@ -789,11 +848,14 @@ async function run() {
     ok(true, 'カットインは終わると消える');
     await page.waitForFunction(() => window.__app.musicKind() === 'boss', null, { timeout: 60000 });
     ok(true, '戦艦が現れたら、戦艦戦の曲が始まる');
-    // 現れた瞬間のワープの音 (大きい) が引くまで待ってから、曲を測る。待たないと、この機械では
-    // 最大が 0.24〜0.81 と振れて落ちる回があった (待ったあとの 1 回は 0.53)
-    await waitGameTime(page, 1.5);
+    // 曲だけを測る: ゲームの時間をほぼ止め (曲は実時間で鳴り続ける)、現れた瞬間のワープの音が引くのを待ってから測る。
+    // ゲームを進めたまま測ると、機械の速さしだいで、艦が止まる音や砲台の音が測る窓に入り (最大 0.24〜0.83 と振れた)、
+    // 速い回は測っている間に艦が出きってしまい、次の「出てくる途中」の見張りも落ちた
+    await page.evaluate(() => { window.__timeScale = 0.02; });
+    await page.waitForTimeout(2200);
     const blv = [];
     for (let i = 0; i < 8; i++) { await page.waitForTimeout(400); blv.push(await page.evaluate(() => window.__app.audioLevel())); }
+    await page.evaluate(() => { window.__timeScale = 1; });
     if (blv[0]) {
       const bavg = blv.reduce((a, l) => a + l.avg, 0) / blv.length, bmax = Math.max.apply(null, blv.map((l) => l.max));
       ok(bavg > 0.008 && bavg < 0.1 && bmax < 0.6, `戦艦戦の曲は割れず、低く重い (平均 ${bavg.toFixed(3)}・最大 ${bmax.toFixed(3)})`);
@@ -832,6 +894,9 @@ async function run() {
     await page.waitForFunction(() => window.__app.transition().clear, null, { timeout: 60000 });
     const clr = await page.evaluate(() => ({ level: window.__app.game().level, black: window.__app.transition().black, ja: document.getElementById('clrJa').textContent }));
     ok(clr.level === 1 && !clr.black && clr.ja.indexOf('1') >= 0, `戦艦を沈めると、まだ 1 面のうちに STAGE CLEAR が出る (面 ${clr.level}・暗転 ${clr.black}・${clr.ja})`);
+    // 札の下に、その面の星 3 つが出て、記録に残る
+    const stars = await page.evaluate(() => ({ info: window.__app.hudInfo.stageClear, shown: !document.getElementById('clrStars').hidden, got: document.querySelectorAll('#clrStars .clr-star.got').length, rec: window.__app.records().stars[1], time: document.getElementById('clrTime').textContent }));
+    ok(stars.shown && stars.info && stars.info.starN >= 1 && stars.got === stars.info.starN && stars.rec === stars.info.starN && /\d:\d\d/.test(stars.time), `STAGE CLEAR の札に星が出て (${stars.got} 個)、記録に残る (${stars.rec}・${stars.time})`);
     // 暗転してから、暗い中をワープで飛ぶ (まだ 1 面のうち)
     await page.waitForFunction(() => window.__app.transition().warp, null, { timeout: 60000 });
     const trW = await page.evaluate(() => Object.assign({ level: window.__app.game().level }, window.__app.transition()));
@@ -909,6 +974,12 @@ async function run() {
     await page.waitForFunction(() => window.__app.screen() === 'result', null, { timeout: 120000 });
     const won = await page.evaluate(() => ({ head: document.getElementById('resultHead').textContent, rank: document.getElementById('resultRank').textContent }));
     ok(won.head === 'MISSION CLEAR' && /^[SABC]$/.test(won.rank), `勝ちの結果とランクが出る (${won.head} / ${won.rank})`);
+    // 結果の演出: 合計を数え上げて止まり、ランクが見え、面ごとの星が並ぶ。1 面から通したので記録に残り、新記録と出る
+    await page.waitForFunction(() => { const dd = document.querySelector('#resultStats dd.total'); return dd && dd.textContent.replace(/,/g, '') === dd.dataset.final && !document.getElementById('resultNew').hidden; }, null, { timeout: 30000 });
+    const fin = await page.evaluate(() => ({ op: getComputedStyle(document.getElementById('resultRank')).opacity, groups: document.querySelectorAll('#resultStars span').length, rec: window.__app.records(), total: +document.querySelector('#resultStats dd.total').dataset.final,
+      fits: document.querySelector('#result .panel').getBoundingClientRect().bottom <= innerHeight && document.querySelector('#result .panel').getBoundingClientRect().top >= 0 }));
+    ok(fin.op === '1' && fin.groups >= 1 && fin.fits, `数え上げのあとランクが見え、面ごとの星が並び、板は画面に収まる (星の組 ${fin.groups})`);
+    ok(fin.rec.best && fin.rec.best.total === fin.total && fin.rec.clears >= 1, `通してクリアした合計が記録に残る (${fin.rec.best && fin.rec.best.total})`);
     const again = center(await rectOf(page, '#btnAgain'));
     await page.touchscreen.tap(again.x, again.y);
     await page.waitForFunction(() => window.__app.screen() === 'play');

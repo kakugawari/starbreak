@@ -1104,13 +1104,187 @@ test('木星要塞: 自分の方を向いていないと主砲を溜めない', 
   assert.ok(charged, '向き直れば溜める');
 });
 
-test('5 面の成績: 腕前の線は 3.9 倍 (5 面まで遊ぶと 62400 点で S)。4 面までなら 3 倍', () => {
-  const mk5 = (score) => { const g = C.createGame({ seed: 1 }); g.level = 5; g.state = 'clear'; g.stats.score = score; g.stats.time = 5000; g.player.hull = 0; return C.result(g); };
-  assert.strictEqual(mk5(62000).rank, 'A');
-  assert.strictEqual(mk5(63000).rank, 'S');
-  assert.strictEqual(mk5(46000).rank, 'B');
-  const mk = (score) => { const g = C.createGame({ seed: 1 }); g.level = 4; g.state = 'clear'; g.stats.score = score; g.stats.time = 5000; g.player.hull = 0; return C.result(g); };
-  assert.strictEqual(mk(47000).rank, 'A');
-  assert.strictEqual(mk(49000).rank, 'S');
-  assert.strictEqual(mk(30000).rank, 'B');
+test('5 面の成績: 腕前の線は 7.1 倍 (5 面まで遊ぶと 113600 点で S)。面を選んで始めたら、遊んだ面のぶんだけで測る', () => {
+  const mk = (score, startLevel) => { const g = C.createGame({ seed: 1 }); g.level = 5; g.startLevel = startLevel || 1; g.state = 'clear'; g.stats.score = score; g.stats.time = 5000; g.player.hull = 0; return C.result(g); };
+  assert.strictEqual(mk(113000).rank, 'A');
+  assert.strictEqual(mk(114000).rank, 'S');
+  assert.strictEqual(mk(84000).rank, 'B');
+  assert.ok(mk(1).fullRun && !mk(1, 3).fullRun, '1 面から通したときだけ「通し」');
+  // 3 面から始めたら、線は 7.1 - 2.4 = 4.7 倍 (75200 点で S)
+  assert.strictEqual(mk(75000, 3).rank, 'A');
+  assert.strictEqual(mk(75500, 3).rank, 'S');
+});
+
+// ------------------------------------------------------------ スターブレイク・コンボ・かすり・星 (v0.21.0)
+
+function enemyBullet(g, from, vel, dmg) {
+  g.shots.push({ owner: 'enemy', pos: C.vec(from.x, from.y, from.z), prev: C.vec(from.x, from.y, from.z), vel: vel, life: 3, dmg: dmg || 5, dead: false, src: 'enemy' });
+}
+const evs = (g, type) => g.events.filter((e) => e.type === type);
+
+test('スターブレイク: 当てる・落とすとゲージが溜まり、満タンで知らせる。満タンでないと発動しない', () => {
+  const g = quietGame();
+  const f = C.makeFighter(g, C.vec(0, 0, -200), C.vec(0, 0, -1)); f.hp = f.maxHp = 1000; g.fighters.push(f);
+  assert.strictEqual(g.player.brk, 0);
+  run(g, 0.1, { breakNow: true });
+  assert.strictEqual(g.player.breakT, 0, '空のゲージでは発動しない');
+  run(g, 3, (gg) => { f.pos = C.add(gg.player.pos, C.vec(0, 0, -200)); f.vel = C.vec(0, 0, 0); return { fire: true }; });
+  assert.ok(g.stats.hits > 10 && Math.abs(g.player.brk - Math.min(T.breakMax, g.stats.hits * T.breakHit)) < 1e-6, `当てた数だけ溜まる (${g.stats.hits} 発 → ${g.player.brk})`);
+  g.player.brk = T.breakMax - 0.2; g.events.length = 0;
+  run(g, 1, (gg) => { f.pos = C.add(gg.player.pos, C.vec(0, 0, -200)); return { fire: true }; });
+  assert.strictEqual(g.player.brk, T.breakMax, '上限で止まる');
+  assert.strictEqual(evs(g, 'breakReady').length, 1, '満タンになった瞬間に 1 回だけ知らせる');
+});
+
+test('スターブレイクの発動: 敵の弾が全部消え、近くの敵機に痛手、ミサイルが満タン。その間は無敵でレーザーが強く速く、得点 2 倍。時間で終わる', () => {
+  const g = quietGame();
+  const pl = g.player;
+  const near = C.makeFighter(g, C.vec(0, 0, -300), C.vec(0, 0, -1)), far = C.makeFighter(g, C.vec(0, 0, -900), C.vec(0, 0, -1));
+  g.fighters.push(near, far);
+  for (let i = 0; i < 6; i++) enemyBullet(g, C.vec(40 * i, 200, -300), C.vec(0, 0, 10));
+  g.shots.push({ owner: 'player', pos: C.vec(0, 500, 0), prev: C.vec(0, 500, 0), vel: C.vec(0, 0, -600), life: 1, dmg: 1, dead: false });
+  pl.brk = T.breakMax; pl.missiles = 0; g.stage = 'test';
+  C.step(g, { breakNow: true }, 1 / 60);
+  const sb = evs(g, 'starBreak');
+  assert.strictEqual(sb.length, 1);
+  assert.strictEqual(sb[0].cleared, 6, '敵の弾 6 発を消した');
+  assert.ok(g.shots.every((s) => s.owner === 'player') && g.shots.length >= 1, '自分の弾は残る');
+  assert.ok(!near.alive && far.alive && far.hp === far.maxHp, `${T.breakBlast}m 以内の敵機だけに痛手 (近い機は落ち、遠い機は無傷)`);
+  assert.strictEqual(pl.missiles, T.missileMax);
+  assert.strictEqual(pl.brk, 0);
+  assert.ok(pl.breakT > T.breakTime - 0.1);
+  // 無敵: 弾が当たっても減らず、はじいた知らせが出る
+  g.events.length = 0;
+  enemyBullet(g, C.add(pl.pos, C.vec(0, 0, -30)), C.vec(0, 0, 400), 50);
+  run(g, 0.3);
+  assert.ok(pl.hull === T.hullMax && pl.shield === T.shieldMax && g.stats.damage === 0, '発動中は痛手を受けない');
+  assert.ok(evs(g, 'guard').length >= 1 && evs(g, 'graze').length === 0, 'はじいた知らせが出る (かすりにはならない)');
+  // レーザー: 威力 breakDamage 倍・間隔 breakFire 倍
+  g.shots = []; const s0 = g.stats.shots;
+  run(g, 1, { fire: true });
+  const fired = g.stats.shots - s0;
+  assert.ok(Math.abs(fired - 1 / (T.laserInterval * T.breakFire)) <= 2, `1 秒に ${fired} 発 (ふだんは ${Math.round(1 / T.laserInterval)} 発)`);
+  assert.ok(g.shots.filter((s) => s.owner === 'player').every((s) => s.dmg === T.laserDamage * T.breakDamage && s.brk));
+  assert.strictEqual(C.scoreMult(g), T.breakScore, '得点 2 倍 (コンボなし)');
+  // 発動中は溜まらない。時間で終わり、終わった知らせが 1 回
+  pl.brk = 0; g.events.length = 0;
+  far.pos = C.add(pl.pos, C.vec(0, 0, -200)); far.hp = far.maxHp = 1000;
+  run(g, T.breakTime, (gg) => { far.pos = C.add(gg.player.pos, C.vec(0, 0, -200)); far.vel = C.vec(0, 0, 0); return { fire: true }; });
+  assert.strictEqual(pl.breakT, 0);
+  assert.strictEqual(evs(g, 'breakEnd').length, 1);
+  assert.strictEqual(C.scoreMult(g), 1);
+  // 終わったあとは、また痛手を受ける
+  enemyBullet(g, C.add(pl.pos, C.vec(0, 0, -30)), C.vec(0, 0, 400), 50);
+  run(g, 0.3);
+  assert.ok(g.stats.damage >= 50, '終わったら無敵ではない');
+});
+
+test('かすり: 敵の弾がすぐそばを抜けると 1 回だけ数える (得点・ゲージ)。当たった弾・遠い弾は数えない', () => {
+  const mk = (off) => {
+    const g = quietGame(); g.player.speed = 0;
+    // 自機の横 off m を、前から後ろへ抜ける弾
+    enemyBullet(g, C.vec(off, 0, -80), C.vec(0, 0, 300));
+    run(g, 0.8, (gg) => { gg.player.pos = C.vec(0, 0, 0); gg.player.vel = C.vec(0, 0, 0); return { throttle: 0 }; });
+    return g;
+  };
+  const hit = mk(0), close = mk(T.grazeRadius - 3), farG = mk(T.grazeRadius + 6);
+  assert.ok(hit.stats.damage > 0 && hit.stats.graze === 0, '当たった弾はかすりではない');
+  assert.strictEqual(close.stats.graze, 1, 'そばを抜けた弾は 1 回だけ');
+  assert.strictEqual(evs(close, 'graze').length, 1);
+  assert.strictEqual(close.stats.damage, 0);
+  assert.strictEqual(close.stats.score, T.grazeScore);
+  assert.strictEqual(close.player.brk, T.breakGraze);
+  assert.strictEqual(farG.stats.graze, 0, '遠い弾は数えない');
+});
+
+test('コンボ: 当て続けている間は切れない (ボス戦でもつながる)。節目 (5) で知らせ、最大を覚える', () => {
+  const g = quietGame();
+  const tank = C.makeFighter(g, C.vec(0, 0, -200), C.vec(0, 0, -1)); tank.hp = tank.maxHp = 100000; g.fighters.push(tank);
+  const kill = () => { const f = C.makeFighter(g, C.add(g.player.pos, C.vec(60, 0, -200)), C.vec(0, 0, -1)); f.hp = 0.5; g.fighters.push(f); g.player.brk = 0; return f; };
+  const hold = (gg) => { tank.pos = C.add(gg.player.pos, C.vec(0, 0, -200)); tank.vel = C.vec(0, 0, 0); gg.player.brk = 0; return { fire: true }; };
+  // 1 機落として、当て続けながら comboTime の 2 倍待つ → 切れていない
+  let f = kill(); f.pos = C.add(g.player.pos, C.vec(0, 0, -150)); tank.pos = C.vec(0, 9999, 0);
+  run(g, 1, (gg) => { f.pos = C.add(gg.player.pos, C.vec(0, 0, -150)); f.vel = C.vec(0, 0, 0); return { fire: true }; });
+  assert.strictEqual(g.stats.combo, 1);
+  run(g, T.comboTime * 2, hold);
+  assert.strictEqual(g.stats.combo, 1, '当て続けている間はコンボが切れない');
+  // 撃つのをやめると comboHold 秒ほどで切れる
+  run(g, T.comboHold + 0.5, (gg) => { tank.pos = C.vec(0, 9999, 0); return {}; });
+  assert.strictEqual(g.stats.combo, 0, 'やめると切れる');
+  // 続けて 5 機 → 節目の知らせが 1 回
+  g.events.length = 0;
+  for (let i = 0; i < 5; i++) { const t = C.makeFighter(g, C.vec(0, 500, 0), C.vec(0, 0, -1)); t.hp = 0; t.alive = true; g.fighters.push(t); }
+  g.fighters.filter((t) => t !== tank).forEach((t) => { t.hp = 1; });
+  // 直接ダメージを与える入口はないので、レーザーで 1 機ずつ落とす
+  const targets = g.fighters.filter((t) => t !== tank && t.alive);
+  for (const t of targets) run(g, 0.6, (gg) => { t.pos = C.add(gg.player.pos, C.vec(0, 0, -150)); t.vel = C.vec(0, 0, 0); gg.player.brk = 0; return { fire: t.alive }; });
+  assert.strictEqual(g.stats.combo, 5);
+  assert.deepStrictEqual(evs(g, 'comboUp').map((e) => e.combo), [5]);
+  assert.strictEqual(g.stats.maxCombo, 5);
+  assert.strictEqual(C.scoreMult(g), 2, 'コンボ 5 で 2 倍');
+});
+
+test('面ごとの星: ボスを倒した瞬間に結果を知らせる。クリア・機体を半分以上・決めた時間より早い、の 3 つ', () => {
+  const play = (hull, time) => {
+    const g = C.createGame({ seed: 2, start: 'boss' });
+    run(g, 8, {}, 1 / 30);
+    g.player.hull = hull; g.stats.time = time;
+    g.boss.parts.forEach((p) => { if (p.kind !== 'core') { p.alive = false; p.hp = 0; } });
+    let res = null;
+    run(g, 6, (gg) => {
+      gg.boss.parts.forEach((p) => { if (p.kind === 'core' && p.alive && p.active) { p.hp = 0; p.alive = false; } });
+      gg.fighters = []; gg.shots = []; gg.player.hull = hull;
+      for (const e of gg.events) if (e.type === 'stageResult') res = res || e;
+      gg.events.length = 0;
+      return {};
+    }, 1 / 30);
+    return { g, res };
+  };
+  const good = play(T.hullMax, 60), slow = play(T.hullMax * 0.3, T.stagePar[1] + 100);
+  assert.ok(good.res && good.res.level === 1, '結果の知らせが出る');
+  assert.deepStrictEqual(good.res.stars, [true, true, true]);
+  assert.strictEqual(good.res.starN, 3);
+  assert.deepStrictEqual(slow.res.stars, [true, false, false], '機体が半分より少なく、時間も遅ければ星 1 つ');
+  assert.strictEqual(good.g.stageResults[1].starN, 3, '結果は面ごとに覚える');
+  assert.strictEqual(C.result(good.g).starN, 3);
+  // 続きから: 面ごとの結果と、始めた面を引き継ぐ
+  const c = C.continueGame(Object.assign(good.g, { level: 2 }));
+  assert.strictEqual(c.stageResults[1].starN, 3);
+  assert.strictEqual(c.startLevel, 1);
+  assert.strictEqual(C.createGame({ start: 'stage', level: 3 }).startLevel, 3, '面を選んで始めたら、その面が始めた面');
+});
+
+test('ボスは上下の端にも出ない (腹や背へ回り込む所が戦域の中に収まる)', () => {
+  [-2300, 2300, -1200, 0].forEach((y) => {
+    [1, 3, 4, 5].forEach((lv) => {
+      const g = C.createGame({ seed: 1 }); g.level = lv;
+      g.player.pos = C.vec(300, y, -900);
+      const b = C.makeBoss(g);
+      const d = C.dist(b.pos, T.arenaCenter);
+      assert.ok(Math.abs(b.pos.y - T.arenaCenter.y) <= T.arenaRadius - 1500 + 1e-6, `${lv} 面・自機の高さ ${y}: ボスの高さ ${Math.round(b.pos.y)}・中心から ${Math.round(d)}m`);
+    });
+  });
+});
+
+test('自動操縦はスターブレイクを使う (溜まったら、撃っている最中に発動)', () => {
+  const g = C.createGame({ seed: 5 });
+  let breaks = 0;
+  run(g, 240, (gg) => { for (const e of gg.events) if (e.type === 'starBreak') breaks++; gg.events.length = 0; return gg.state === 'play' ? C.autopilot(gg, 1) : {}; }, 1 / 30);
+  assert.ok(breaks >= 2, `240 秒で ${breaks} 回`);
+  assert.strictEqual(g.stats.breaks, breaks);
+});
+
+test('船体のくぼみにはまった敵機は、外へ抜け出す (動けないまま残らない)', () => {
+  // 自動操縦 (腕前 0.45・seed 5) で、護衛機が 1 面の戦艦の船体の中 (中心から 29,-39,6) で止まり、4000 秒たっても終わらなかった
+  const g = C.createGame({ seed: 1, start: 'boss' });
+  run(g, 8, {}, 1 / 30);
+  const b = g.boss;
+  g.player.pos = C.vec(b.pos.x, b.pos.y + 900, b.pos.z + 900);
+  const f = C.makeFighter(g, C.add(b.pos, C.vec(29, -39, 6)), C.vec(1, 0, 0));
+  g.fighters = [f];
+  let moved = 0, last = C.vec(f.pos.x, f.pos.y, f.pos.z);
+  run(g, 12, (gg) => { gg.player.pos = C.vec(b.pos.x, b.pos.y + 900, b.pos.z + 900); gg.player.hull = T.hullMax; gg.shots = []; return {}; }, 1 / 30);
+  moved = C.dist(f.pos, last);
+  const inside = C.bossSolids(b).some((sd) => C.sphereSolidPush(f.pos, f.radius, sd.planes));
+  assert.ok(moved > 60 && !inside, `12 秒で ${Math.round(moved)}m 動き、船体の外にいる (中にいる: ${inside})`);
 });

@@ -1635,9 +1635,22 @@
       // 動いたあとにも船体から押し出す (動く前だけだと、そのコマで進んだぶんめり込む)
       if (g.boss && g.boss.phase !== 'dead') {
         const solids = bossSolids(g.boss);
+        let pushed = false;
         for (let k = 0; k < solids.length; k++) {
           const push = sphereSolidPush(f.pos, f.radius, solids[k].planes);
-          if (push) f.pos = addScaled(f.pos, push.normal, push.depth);
+          if (push) { pushed = true; if (!f.escape) f.pos = addScaled(f.pos, push.normal, push.depth); }
+        }
+        // 船体のくぼみ (立体と立体のあいだ) にはまると、押し出しどうしが打ち消し合って動けなくなることがあった
+        // (その 1 機を自動操縦が追い続け、ロックオンの追いかけも船体へ突っ込む)。1.2 秒押され続けたら、
+        // 艦の中心から外へまっすぐ抜け出す (抜けるまで船体をすり抜ける)
+        f.stuckT = pushed ? (f.stuckT || 0) + dt : 0;
+        if (!pushed) f.escape = false;
+        else if (f.stuckT > 1.2) f.escape = true;
+        if (f.escape) {
+          let out = sub(f.pos, g.boss.pos);
+          out = len(out) > 1 ? norm(out) : vec(0, -1, 0);
+          f.pos = addScaled(f.pos, out, 90 * dt);
+          f.dir = out; f.vel = scale(out, f.speed);
         }
       }
       // 曲がる向きに機体を傾ける (見た目)
