@@ -28,8 +28,17 @@
     <button type="button" class="pad" id="btnTarget" aria-label="ロックオン (タップで敵を選び、その敵を向き続ける。スティックを大きく倒すとやめる)"><span class="pad-ico">◎</span><span class="pad-name">LOCK</span></button>
     <button type="button" class="pad" id="btnBoost" aria-label="ブースト"><span class="pad-ico">»</span><span class="pad-name">BOOST</span></button>
     <button type="button" class="pad" id="btnFire" aria-label="レーザー"><span class="pad-ico">✦</span><span class="pad-name">LASER</span></button>
+    <!-- スターブレイク: ゲージ (まわりの輪) が満タンになると光り、押すと発動する -->
+    <button type="button" class="pad" id="btnBreak" aria-label="スターブレイク (ゲージが満タンで押せる。少しの間 無敵でレーザーが強くなる)">
+      <svg class="brk-ring" viewBox="0 0 80 80" aria-hidden="true"><circle class="brk-track" cx="40" cy="40" r="36"/><circle class="brk-fill" id="brkFill" cx="40" cy="40" r="36"/></svg>
+      <span class="pad-ico">★</span><span class="pad-name">BREAK</span>
+    </button>
     <button type="button" id="btnPause" aria-label="一時停止">II</button>
   </div>
+
+  <!-- スターブレイク中: 画面のふちの金色の光と、発動の瞬間の字。指は素通し -->
+  <div id="breakFx" aria-hidden="true"></div>
+  <div id="breakCut" aria-hidden="true" hidden><div class="bc-en">STAR BREAK</div><div class="bc-ja">無敵  レーザー強化  得点 2 倍</div></div>
 
   <!-- ボス戦のカットイン。操作のボタンより上に出す (送ってもらった絵)。指の操作は下へ素通しする -->
   <div id="cutin" aria-hidden="true" hidden><img data-asset="cutin.png" alt="" width="1846" height="260"></div>
@@ -37,7 +46,15 @@
   <!-- 面の終わり: ボスを倒したあとの「STAGE CLEAR」と、次の面へ移る暗転。指は素通し -->
   <!-- 1 面の補給船団の結果: 落とした数と、戦艦への効き目。指は素通し -->
   <div id="convoyResult" aria-hidden="true" hidden><div class="cv-head">補給船団</div><div class="cv-marks" id="cvMarks"></div><div class="cv-count" id="cvCount"></div><div class="cv-effect" id="cvEffect"></div></div>
-  <div id="stageClear" aria-hidden="true" hidden><div class="clr-en">STAGE CLEAR</div><div class="clr-ja" id="clrJa">ステージ 1 クリア</div></div>
+  <div id="stageClear" aria-hidden="true" hidden><div class="clr-en">STAGE CLEAR</div><div class="clr-ja" id="clrJa">ステージ 1 クリア</div>
+    <!-- 面ごとの星 3 つ: クリア・機体を半分以上残す・決めた時間より早い -->
+    <div class="clr-stars" id="clrStars" hidden>
+      <div class="clr-star"><span class="st">★</span><span class="lb">クリア</span></div>
+      <div class="clr-star"><span class="st">★</span><span class="lb" id="clrHull">機体 50% 以上</span></div>
+      <div class="clr-star"><span class="st">★</span><span class="lb" id="clrTime">タイム</span></div>
+    </div>
+    <div class="clr-new" id="clrNew" hidden>NEW RECORD</div>
+  </div>
   <div id="blackout" aria-hidden="true" hidden></div>
   <canvas id="warp" aria-hidden="true" hidden></canvas>
 
@@ -83,6 +100,8 @@
       </svg>
       <h1 class="logo-text">STARBREAK</h1>
       <p class="logo-sub">DEEP SPACE COMBAT</p>
+      <!-- これまでの記録 (あるときだけ出す) -->
+      <p class="title-best" id="titleBest" hidden></p>
     </div>
     <div class="title-actions">
       <button type="button" class="title-btn title-btn-main" id="btnStart"><span>START</span><span class="title-arrow" aria-hidden="true">→</span></button>
@@ -92,6 +111,8 @@
       <button type="button" class="link-btn" id="btnSettings">SETTING</button>
       <span class="title-slash" aria-hidden="true">/</span>
       <button type="button" class="link-btn" id="btnHowto">HOW TO PLAY</button>
+      <span class="title-slash" aria-hidden="true">/</span>
+      <button type="button" class="link-btn" id="btnStages">STAGE SELECT</button>
     </nav>
     <!-- 設定・遊び方: 右に開く板 (もう一度押すか、戻るで閉じる) -->
     <div class="title-menu" id="titleMenu" hidden>
@@ -111,8 +132,15 @@
           <dt>LASER</dt><dd>押しているあいだ撃ち続ける</dd>
           <dt>MSL</dt><dd>長押しで照準のまわりの敵を最大 4 つロック。離すと一斉に撃つ</dd>
           <dt>BOOST</dt><dd>速く飛ぶ</dd>
+          <dt>BREAK</dt><dd>当てる・落とす・弾をかすらせると輪が溜まる。満タンで押すと、少しの間 無敵でレーザーが強くなる</dd>
           <dt>LOCK</dt><dd>タップで敵を選び、その敵の方へ自動で向き続ける。もう一度押すと次の敵。倒したら、また自分で押して選ぶ。スティックを大きく倒すと自分で操縦にもどる</dd>
         </dl>
+        <button type="button" class="btn btn-glass btn-back" data-back>戻る</button>
+      </div>
+      <!-- 面を選んで始める: 進んだ面まで選べる。面ごとの星も出す -->
+      <div class="menu-view" id="menuStages" hidden>
+        <p class="sheet-head">STAGE SELECT</p>
+        <div class="stage-list" id="stageList"></div>
         <button type="button" class="btn btn-glass btn-back" data-back>戻る</button>
       </div>
     </div>
@@ -140,7 +168,11 @@
     <div class="panel result-panel">
       <p class="result-head" id="resultHead">MISSION CLEAR</p>
       <div class="result-body">
-        <div class="rank" id="resultRank">A</div>
+        <div class="rank-col">
+          <div class="rank-new" id="resultNew" hidden>NEW RECORD</div>
+          <div class="rank" id="resultRank">A</div>
+          <div class="rank-stars" id="resultStars"></div>
+        </div>
         <dl class="stats" id="resultStats"></dl>
       </div>
       <div class="row">

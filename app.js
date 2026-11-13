@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.20.0';
+  const VERSION = 'v0.21.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -14,7 +14,7 @@
     gl: $('gl'), hud: $('hud'), controls: $('controls'),
     stickZone: $('stickZone'), stick: $('stick'), stickKnob: $('stickKnob'),
     btnFire: $('btnFire'), btnBoost: $('btnBoost'), btnMissile: $('btnMissile'), missileCount: $('missileCount'),
-    btnTarget: $('btnTarget'),
+    btnTarget: $('btnTarget'), btnBreak: $('btnBreak'), brkFill: $('brkFill'),
     btnPause: $('btnPause'),
     title: $('title'), pause: $('pause'), result: $('result'),
     resultHead: $('resultHead'), resultRank: $('resultRank'), resultStats: $('resultStats'),
@@ -43,6 +43,27 @@
       });
     });
   }
+
+  // ------------------------------------------------------------ 記録 (端末ごと)
+  // いちばん良い成績 (1 面から通してクリアしたとき)・面ごとの星の数・進んだ面 (そこまで面を選んで始められる)・クリアした回数。
+  // 設定とは別の鍵に持つ。足りない所は初めの値で埋める (前の版の記録が残っていても開ける)
+  const RECORDS_KEY = 'starbreak.records';
+  const records = { best: null, stars: {}, reached: 1, clears: 0 };
+  function loadRecords() {
+    try {
+      const r = JSON.parse(localStorage.getItem(RECORDS_KEY) || '{}') || {};
+      if (r.best && typeof r.best.total === 'number') records.best = { total: r.best.total, rank: String(r.best.rank || 'C') };
+      if (r.stars && typeof r.stars === 'object') for (let lv = 1; lv <= C.LAST_LEVEL; lv++) { const n = r.stars[lv] | 0; if (n > 0) records.stars[lv] = Math.min(3, n); }
+      records.reached = C.clamp(r.reached | 0, 1, C.LAST_LEVEL);
+      records.clears = Math.max(0, r.clears | 0);
+      // 星のある面までは進んでいる (順番に開く作りなので、後ろが開いていれば前も開いている)
+      for (let lv = 1; lv <= C.LAST_LEVEL; lv++) if (records.stars[lv]) records.reached = Math.max(records.reached, Math.min(C.LAST_LEVEL, lv + 1));
+    } catch (e) { /* 読めなければ初めの値のまま */ }
+  }
+  function saveRecords() {
+    try { localStorage.setItem(RECORDS_KEY, JSON.stringify(records)); } catch (e) { /* 無視 */ }
+  }
+  function starTotal() { let n = 0; for (const k in records.stars) n += records.stars[k]; return n; }
 
   // ------------------------------------------------------------ 描画の土台
 
@@ -664,16 +685,33 @@
   }
 
 
+  // 光る筋の材料は 1 つを使い回す (スターブレイク中は金色に塗り替える。setBreakLook)
+  const GLOW_BAR_MAT = new THREE.MeshBasicMaterial({ color: GLOW_LINE });
+  const GLOW_DOT_MAT = new THREE.SpriteMaterial({ map: glowTex, color: GLOW_LINE, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+  const BREAK_GOLD = 0xffd070;
+  let breakLook = false;
+  /** スターブレイク中の見た目: 機体の光る筋とエンジンの輪・自機の弾を金色に */
+  function setBreakLook(on) {
+    breakLook = !!on;
+    GLOW_BAR_MAT.color.setHex(on ? 0xffe6a0 : GLOW_LINE);
+    GLOW_DOT_MAT.color.setHex(on ? BREAK_GOLD : GLOW_LINE);
+    GLOW_DOT_MAT.opacity = on ? 0.9 : 0.55;
+    SHIP_GLOW.ring.color.setHex(on ? 0xffe08a : 0x5fe6ff);
+    playerBolts.inst.material.color.setHex(on ? 0xfff0b0 : 0x7fe6ff);
+    playerBoltsGlow.inst.material.color.setHex(on ? 0xff9a20 : 0x2a7dff);
+  }
+
   /** 板の上を走る光の筋 (細い棒 + 小さな光の玉) */
   function glowLine(parent, a, b, color, n) {
     const A = new THREE.Vector3().fromArray(a), B = new THREE.Vector3().fromArray(b);
     const len = A.distanceTo(B);
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.04, len), new THREE.MeshBasicMaterial({ color: color }));
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.04, len), GLOW_BAR_MAT);
     bar.position.copy(A).add(B).multiplyScalar(0.5);
     bar.lookAt(bar.position.clone().add(B.clone().sub(A)));
     parent.add(bar);
     for (let i = 0; i <= n * 2; i++) {
-      const sp = glowSprite(color, 0.9, 0.55);
+      const sp = new THREE.Sprite(GLOW_DOT_MAT);
+      sp.scale.set(0.9, 0.9, 1);
       sp.position.copy(A).lerp(B, i / (n * 2));
       parent.add(sp);
     }
@@ -701,7 +739,7 @@
   }
   const _tw = new THREE.Vector3(), _tu = new THREE.Vector3();
   const TRAIL_LIFE = 0.3;   // 秒
-  function updateTrails(ship, k, now) {
+  function updateTrails(ship, k, now, gold) {
     const tr = ship.userData.trails;
     if (!tr) return;
     ship.updateMatrixWorld(true);
@@ -711,7 +749,7 @@
       // 置き直し (面の始まり・続きから) で飛んだときは、前の帯をつながない
       const h0 = t.hist[0];
       if (h0 && ((h0.x - _tw.x) ** 2 + (h0.y - _tw.y) ** 2 + (h0.z - _tw.z) ** 2 > 60 * 60 || now < h0.t)) t.hist.length = 0;
-      t.hist.unshift({ x: _tw.x, y: _tw.y, z: _tw.z, ux: _tu.x, uy: _tu.y, uz: _tu.z, k: k, t: now });
+      t.hist.unshift({ x: _tw.x, y: _tw.y, z: _tw.z, ux: _tu.x, uy: _tu.y, uz: _tu.z, k: k, t: now, gold: !!gold });
       if (t.hist.length > TRAIL_N) t.hist.length = TRAIL_N;
       const pos = t.mesh.geometry.attributes.position.array, col = t.mesh.geometry.attributes.color.array;
       for (let i = 0; i < TRAIL_N; i++) {
@@ -722,7 +760,8 @@
         for (let s = 0; s < 2; s++) {
           const o = (i * 2 + s) * 3, d = s ? w : -w;
           pos[o] = h.x + h.ux * d; pos[o + 1] = h.y + h.uy * d; pos[o + 2] = h.z + h.uz * d;
-          col[o] = 0.45 * f; col[o + 1] = 0.9 * f; col[o + 2] = 1.0 * f;
+          if (h.gold) { col[o] = 1.0 * f; col[o + 1] = 0.72 * f; col[o + 2] = 0.28 * f; }
+          else { col[o] = 0.45 * f; col[o + 1] = 0.9 * f; col[o + 2] = 1.0 * f; }
         }
       }
       t.mesh.geometry.attributes.position.needsUpdate = true;
@@ -1792,7 +1831,8 @@
 
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _f = new THREE.Vector3(0, 0, -1), _d = new THREE.Vector3();
   // burst: true ならハデスのコアが撒く紫の弾だけ、false ならそれ以外 (未指定は全部)
-  function drawBolts(shots, owner, pool, glowPool, burst) {
+  function drawBolts(shots, owner, pool, glowPool, burst, wide) {
+    wide = wide || 1;
     let n = 0;
     for (let i = 0; i < shots.length && n < pool.max; i++) {
       const s = shots[i];
@@ -1804,10 +1844,11 @@
       // 撃った直後は短く (銃口から伸びるように)
       const age = (owner === 'player' ? K.laserLife : 99) - s.life;
       const L = Math.min(pool.length, 6 + age * 400);
-      _s.set(1, 1, L);
+      const w = s.brk ? wide : 1;   // スターブレイク中に撃った弾は太い
+      _s.set(w, w, L);
       _m.compose(_p, _q, _s);
       pool.inst.setMatrixAt(n, _m);
-      _s.set(1, 1, L * 1.1);
+      _s.set(w, w, L * 1.1);
       _m.compose(_p, _q, _s);
       glowPool.inst.setMatrixAt(n, _m);
       n++;
@@ -2632,8 +2673,16 @@
       // レーザー (主人公機): 約 0.25 秒。映画の宇宙戦闘の発射音。音程の電子音 (ピコピコ) は使わない:
       // ① 鋭いひび割れ (高い雑音 20ms) ② 空気を裂く掃引 (6.5k→1.3kHz、少し響かせる) ③ 重い衝撃 (260→62Hz を歪ませて倍音で聞かせる)
       // ④ 低い押し (95→52Hz) ⑤ 短いエネルギーの尾 (共鳴を立てたのこぎり波 180→86Hz。閉じていく「ヴォン」)。1 発ごとに ±4% ふらつかせる
-      laser: function () {
+      laser: function (brk) {
         const r = 1 + (Math.random() - 0.5) * 0.08;
+        // スターブレイク中: 撃つのが速いので 1 発を少し小さくし、明るく下がる金属の光を足す
+        if (brk) {
+          sn({ dur: 0.02, vol: 0.05, type: 'highpass', f0: 4200, f1: 3200 });
+          sv({ type: 'sine', f0: 280 * r, f1: 80 * r, glide: 0.07, dur: 0.12, vol: 0.15, heavy: true });
+          sv({ type: 'triangle', f0: 1900 * r, f1: 620 * r, dur: 0.1, vol: 0.03, rev: 0.12 });
+          sv({ type: 'sawtooth', f0: 220 * r, f1: 100 * r, dur: 0.16, vol: 0.03, lp: 1800, lp1: 300, q: 4 });
+          return;
+        }
         sn({ dur: 0.02, vol: 0.072, type: 'highpass', f0: 3800, f1: 3000 });
         sn({ dur: 0.09, vol: 0.048, type: 'bandpass', f0: 6000 * r, f1: 1300 * r, q: 1.3, rev: 0.1 });
         sv({ type: 'sine', f0: 240 * r, f1: 70 * r, glide: 0.08, dur: 0.14, vol: 0.19, heavy: true });
@@ -2909,6 +2958,85 @@
         sn({ dur: 0.6, atk: 0.05, vol: 0.3, type: 'bandpass', f0: 2400, f1: 300, q: 1.5, pan: pan, pan1: -pan });
         sv({ type: 'sine', f0: 300, f1: 90, dur: 0.5, vol: 0.15, heavy: true });
       },
+      // ---- スターブレイク・コンボ・かすり・星・結果 (v0.21.0) ----
+      // ゲージが満タン: 上がる澄んだ 3 音 + きらめき (押せる合図)
+      breakReady: function () {
+        [1047, 1319, 1568].forEach(function (f, i) { sv({ at: i * 0.085, type: 'sine', f0: f, f1: f, dur: 0.35, vol: 0.085, rev: 0.4 }); });
+        sv({ at: 0.17, type: 'triangle', f0: 2093, f1: 2093, dur: 0.7, vol: 0.028, rev: 0.5 });
+        sv({ at: 0.17, type: 'sine', f0: 3136, f1: 3136, dur: 0.5, vol: 0.014, rev: 0.5 });
+      },
+      // 発動: 吸い込む風 (0.2 秒) → 重い衝撃 + 開く明るい和音 (A の長調) + 澄んだ鐘 + 金属の響き。時が止まる一瞬に合わせる
+      starBreak: function () {
+        sn({ atk: 0.18, dur: 0.04, vol: 0.2, type: 'bandpass', f0: 500, f1: 5200, glide: 0.2, q: 1.2 });
+        sv({ at: 0.2, type: 'sine', f0: 170, f1: 36, dur: 1.2, vol: 0.3, heavy: true, rev: 0.5 });
+        sn({ at: 0.2, dur: 0.9, vol: 0.26, type: 'lowpass', f0: 4200, f1: 300, rev: 0.6 });
+        [57, 64, 69, 73, 76].forEach(function (m, i) {
+          const f = 440 * Math.pow(2, (m - 69) / 12);
+          [-7, 7].forEach(function (dt) { sv({ at: 0.2, type: 'sawtooth', f0: f, f1: f, atk: 0.02, hold: 0.45, dur: 1.2, vol: 0.02 / (1 + i * 0.2), lp: 2400, lp1: 900, detune: dt, rev: 0.5 }); });
+        });
+        [1760, 2217, 2637, 3520].forEach(function (f, i) { sv({ at: 0.2 + i * 0.05, type: 'sine', f0: f, f1: f, dur: 1.3, vol: 0.028, rev: 0.6 }); });
+        metal(0.2, 620, 1.1, 0.08, { rev: 0.5 });
+      },
+      // 終わり: 力が抜けていく下がる音
+      breakEnd: function () {
+        sv({ type: 'sawtooth', f0: 520, f1: 90, dur: 0.7, vol: 0.03, lp: 1800, lp1: 300 });
+        sv({ type: 'sine', f0: 150, f1: 50, dur: 0.6, vol: 0.18, heavy: true });
+      },
+      // 無敵のあいだに弾をはじく: 短く澄んだ金属の「キン」
+      guard: function () {
+        sv({ type: 'sine', f0: 1900, f1: 2500, dur: 0.12, vol: 0.035 });
+        sn({ dur: 0.04, vol: 0.05, type: 'highpass', f0: 4200, f1: 3200 });
+      },
+      // かすり: ごく短い上がる「チッ」(たくさん鳴るので小さく)
+      graze: function () {
+        const r = 1 + (Math.random() - 0.5) * 0.12;
+        sv({ type: 'sine', f0: 2500 * r, f1: 3300 * r, dur: 0.06, vol: 0.026 });
+      },
+      // コンボの節目 (5・10・15…): 段が上がるほど高く、音が増える上がりの分散和音
+      comboUp: function (step) {
+        step = Math.min(5, step || 0);
+        const base = 72 + step * 2, n = 3 + Math.min(2, step);
+        for (let i = 0; i < n; i++) {
+          const f = 440 * Math.pow(2, (base + [0, 4, 7, 12, 16][i] - 69) / 12);
+          sv({ at: i * 0.06, type: 'triangle', f0: f, f1: f, dur: 0.28, vol: 0.045, rev: 0.35 });
+        }
+        sv({ type: 'sine', f0: 200, f1: 90, dur: 0.2, vol: 0.14, heavy: true });
+      },
+      // 殲滅 (波を全部落とした): 明るい 2 音 + 低い締め
+      waveClear: function () {
+        [[0, 784], [0.11, 1175]].forEach(function (c) { sv({ at: c[0], type: 'triangle', f0: c[1], f1: c[1], dur: 0.5, vol: 0.05, rev: 0.4 }); });
+        sv({ at: 0.11, type: 'sine', f0: 130, f1: 65, dur: 0.5, vol: 0.2, heavy: true, rev: 0.3 });
+      },
+      // 星が 1 つ付く: 小さな打つ音 + 澄んだ鐘 (i 番目ほど高い)。取れなかった星は乾いた低い「コッ」
+      star: function (i, got) {
+        if (!got) { sv({ type: 'square', f0: 260, f1: 180, dur: 0.06, vol: 0.03, lp: 900 }); return; }
+        const f = 1568 * Math.pow(2, (i || 0) * 2 / 12);
+        sv({ type: 'sine', f0: 180, f1: 80, dur: 0.14, vol: 0.2, heavy: true });
+        sv({ type: 'sine', f0: f, f1: f, dur: 0.9, vol: 0.07, rev: 0.5 });
+        sv({ type: 'sine', f0: f * 2, f1: f * 2, dur: 0.5, vol: 0.03, rev: 0.5 });
+        sn({ dur: 0.03, vol: 0.06, type: 'highpass', f0: 5000, f1: 4000 });
+      },
+      // 結果の数え上げの 1 刻み (ごく小さく)
+      countTick: function () { sv({ type: 'square', f0: 1500, f1: 1500, dur: 0.025, vol: 0.011, lp: 3200 }); },
+      // ランクの判を押す: 重い「ドン」+ 金属の響き。S・A は明るい和音が開く
+      rankStamp: function (rank) {
+        sn({ dur: 0.03, vol: 0.14, type: 'highpass', f0: 2600, f1: 1800 });
+        sv({ type: 'sine', f0: 150, f1: 38, dur: 0.7, vol: 0.28, heavy: true, rev: 0.4 });
+        metal(0, rank === 'S' ? 520 : 380, 1.0, 0.07, { rev: 0.4 });
+        if (rank === 'S' || rank === 'A') {
+          (rank === 'S' ? [72, 76, 79, 84, 88] : [72, 76, 79]).forEach(function (m, i) {
+            const f = 440 * Math.pow(2, (m - 69) / 12);
+            sv({ at: 0.04 + i * 0.05, type: 'triangle', f0: f, f1: f, dur: 1.4, vol: 0.04, rev: 0.5 });
+          });
+        }
+      },
+      // 新記録: 短い上がりのファンファーレ
+      record: function () {
+        [[0, 79], [0.1, 84], [0.2, 88], [0.3, 91]].forEach(function (c) {
+          const f = 440 * Math.pow(2, (c[1] - 69) / 12);
+          sv({ at: c[0], type: 'triangle', f0: f, f1: f, dur: c[0] === 0.3 ? 1.2 : 0.3, vol: 0.075, rev: 0.5 });
+        });
+      },
       // 操作の音: 選ぶ (乾いた「カチッ」+ 小さな上がる音)・決める (低い「コン」+ 澄んだ 2 音の和音)・面の始まり (光の向こうから来る風 + 澄んだ鐘)
       ui: function () {
         sv({ type: 'square', f0: 2400, f1: 2400, dur: 0.012, vol: 0.03, lp: 4000 });
@@ -3007,6 +3135,9 @@
   holdButton(els.btnMissile, missileIds, null, function () { input.missile = true; });
   // ロックオン: 押した瞬間に敵を選び、その敵を向き続ける (2 回目からは次の敵へ)。スティックを大きく倒すとやめる
   holdButton(els.btnTarget, touch.trackIds, function () { input.select = true; });
+  // スターブレイク: 押した瞬間に発動 (ゲージが満タンのときだけ core が受ける)
+  const breakIds = new Set();
+  holdButton(els.btnBreak, breakIds, function () { input.breakNow = true; });
   // 指を置いた瞬間に止める (遊んでいる間は touchend を打ち消すので click が来ない)
   els.btnPause.addEventListener('pointerdown', function (e) { e.preventDefault(); setPaused(true); });
 
@@ -3027,6 +3158,7 @@
     if (e.repeat) { if (e.code !== 'Space') return; }
     keys[e.code] = true;
     if (e.code === 'KeyQ' || e.code === 'KeyT') input.select = true;
+    if (e.code === 'KeyF' || e.code === 'KeyB') input.breakNow = true;
     if ((e.code === 'Escape' || e.code === 'KeyP') && screen === 'play') setPaused(!paused);
     if (e.code === 'Space' || e.code.indexOf('Arrow') === 0) e.preventDefault();
   });
@@ -3058,7 +3190,8 @@
   let bossObj = null;
   const fx = {
     shake: 0, hitMarker: 0, killMarker: 0, hurt: [], banners: [], popups: [],
-    fovKick: 0, bossCam: 0, timeScale: 1, slowT: 0, stopT: 0, lastHurt: 0, alarmT: 0
+    fovKick: 0, bossCam: 0, timeScale: 1, slowT: 0, stopT: 0, lastHurt: 0, alarmT: 0,
+    comboPop: 0, comboWord: null, grazeT: 0, grazeN: 0, grazeSnd: 0, stageRes: null
   };
   const cam = { dir: new THREE.Vector3(0, 0, -1), pos: new THREE.Vector3(0, 6, 18), roll: 0, back: 16, fov: 68 };
   let titleT = 0;
@@ -3079,6 +3212,9 @@
     $('cutin').hidden = true;
     warpGlow.visible = false;
     fx.banners.length = 0; fx.popups.length = 0; fx.hurt.length = 0; fx.cardT = 0;
+    fx.comboPop = 0; fx.comboWord = null; fx.grazeT = 0; fx.grazeN = 0; fx.stageRes = null;
+    breakStop(false);
+    stopResultFx();
     if (stageCardAnim) { stageCardAnim.cancel(); stageCardAnim = null; }
     $('stageCard').hidden = true;
   }
@@ -3108,10 +3244,10 @@
     }, true);
   });
 
-  let lastStart;
+  let lastStart, lastLevel;
   function startGame(opts) {
     opts = opts || {};
-    lastStart = opts.start;
+    lastStart = opts.start; lastLevel = opts.level;
     bossMusic = false;
     audio.init();
     clearWorld();
@@ -3136,17 +3272,40 @@
     els.title.hidden = true; els.result.hidden = true; els.pause.hidden = true;
     els.controls.hidden = false;
     // 巨大戦艦からのときは、すぐ出るカットインが知らせる
-    if (opts.start !== 'boss' && !opts.continueFrom) showStageCard(1);
+    // 面を選んで始めたとき ('stage') と続きからは、stageStart の知らせが札を出す
+    if (opts.start !== 'boss' && opts.start !== 'stage' && !opts.continueFrom) showStageCard(1);
     consumeEvents();
   }
 
   // 設定・遊び方の板を開く (もう一度押すと閉じる)。null で閉じる
   function showMenu(id) {
     if (id && !$(id).hidden) id = null;
-    ['menuSettings', 'menuHowto'].forEach(function (k) { $(k).hidden = k !== id; });
+    if (id === 'menuStages') renderStageList();
+    ['menuSettings', 'menuHowto', 'menuStages'].forEach(function (k) { $(k).hidden = k !== id; });
     $('titleMenu').hidden = !id;
     $('btnSettings').classList.toggle('on', id === 'menuSettings');
     $('btnHowto').classList.toggle('on', id === 'menuHowto');
+    $('btnStages').classList.toggle('on', id === 'menuStages');
+  }
+  // 面を選んで始める板: 進んだ面まで押せる。面ごとの星 (いちばん良かった数) を出す
+  function renderStageList() {
+    const box = $('stageList');
+    box.innerHTML = '';
+    for (let lv = 1; lv <= C.LAST_LEVEL; lv++) {
+      const open = lv <= records.reached, b = document.createElement('button');
+      b.type = 'button'; b.className = 'stage-row'; b.disabled = !open; b.dataset.level = String(lv);
+      b.innerHTML = '<span class="sr-n">' + lv + '</span><span class="sr-name">' + (open ? STAGE_CARD[lv].ja : '— — —') + '</span><span class="sr-stars">' + (open ? starsHtml(records.stars[lv] || 0) : '') + '</span>';
+      b.addEventListener('click', function () { startGame(lv === 1 ? {} : { start: 'stage', level: lv }); });
+      box.appendChild(b);
+    }
+  }
+  // タイトルの記録の行: いちばん良い成績と、集めた星 (記録があるときだけ)
+  function updateTitleRecords() {
+    const el = $('titleBest'), n = starTotal(), parts = [];
+    if (records.best) parts.push('BEST <b>' + records.best.total.toLocaleString() + '</b>', 'RANK <b>' + records.best.rank + '</b>');
+    if (n > 0) parts.push('★ <b>' + n + '</b> / ' + C.LAST_LEVEL * 3);
+    el.hidden = parts.length === 0;
+    el.innerHTML = parts.join('  ·  ');
   }
 
   function toTitle() {
@@ -3160,6 +3319,7 @@
     paused = false;
     syncMusic();
     els.title.hidden = false; els.result.hidden = true; els.pause.hidden = true; els.controls.hidden = true;
+    updateTitleRecords();
     shipObj = makePlayerShip();
     scene.add(shipObj);
   }
@@ -3181,18 +3341,28 @@
     }
   }
 
+  // 結果の演出 (クリアしたとき): 合計を 0 から数え上げ → ランクの判を押す → 新記録なら知らせる
+  let resultTimer = 0, resultAnims = [];
+  function stopResultFx() {
+    if (resultTimer) { clearInterval(resultTimer); resultTimer = 0; }
+    resultAnims.forEach(function (a) { a.cancel(); }); resultAnims = [];
+  }
+  function starsHtml(n) { return '<b>' + '★'.repeat(n) + '</b>' + '★'.repeat(3 - n); }
   function showResult() {
     resultShown = true;
+    stopResultFx();
     const r = C.result(game);
     els.resultHead.textContent = r.cleared ? 'MISSION CLEAR' : 'MISSION FAILED';
     els.resultHead.classList.toggle('fail', !r.cleared);
     els.resultRank.textContent = r.cleared ? r.rank : '—';
-    const mm = Math.floor(r.time / 60), ss = Math.floor(r.time % 60);
+    els.resultRank.classList.toggle('s', r.cleared && r.rank === 'S');
+    els.resultRank.classList.toggle('a', r.cleared && r.rank === 'A');
     const rows = [
-      ['時間', mm + ':' + String(ss).padStart(2, '0')],
+      ['時間', fmtTime(r.time)],
       ['撃墜', r.kills + ' 機'],
       ['命中率', Math.round(r.accuracy * 100) + '%'],
       ['被ダメージ', String(Math.round(r.damage))],
+      ['最大コンボ', 'x' + r.maxCombo],
       ['スコア', r.score.toLocaleString()],
       ['ボーナス', r.bonus.toLocaleString()]
     ];
@@ -3214,11 +3384,50 @@
     $('btnAgain').textContent = r.cleared ? 'もう一度' : '最初から';
     const dt = document.createElement('dt'); dt.textContent = '合計'; dt.className = 'total';
     const dd = document.createElement('dd'); dd.textContent = r.total.toLocaleString(); dd.className = 'total';
+    dd.dataset.final = String(r.total);
     els.resultStats.append(dt, dd);
+    // 面ごとの星 (遊んだ面のぶん)
+    let stars = '';
+    for (let lv = r.startLevel; lv <= r.level; lv++) if (r.stages[lv]) stars += '<span>' + starsHtml(r.stages[lv].starN) + '</span>';
+    $('resultStars').innerHTML = stars;
+    // 記録: 1 面から通してクリアしたときの合計がいちばん良ければ残す
+    let isNew = false;
+    if (r.cleared) {
+      records.clears++;
+      if (r.fullRun && (!records.best || r.total > records.best.total)) { isNew = true; records.best = { total: r.total, rank: r.rank }; }
+      saveRecords();
+    }
+    $('resultNew').hidden = true;
     els.result.hidden = false;
     els.controls.hidden = true;
     screen = 'result';
     syncMusic();
+    hudInfo.result = { total: r.total, rank: r.rank, cleared: r.cleared, isNew: isNew, starN: r.starN };
+    if (r.cleared) {
+      // 数え上げ (1.2 秒) → 判 → 新記録。判が押されるまでランクは見せない
+      const t0 = performance.now(), DUR = 1200;
+      els.resultRank.style.opacity = '0';
+      dd.textContent = '0';
+      let lastTick = 0;
+      resultTimer = setInterval(function () {
+        const k = Math.min(1, (performance.now() - t0) / DUR);
+        dd.textContent = Math.round(r.total * (1 - Math.pow(1 - k, 2))).toLocaleString();
+        if (k < 1 && performance.now() - lastTick > 55) { lastTick = performance.now(); audio.countTick(); }
+        if (k < 1) return;
+        clearInterval(resultTimer); resultTimer = 0;
+        els.resultRank.style.opacity = '';
+        resultAnims.push(els.resultRank.animate([
+          { opacity: 0, transform: 'scale(3.2) rotate(-14deg)' }, { opacity: 1, transform: 'scale(.9) rotate(0deg)', offset: 0.7 }, { opacity: 1, transform: 'scale(1)' }
+        ], { duration: 320, easing: 'ease-in' }));
+        resultAnims.push($('result').querySelector('.panel').animate([
+          { transform: 'translate(0,0)' }, { transform: 'translate(-5px,4px)', offset: 0.5 }, { transform: 'translate(4px,-3px)', offset: 0.65 }, { transform: 'translate(0,0)' }
+        ], { duration: 420, delay: 220 }));
+        setTimeout(function () { if (screen === 'result') audio.rankStamp(r.rank); }, 220);
+        if (isNew) setTimeout(function () { if (screen === 'result') { $('resultNew').hidden = false; audio.record(); } }, 900);
+      }, 33);
+    } else {
+      els.resultRank.style.opacity = '';
+    }
   }
 
   /**
@@ -3370,19 +3579,56 @@
     fx.fovKick = 3;
     audio.warpOut();
   }
+  function fmtTime(sec) { const m = Math.floor(sec / 60), ss = Math.floor(sec % 60); return m + ':' + String(ss).padStart(2, '0'); }
+  /**
+   * STAGE CLEAR の札。その面の結果 (stageResult) があれば、下に星 3 つを 1 つずつ弾ませて出す
+   * (クリア・機体を半分以上残す・決めた時間より早い)。星の数が今までより多ければ記録に残す
+   */
+  let clearTimers = [];
   function showStageClear(level) {
     const el = $('stageClear');
     $('clrJa').textContent = 'ステージ ' + level + ' クリア';
+    const res = fx.stageRes && fx.stageRes.level === level ? fx.stageRes : null;
+    const starEls = el.querySelectorAll('.clr-star');
+    clearTimers.forEach(clearTimeout); clearTimers = [];
+    $('clrStars').hidden = !res;
+    $('clrNew').hidden = true;
+    let note = '';
+    if (res) {
+      $('clrHull').textContent = '機体 ' + Math.round(res.hull * 100) + '%  (' + Math.round(K.starHull * 100) + '% 以上)';
+      $('clrTime').textContent = 'タイム ' + fmtTime(res.time) + '  (' + fmtTime(res.par) + ' 以内)';
+      const prev = records.stars[level] || 0;
+      if (res.starN > prev) { records.stars[level] = res.starN; saveRecords(); }
+      note = res.starN === 3 ? 'PERFECT' : prev > 0 && res.starN > prev ? 'NEW RECORD' : '';
+      starEls.forEach(function (se, i) {
+        const got = !!res.stars[i], at = 900 + i * 380;
+        se.classList.toggle('got', got);
+        se.getAnimations().forEach(function (a) { a.cancel(); });
+        // 取れた星は大きい所から弾んで収まる。取れなかった星は、うっすら出るだけ
+        se.animate(got
+          ? [{ opacity: 0, transform: 'scale(2.8)' }, { opacity: 1, transform: 'scale(.86)', offset: 0.7 }, { opacity: 1, transform: 'scale(1)' }]
+          : [{ opacity: 0 }, { opacity: 1 }], { duration: got ? 300 : 200, delay: at, fill: 'backwards', easing: 'ease-out' });
+        clearTimers.push(setTimeout(function () { audio.star(i, got); }, at));
+      });
+      if (note) {
+        const nn = $('clrNew');
+        nn.textContent = note;
+        clearTimers.push(setTimeout(function () { nn.hidden = false; if (note === 'PERFECT') audio.record(); }, 900 + 3 * 380 + 150));
+      }
+    }
     el.hidden = false;
     if (clearAnim) clearAnim.cancel();
+    // 星を見せるぶん長く出す (星 3 つめが 1.7 秒。暗転は札が出てから 4 秒後)
+    const ms = res ? 4300 : 3000;
     clearAnim = el.animate([
       { opacity: 0, transform: 'scale(1.25)', letterSpacing: '0', offset: 0 },
-      { opacity: 1, transform: 'scale(1)', offset: 0.12 },
-      { opacity: 1, transform: 'scale(1.03)', offset: 0.8 },
+      { opacity: 1, transform: 'scale(1)', offset: 360 / ms },
+      { opacity: 1, transform: 'scale(1.03)', offset: 1 - 600 / ms },
       { opacity: 0, transform: 'scale(1.06)', offset: 1 }
-    ], { duration: 3000, easing: 'ease-out' });
+    ], { duration: ms, easing: 'ease-out' });
     clearAnim.onfinish = function () { el.hidden = true; clearAnim = null; };
     audio.clearSting();
+    hudInfo.stageClear = res ? { level: level, starN: res.starN, stars: res.stars.slice(), note: note } : { level: level };
   }
   // 補給船団の結果: 落とした数・逃げた数と、戦艦の砲台がいくつ減ったかを札で見せる
   let convoyAnim = null;
@@ -3413,6 +3659,44 @@
     if (warp.on) drawWarp();
   }
 
+  // ---- スターブレイクの演出 ----
+  // 発動: 一瞬だけ時を止め、金色の閃光と衝撃波・光の粒・揺れ・画角の広がり・字。発動中は画面のふちが金色に光り、
+  // 機体の光る筋・弾・翼端の帯が金色になる。終わる 1.5 秒前から、ふちの光が点滅して知らせる
+  let breakCutAnim = null;
+  function breakStart(e) {
+    fx.stopT = Math.max(fx.stopT, 0.2);
+    flash(e.pos, 340, 0.4, 0xffd890);
+    shockRing(e.pos, 1000, 0.8, 0xffd27a);
+    shockRing(e.pos, 480, 0.45, 0xffffff);
+    // 光の粒は自機から離れた所 (70m〜) に出して外へ飛ばす。自機の所から出すと、カメラのすぐ前で大きな白い玉になって画面を埋めた
+    for (let k = 0; k < 80; k++) {
+      const d = rndDir(), r0 = rnd(70, 160), sp = rnd(180, 520);
+      spawnParticle(e.pos.x + d[0] * r0, e.pos.y + d[1] * r0, e.pos.z + d[2] * r0, d[0] * sp, d[1] * sp, d[2] * sp, rnd(0.35, 0.8), rnd(2.5, 5), 0.5, [1, 0.95, 0.75], [1, 0.55, 0.1], 1);
+    }
+    shake(1.6);
+    fx.fovKick = 2.2;
+    audio.starBreak();
+    setBreakLook(true);
+    $('breakFx').classList.add('on');
+    const el = $('breakCut');
+    el.hidden = false;
+    if (breakCutAnim) breakCutAnim.cancel();
+    breakCutAnim = el.animate([
+      { opacity: 0, transform: 'scale(2.2) skewX(-8deg)', offset: 0 },
+      { opacity: 1, transform: 'scale(1) skewX(-8deg)', offset: 0.14 },
+      { opacity: 1, transform: 'scale(1.04) skewX(-8deg)', offset: 0.75 },
+      { opacity: 0, transform: 'scale(1.3) skewX(-8deg)', offset: 1 }
+    ], { duration: 1500, easing: 'ease-out' });
+    breakCutAnim.onfinish = function () { el.hidden = true; breakCutAnim = null; };
+  }
+  function breakStop(sound) {
+    if (sound && breakLook) audio.breakEnd();
+    setBreakLook(false);
+    $('breakFx').classList.remove('on', 'last');
+    if (breakCutAnim) { breakCutAnim.cancel(); breakCutAnim = null; }
+    $('breakCut').hidden = true;
+  }
+
   function banner(text, dur, color, big) {
     // 札が出ている間に来た知らせは、札が消えてから出す
     fx.banners.push({ text: text, t: dur, max: dur, color: color || '#fff', big: !!big, delay: fx.cardT > 0 ? fx.cardT : 0 });
@@ -3433,11 +3717,36 @@
       const e = game.events[i];
       switch (e.type) {
         case 'laser': {
-          audio.laser();
+          audio.laser(e.brk);
           const f = new THREE.Vector3(pl.dir.x, pl.dir.y, pl.dir.z);
-          spawnParticle(e.pos.x + f.x * 2, e.pos.y + f.y * 2, e.pos.z + f.z * 2, pl.vel.x, pl.vel.y, pl.vel.z, 0.06, 3.5, 1, [0.6, 0.9, 1], [0.2, 0.5, 1]);
+          spawnParticle(e.pos.x + f.x * 2, e.pos.y + f.y * 2, e.pos.z + f.z * 2, pl.vel.x, pl.vel.y, pl.vel.z, 0.06, e.brk ? 5.5 : 3.5, 1, e.brk ? [1, 0.95, 0.7] : [0.6, 0.9, 1], e.brk ? [1, 0.6, 0.15] : [0.2, 0.5, 1]);
           break;
         }
+        // ---- スターブレイク・コンボ・かすり (v0.21.0) ----
+        case 'breakReady':
+          audio.breakReady();
+          banner('★ STAR BREAK 準備完了', 2.0, '#ffd27a', true);
+          break;
+        case 'starBreak': breakStart(e); break;
+        case 'breakEnd': breakStop(true); break;
+        case 'guard':
+          sparks(pl.pos, 10, [1, 0.85, 0.45]);
+          audio.guard();
+          break;
+        case 'graze':
+          fx.grazeN = fx.grazeT > 0 ? fx.grazeN + 1 : 1;
+          fx.grazeT = 0.7;
+          sparks(e.pos, 3, [0.6, 0.95, 1]);
+          if (game.t - fx.grazeSnd > 0.05) { fx.grazeSnd = game.t; audio.graze(); }
+          break;
+        case 'comboUp': {
+          const step = K.comboMarks.indexOf(e.combo);
+          fx.comboPop = 2.2;
+          fx.comboWord = { text: ['GREAT!', 'EXCELLENT!', 'AMAZING!', 'UNSTOPPABLE!', 'GODLIKE!', 'STARBREAKER!'][Math.max(0, step)] || 'GREAT!', t: 1.6 };
+          audio.comboUp(step);
+          break;
+        }
+        case 'stageResult': fx.stageRes = e; break;
         case 'enemyLaser': case 'turretFire':
           if (dist3(e.pos, pl.pos) < 700) audio.enemyLaser(panOf(e.pos), nearOf(dist3(e.pos, pl.pos)));
           flash(e.pos, e.type === 'turretFire' ? 26 : 10, 0.12, 0xff6040);
@@ -3474,7 +3783,8 @@
           break;
         }
         case 'score':
-          fx.popups.push({ text: '+' + e.pts + (e.combo > 1 ? '  x' + e.combo : ''), pos: e.pos, t: 1.2 });
+          fx.popups.push({ text: '+' + e.pts + (e.combo > 1 ? '  x' + e.combo : ''), pos: e.pos, t: 1.2, brk: e.brk });
+          if (e.combo > 1) fx.comboPop = Math.max(fx.comboPop, 1);
           break;
         case 'missile': audio.missile(e.salvo); break;
         case 'lock': if (e.multi) audio.mlock(e.n); else audio.lock(); break;
@@ -3494,10 +3804,12 @@
           // ワープから抜けて来たら、新しい宇宙の上に札を大きく出す
           if (warp.on || blackOn) { if (!warp.on) startWarp(); exitWarp(); showStageCard(e.level, true); } else showStageCard(e.level);
           bossMusic = false; setTimeout(syncMusic, 0);
+          // 進んだ面を覚える (タイトルの STAGE SELECT で、そこまで選べる)
+          if (e.level > records.reached) { records.reached = Math.min(C.LAST_LEVEL, e.level); saveRecords(); }
           break;
         case 'stageOut': blackoutTo(true, BLACK_IN_SEC * 1000); audio.stageOut(); fx.fovKick = 1.4; fx.warpAt = game.t + BLACK_IN_SEC; break;
         case 'bossDead': fx.clearAt = game.t + 0.8; fx.clearLevel = game.level; break;
-        case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); break;
+        case 'waveClear': banner('殲滅', 1.6, '#9fe6ff', true); fx.slowT = Math.max(fx.slowT, 0.45); audio.waveClear(); break;
         case 'bossWarning':
           bossMusic = false;
           setTimeout(syncMusic, 0);
@@ -3600,9 +3912,10 @@
       const ud = shipObj.userData;
       const turn = ud.prevDir && dt > 0 ? Math.acos(Math.min(1, ud.prevDir.x * pl.dir.x + ud.prevDir.y * pl.dir.y + ud.prevDir.z * pl.dir.z)) / dt : 0;
       ud.prevDir = { x: pl.dir.x, y: pl.dir.y, z: pl.dir.z };
-      const want = pl.alive ? Math.max(pl.boosting ? 0.9 : 0, Math.min(1, Math.max(0, (turn - 0.35) / 0.6))) : 0;
+      // スターブレイク中は、翼端の光の帯が金色で出続ける
+      const want = pl.alive ? Math.max(pl.breakT > 0 ? 1.2 : 0, pl.boosting ? 0.9 : 0, Math.min(1, Math.max(0, (turn - 0.35) / 0.6))) : 0;
       ud.trailK = (ud.trailK || 0) + (want - (ud.trailK || 0)) * Math.min(1, dt * 6);
-      updateTrails(shipObj, ud.trailK, game.t);
+      updateTrails(shipObj, ud.trailK, game.t, pl.breakT > 0);
     }
     // ブースト: 煙の玉ではなく、噴射口から後ろへ飛ぶ小さな光の粒
     if (pl.boosting && pl.alive) {
@@ -3818,7 +4131,7 @@
       bossObj = null;
     }
 
-    drawBolts(game.shots, 'player', playerBolts, playerBoltsGlow);
+    drawBolts(game.shots, 'player', playerBolts, playerBoltsGlow, undefined, 1.9);
     drawBolts(game.shots, 'enemy', enemyBolts, enemyBoltsGlow, false);
     drawBolts(game.shots, 'enemy', burstBolts, burstBoltsGlow, true);
   }
@@ -4224,10 +4537,24 @@
       const s = toScreen(p.pos);
       if (s.behind) return;
       const a = Math.min(1, p.t / 0.4);
-      c.font = '800 15px -apple-system, sans-serif';
-      c.fillStyle = 'rgba(255,215,110,' + a + ')';
+      // 出た瞬間は大きく、すぐ落ち着く。スターブレイク中 (得点 2 倍) は白っぽい金でさらに大きく
+      const pop = Math.max(0, (p.t - 1.05) / 0.15);
+      c.font = '800 ' + Math.round((p.brk ? 19 : 15) + pop * 8) + 'px -apple-system, sans-serif';
+      c.fillStyle = (p.brk ? 'rgba(255,244,200,' : 'rgba(255,215,110,') + a + ')';
       c.fillText(p.text, s.x, s.y - 24 - (1.2 - p.t) * 30);
     });
+    // かすり: 自機の横に「GRAZE xN」(続けてかするほど数が増える)
+    if (fx.grazeT > 0) {
+      fx.grazeT -= dt;
+      const sp = toScreen(pl.pos);
+      if (!sp.behind) {
+        c.font = '800 italic 12px -apple-system, sans-serif';
+        c.textAlign = 'left';
+        c.fillStyle = 'rgba(150,240,255,' + Math.min(1, fx.grazeT / 0.3).toFixed(2) + ')';
+        c.fillText('GRAZE' + (fx.grazeN > 1 ? ' x' + fx.grazeN : ''), sp.x + 34, sp.y - 6 - (0.7 - fx.grazeT) * 14);
+        c.textAlign = 'center';
+      }
+    }
 
     // 左上: シールド・装甲・ブースト
     // 左上: シールド・機体・ブーストのゲージ (送ってもらった絵の枠に、目盛りを描く)
@@ -4252,10 +4579,44 @@
     c.font = '700 18px -apple-system, sans-serif';
     c.fillStyle = '#fff';
     c.fillText(game.stats.score.toLocaleString(), W - sar - 60, 26);
-    if (game.stats.combo > 1) {
-      c.font = '800 12px -apple-system, sans-serif';
+    const scoreW = c.measureText(game.stats.score.toLocaleString()).width;
+    // コンボ: 大きな数字 (増えた瞬間に弾む)・切れるまでの残り時間の帯・節目の言葉。数が増えるほど大きく、色が熱くなる
+    fx.comboPop = Math.max(0, fx.comboPop - dt * 6);
+    const combo = game.stats.combo;
+    hudInfo.combo = null;
+    if (combo > 1) {
+      const cx = W - sar - 60, hot = combo >= 10 ? '#ff7ad0' : combo >= 5 ? '#ffa24a' : '#ffd27a';
+      const size = 22 + Math.min(10, combo) + Math.min(1.6, fx.comboPop) * 9;
+      c.font = '800 italic ' + Math.round(size) + 'px -apple-system, sans-serif';
+      c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,.55)';
+      c.strokeText('x' + combo, cx, 58);
+      c.fillStyle = hot;
+      c.fillText('x' + combo, cx, 58);
+      const left = C.clamp(game.stats.comboT / K.comboTime, 0, 1);
+      c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(cx - 70, 63, 70, 3);
+      c.fillStyle = hot; c.fillRect(cx - 70 * left, 63, 70 * left, 3);
+      c.font = '700 9px -apple-system, sans-serif';
+      c.fillStyle = 'rgba(255,235,200,.85)';
+      c.fillText('COMBO', cx, 76);
+      hudInfo.combo = { n: combo, size: size, left: left };
+    }
+    if (fx.comboWord) {
+      fx.comboWord.t -= dt;
+      if (fx.comboWord.t <= 0) fx.comboWord = null;
+      else {
+        const a = Math.min(1, fx.comboWord.t / 0.4), up = Math.max(0, (fx.comboWord.t - 1.4) / 0.2);
+        c.font = '800 italic ' + Math.round(15 + up * 8) + 'px -apple-system, sans-serif';
+        c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,' + (0.55 * a).toFixed(2) + ')';
+        c.strokeText(fx.comboWord.text, W - sar - 60, 94);
+        c.fillStyle = 'rgba(255,246,214,' + a.toFixed(2) + ')';
+        c.fillText(fx.comboWord.text, W - sar - 60, 94);
+      }
+    }
+    // スターブレイク中: スコアの左に「x2」
+    if (pl.breakT > 0) {
+      c.font = '800 italic 13px -apple-system, sans-serif';
       c.fillStyle = '#ffd27a';
-      c.fillText('COMBO x' + game.stats.combo, W - sar - 60, 42);
+      c.fillText('x' + K.breakScore, W - sar - 60 - scoreW - 8, 25);
     }
 
     // 上の真ん中: 戦艦の体力
@@ -4452,7 +4813,7 @@
 
 
   // 操作部品の表示 (変わったときだけ書き換える)
-  const shown = { missiles: -1, locked: null, boostEmpty: null };
+  const shown = { missiles: -1, locked: null, boostEmpty: null, breakQ: -1, breakReady: null, breakActive: null, breakLast: null };
   function updateControlsView() {
     const pl = game.player;
     if (shown.missiles !== pl.missiles) {
@@ -4468,6 +4829,15 @@
     if (shown.hasTarget !== hasTarget) { shown.hasTarget = hasTarget; els.btnTarget.classList.toggle('has-target', hasTarget); }
     const following = !!pl.follow;
     if (shown.following !== following) { shown.following = following; els.btnTarget.classList.toggle('following', following); }
+    // スターブレイク: 輪はゲージ (発動中は残り時間)。細かく書き換えない (48 段階)
+    const active = pl.breakT > 0, bv = active ? pl.breakT / K.breakTime : pl.brk / K.breakMax;
+    const bq = Math.round(C.clamp(bv, 0, 1) * 48);
+    if (shown.breakQ !== bq) { shown.breakQ = bq; els.brkFill.style.strokeDashoffset = (226.2 * (1 - bq / 48)).toFixed(1); }
+    const ready = !active && pl.brk >= K.breakMax;
+    if (shown.breakReady !== ready) { shown.breakReady = ready; els.btnBreak.classList.toggle('ready', ready); }
+    if (shown.breakActive !== active) { shown.breakActive = active; els.btnBreak.classList.toggle('active', active); }
+    const lastSec = active && pl.breakT < 1.5;
+    if (shown.breakLast !== lastSec) { shown.breakLast = lastSec; $('breakFx').classList.toggle('last', lastSec); }
     const be = pl.boost < 5 && !pl.boosting;
     if (shown.boostEmpty !== be) { shown.boostEmpty = be; els.btnBoost.classList.toggle('empty', be); }
   }
@@ -4528,11 +4898,13 @@
         missile: input.missile,
         missileHold: missileIds.size > 0 || kb.missileHold,
         select: input.select,
-        track: touch.trackIds.size > 0 || kb.track
+        track: touch.trackIds.size > 0 || kb.track,
+        breakNow: !!input.breakNow
       };
       if (window.__autopilot) Object.assign(stepInput, C.autopilot(game, 1));
       input.missile = false;
       input.select = false;
+      input.breakNow = false;
       const ts = performance.now();
       C.step(game, stepInput, dt);
       consumeEvents();
@@ -4604,12 +4976,13 @@
     $('btnBossOnly').addEventListener('click', function () { startGame({ start: 'boss' }); });
     $('btnSettings').addEventListener('click', function () { showMenu('menuSettings'); });
     $('btnHowto').addEventListener('click', function () { showMenu('menuHowto'); });
+    $('btnStages').addEventListener('click', function () { showMenu('menuStages'); });
     document.querySelectorAll('[data-back]').forEach(function (b) { b.addEventListener('click', function () { showMenu(null); }); });
     $('btnResume').addEventListener('click', function () { setPaused(false); });
-    $('btnRetry').addEventListener('click', function () { startGame({ start: lastStart }); });
+    $('btnRetry').addEventListener('click', function () { startGame({ start: lastStart, level: lastLevel }); });
     $('btnToTitle').addEventListener('click', toTitle);
-    $('btnAgain').addEventListener('click', function () { startGame({ start: lastStart }); });
-    $('btnContinue').addEventListener('click', function () { if (game) startGame({ continueFrom: game, start: lastStart }); });
+    $('btnAgain').addEventListener('click', function () { startGame({ start: lastStart, level: lastLevel }); });
+    $('btnContinue').addEventListener('click', function () { if (game) startGame({ continueFrom: game, start: lastStart, level: lastLevel }); });
     $('btnResultTitle').addEventListener('click', toTitle);
     // ボタンの音: 始める・続ける・戻るなどの「決める」ボタンは重みのある決定の音、それ以外 (設定・遊び方・戻る) は軽い選ぶ音
     const OK_BUTTONS = ['btnStart', 'btnBossOnly', 'btnContinue', 'btnAgain', 'btnRetry', 'btnResume'];
@@ -4617,7 +4990,7 @@
       const b = e.target && e.target.closest && e.target.closest('button');
       if (!b || b.classList.contains('pad')) return;
       audio.init();
-      if (OK_BUTTONS.indexOf(b.id) >= 0) audio.uiOk(); else audio.ui();
+      if (OK_BUTTONS.indexOf(b.id) >= 0 || b.classList.contains('stage-row')) audio.uiOk(); else audio.ui();
     });
 
     // 別のアプリへ切り替えたら止める
@@ -4628,6 +5001,7 @@
       }
     });
 
+    loadRecords();
     toTitle();
     requestAnimationFrame(frame);
 
@@ -4658,6 +5032,13 @@
       musicKind: function () { return audio.musicKind(); },
       sfx: function (name, a, b, c) { audio[name](a, b, c); },
       settings: settings,
+      // 記録 (localStorage)。テストは setRecords で決めた状態から始める
+      records: function () { return JSON.parse(JSON.stringify(records)); },
+      setRecords: function (r) { records.best = r.best || null; records.stars = Object.assign({}, r.stars || {}); records.reached = r.reached || 1; records.clears = r.clears || 0; saveRecords(); updateTitleRecords(); },
+      breakLook: function () { return breakLook; },
+      // 写真・見張り用: 面クリアの札 (星つき) と結果の画面をその場で出す
+      demoStageClear: function (level, res) { fx.stageRes = res || null; showStageClear(level); },
+      demoResult: function () { showResult(); },
       assetsLoaded: function () { return Object.assign({}, assetsLoaded); },
       // 自機のまわり r m にある、大きな (煙の玉のような) 粒の数。ブーストで煙を出さない見張り用
       bigParticlesNear: function (r, minSize) {

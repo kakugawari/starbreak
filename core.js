@@ -243,9 +243,9 @@
     reinforceAt: 15, reinforceCount: 2, reinforceBehind: 650, convoyResultWait: 4.5,
     drillTankHp: 0.55,   // 3 面の採掘母艦の鉱石タンク (4 つ) の体力。1 面のエンジン (2 つ) の何倍か
     // 面の終わりの余韻: 撃沈の演出が始まってから次の面へ進むまで (秒)・暗転を始めるのは進む何秒前か
-    bossEndWait: 10.6, stageOutLead: 3.0,
+    bossEndWait: 12.0, stageOutLead: 3.0,
     aceAhead: 600, aceEscorts: 2,   // 2 面のボス戦: エース機が現れる距離 (自機の前)・連れてくる護衛機の数
-    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 6.6,
+    aceHp: 110, aceScale: 1.5, aceRadius: 11, aceFire: 0.65, aceBurst: 5, aceSkill: 1.08, aceDownDelay: 8.0,
     // ボス戦で、しばらく何も当てていない (次の的へ回り込んでいる) とき、撃ち返さない小さな的 (ドローン) を
     // 自機の正面の先からこちらへ飛ばす。1 発で落ち、少しで飛び去る。護衛機を出すと追い回してボス戦が 1.2〜1.7 倍に延び、
     // 前を横切らせると照準の前にいる時間が短くて空白があまり減らなかったため (droneMode 'cross' は試した形として残す)
@@ -254,6 +254,17 @@
     cannonCharge: 2.8, cannonLockBefore: 1.0, cannonFire: 1.0,
     cannonRadius: 12, cannonDamage: 45, cannonLength: 3200,
     hullDamage: 12,
+    // スターブレイク: 当てる・落とす・かすらせるとゲージが溜まり、満タンで発動できる。breakTime 秒のあいだ無敵で、
+    // レーザーの威力 breakDamage 倍・撃つ間隔 breakFire 倍・照準補助 breakAssist 倍・得点 breakScore 倍。
+    // 発動の瞬間に敵の弾をすべて消し、breakBlast (m) 以内の敵機へ breakBlastDamage を与え、ミサイルを満タンにする
+    breakMax: 100, breakHit: 0.5, breakMissile: 2, breakKill: 6, breakPart: 9, breakGraze: 2.5, breakTime: 7,
+    breakDamage: 2.5, breakFire: 0.6, breakAssist: 1.6, breakBlast: 450, breakBlastDamage: 6, breakScore: 2,
+    // かすり (グレイズ): 敵の弾が grazeRadius (m) より近くを抜けたら、得点とゲージ。コンボの時計も延びる
+    grazeRadius: 13, grazeScore: 10,
+    // コンボ: 落とすたびに 1 つ増え、comboTime 秒で切れる。当て続けている間は comboHold 秒より短くならない (ボス戦でもつながる)
+    comboTime: 3.5, comboHold: 2.0, comboMarks: [5, 10, 15, 20, 30, 50],
+    // 面ごとの星 (3 つ): クリア・機体を starHull 以上残す・stagePar[面] 秒より早く倒す
+    starHull: 0.5, stagePar: [0, 180, 50, 330, 400, 360],
     // 戦域
     arenaCenter: vec(0, 0, -600), arenaRadius: 2600
   };
@@ -787,19 +798,24 @@
         focus: null, assist: null, lockId: 0, lockT: 0, locked: false,
         mlock: [], mlockT: 0, mlockCand: 0,
         targetId: 0, tracking: false, follow: false,
-        aimDir: vec(0, 0, -1), alive: true, outside: false
+        aimDir: vec(0, 0, -1), alive: true, outside: false,
+        brk: 0, breakT: 0, guardCd: 0     // スターブレイク: ゲージ (0〜breakMax)・発動の残り秒
       },
       fighters: [],
       shots: [],
       missiles: [],
       boss: null,
       events: [],
-      stats: { shots: 0, hits: 0, kills: 0, score: 0, damage: 0, combo: 0, comboT: 0, time: 0 },
+      stats: { shots: 0, hits: 0, kills: 0, score: 0, damage: 0, combo: 0, comboT: 0, time: 0, maxCombo: 0, graze: 0, breaks: 0 },
       continues: opts.continues || 0,   // 負けて「この面から続ける」を使った回数
+      // 始めた面 (面を選んで始めたとき。成績の線は遊んだ面のぶんだけ)・面ごとの結果 (星)
+      startLevel: opts.startLevel || (opts.start === 'stage' ? (opts.level || 1) : 1),
+      stageResults: {}, stageMaxCombo: 0,
       endT: 0
     };
+    if (opts.results) for (const k in opts.results) g.stageResults[k] = opts.results[k];
     // 続きから: その面を始めたときの成績を引き継ぐ (負けた回の点は数えない)
-    if (opts.carry) ['shots', 'hits', 'kills', 'score', 'damage', 'time'].forEach(function (k) { g.stats[k] = opts.carry[k] || 0; });
+    if (opts.carry) ['shots', 'hits', 'kills', 'score', 'damage', 'time', 'maxCombo', 'graze', 'breaks'].forEach(function (k) { g.stats[k] = opts.carry[k] || 0; });
     g.stageStats = copyStats(g.stats);
     if (g.stage === 'wave1') spawnWave(g, 1);
     if (g.stage === 'intro') emit(g, 'stageStart', { level: g.level, text: 'STAGE ' + g.level });
@@ -807,7 +823,7 @@
   }
 
   function copyStats(s) {
-    return { shots: s.shots, hits: s.hits, kills: s.kills, score: s.score, damage: s.damage, time: s.time };
+    return { shots: s.shots, hits: s.hits, kills: s.kills, score: s.score, damage: s.damage, time: s.time, maxCombo: s.maxCombo, graze: s.graze, breaks: s.breaks };
   }
 
   /**
@@ -815,7 +831,7 @@
    * 成績はその面を始めたときのものに戻す (負けた回の点・時間は数えない)。続けた回数は結果に出す
    */
   function continueGame(g, seed) {
-    return createGame({ seed: seed === undefined ? g.seed + 1 : seed, level: g.level, start: 'stage', carry: g.stageStats, continues: (g.continues || 0) + 1 });
+    return createGame({ seed: seed === undefined ? g.seed + 1 : seed, level: g.level, start: 'stage', carry: g.stageStats, continues: (g.continues || 0) + 1, startLevel: g.startLevel, results: g.stageResults });
   }
 
   function rand(g, a, b) { return a + (b - a) * g.rng(); }
@@ -967,6 +983,12 @@
     const c = T.arenaCenter, maxR = T.arenaRadius - 800 * k;
     const dx = at.x - c.x, dz = at.z - c.z, d = Math.hypot(dx, dz);
     if (d > maxR) { at.x = c.x + dx * maxR / d; at.z = c.z + dz * maxR / d; }
+    // 上下も詰める。自機が上下の端にいると、艦の腹や背へ回り込む所が戦域の外になり、
+    // 引き返しと回り込みがぶつかって砲台を撃てなかった (横だけ詰めていた)
+    const maxY = T.arenaRadius - 1500 * k;
+    at.y = clamp(at.y, c.y - maxY, c.y + maxY);
+    const d3 = dist(at, c);
+    if (d3 > maxR) { const q = maxR / d3; at.x = c.x + (at.x - c.x) * q; at.y = c.y + (at.y - c.y) * q; at.z = c.z + (at.z - c.z) * q; }
     return at;
   }
 
@@ -1086,9 +1108,10 @@
       if (ang < bestAng) { bestAng = ang; best = { target: t, lead: lead, ang: angleBetween(pl.dir, sub(lead, pl.pos)), dist: d }; }
     }
     pl.focus = best;
-    pl.assist = best && best.ang <= T.assistCone ? best : null;
+    const ak = pl.breakT > 0 ? T.breakAssist : 1;   // スターブレイク中は照準補助が広い
+    pl.assist = best && best.ang <= T.assistCone * ak ? best : null;
     if (pl.assist) {
-      pl.aimDir = rotateToward(pl.dir, sub(pl.assist.lead, pl.pos), T.assistBend);
+      pl.aimDir = rotateToward(pl.dir, sub(pl.assist.lead, pl.pos), T.assistBend * ak);
     } else {
       pl.aimDir = copy(pl.dir);
     }
@@ -1258,7 +1281,8 @@
     const pl = g.player;
     pl.laserCd -= dt;
     if (!input.fire || pl.laserCd > 0) return;
-    pl.laserCd += T.laserInterval;
+    const brk = pl.breakT > 0;
+    pl.laserCd += T.laserInterval * (brk ? T.breakFire : 1);
     if (pl.laserCd < 0) pl.laserCd = 0;
     // 左右の翼から交互に
     const right = norm(cross(pl.dir, vec(0, 1, 0)));
@@ -1269,10 +1293,10 @@
     g.shots.push({
       owner: 'player', pos: muzzle, prev: copy(muzzle),
       vel: add(scale(dir, T.laserSpeed), scale(pl.vel, 0)),
-      life: T.laserLife, dmg: T.laserDamage, dead: false
+      life: T.laserLife, dmg: T.laserDamage * (brk ? T.breakDamage : 1), dead: false, brk: brk
     });
     g.stats.shots++;
-    emit(g, 'laser', { pos: muzzle, side: side });
+    emit(g, 'laser', { pos: muzzle, side: side, brk: brk });
   }
 
   /**
@@ -1413,11 +1437,47 @@
   function addScore(g, base, pos) {
     const s = g.stats;
     s.combo = s.comboT > 0 ? s.combo + 1 : 1;
-    s.comboT = 3.5;
-    const mult = Math.min(3, 1 + 0.25 * (s.combo - 1));
-    const pts = Math.round(base * mult);
+    s.comboT = T.comboTime;
+    if (s.combo > s.maxCombo) s.maxCombo = s.combo;
+    if (s.combo > g.stageMaxCombo) g.stageMaxCombo = s.combo;
+    const pts = Math.round(base * scoreMult(g));
     s.score += pts;
-    emit(g, 'score', { pts: pts, combo: s.combo, pos: pos });
+    emit(g, 'score', { pts: pts, combo: s.combo, pos: pos, brk: g.player.breakT > 0 });
+    if (T.comboMarks.indexOf(s.combo) >= 0) emit(g, 'comboUp', { combo: s.combo });
+  }
+  /** 得点の倍率: コンボ (最大 3 倍) x スターブレイク中 (breakScore 倍) */
+  function scoreMult(g) {
+    return Math.min(3, 1 + 0.25 * Math.max(0, g.stats.combo - 1)) * (g.player.breakT > 0 ? T.breakScore : 1);
+  }
+
+  /** スターブレイクのゲージを足す (発動中は溜まらない)。満タンになった瞬間に知らせる */
+  function addBreak(g, v) {
+    const pl = g.player;
+    if (pl.breakT > 0 || g.state !== 'play' || pl.brk >= T.breakMax) return;
+    pl.brk = Math.min(T.breakMax, pl.brk + v);
+    if (pl.brk >= T.breakMax) emit(g, 'breakReady');
+  }
+
+  /**
+   * スターブレイクを発動する (ゲージが満タンのとき)。敵の弾をすべて消し、近くの敵機に痛手、ミサイルを満タンに。
+   * breakTime 秒のあいだ無敵で、レーザーが強く速くなる
+   */
+  function activateBreak(g) {
+    const pl = g.player;
+    if (pl.brk < T.breakMax || pl.breakT > 0 || !pl.alive || g.state !== 'play') return false;
+    pl.brk = 0;
+    pl.breakT = T.breakTime;
+    pl.missiles = T.missileMax; pl.missileCd = 0;
+    g.stats.breaks++;
+    let cleared = 0;
+    g.shots = g.shots.filter(function (s) { if (s.owner === 'enemy') { cleared++; return false; } return true; });
+    let hitN = 0;
+    for (let i = 0; i < g.fighters.length; i++) {
+      const f = g.fighters[i];
+      if (f.alive && dist(f.pos, pl.pos) <= T.breakBlast) { hitN++; damage(g, f, T.breakBlastDamage, f.pos, 'break'); }
+    }
+    emit(g, 'starBreak', { pos: copy(pl.pos), cleared: cleared, hit: hitN });
+    return true;
   }
 
   function damage(g, t, amount, point, by) {
@@ -1426,7 +1486,11 @@
     t.flash = 1;
     emit(g, 'hit', { pos: point, id: t.id, kind: t.kind, by: by, hp: t.hp, maxHp: t.maxHp });
     g.lastHitT = g.t;
+    // 当て続けている間はコンボが切れない。当てるたびにゲージが少し溜まる
+    if (g.stats.combo > 0 && g.stats.comboT < T.comboHold) g.stats.comboT = T.comboHold;
+    addBreak(g, by === 'missile' ? T.breakMissile : T.breakHit);
     if (t.hp > 0) return;
+    addBreak(g, t.kind === 'fighter' ? (t.drone ? 1 : T.breakKill) : T.breakPart);
     t.hp = 0;
     t.alive = false;
     if (t.kind === 'fighter') {
@@ -1447,6 +1511,11 @@
   function hurtPlayer(g, amount, from, src) {
     const pl = g.player;
     if (g.state !== 'play' || !pl.alive) return;
+    // スターブレイク中は無敵 (はじいた光だけ出す)
+    if (pl.breakT > 0) {
+      if (pl.guardCd <= 0) { pl.guardCd = 0.15; emit(g, 'guard', { from: from }); }
+      return;
+    }
     g.stats.damage += amount;
     pl.sinceHit = 0;
     const s = Math.min(pl.shield, amount);
@@ -1804,6 +1873,7 @@
       }
       g.shots = g.shots.filter(function (s) { return s.owner === 'player'; });
       emit(g, 'bossPhase', { phase: 'dying', text: def.text.dying });
+      finishStage(g);
       return;
     }
 
@@ -1936,11 +2006,46 @@
           hurtPlayer(g, s.dmg, s.prev, s.src);
           continue;
         }
+        // かすり: 当たらずに、すぐそばを抜けた (いちばん近づいた所がこのコマの中にある)
+        if (pl.alive && !s.grazed && g.state === 'play' && pl.breakT <= 0) {
+          const seg = sub(s.pos, s.prev), l2 = dot(seg, seg);
+          const k = l2 > 0 ? dot(sub(pl.pos, s.prev), seg) / l2 : 0;
+          if (k > 0 && k < 1) {
+            const near = addScaled(s.prev, seg, k);
+            if (dist(near, pl.pos) < T.grazeRadius) { s.grazed = true; graze(g, near); }
+          }
+        }
         const hit = g.boss && g.boss.phase !== 'dead' && s.life < 2.0 ? sweepHull(g, s.prev, s.pos) : false;
         if (hit) s.dead = true;
       }
     }
     g.shots = g.shots.filter(function (s) { return !s.dead; });
+  }
+
+  function graze(g, pos) {
+    const st = g.stats;
+    st.graze++;
+    const pts = Math.round(T.grazeScore * scoreMult(g));
+    st.score += pts;
+    if (st.combo > 0 && st.comboT < T.comboHold) st.comboT = T.comboHold;
+    addBreak(g, T.breakGraze);
+    emit(g, 'graze', { pos: pos, pts: pts });
+  }
+
+  /**
+   * 面のボスを倒した瞬間の、その面の結果。星 3 つ: クリア・機体を半分以上残す・決めた時間より早い
+   */
+  function finishStage(g) {
+    const s = g.stats, st = g.stageStats, pl = g.player;
+    const time = s.time - st.time, par = T.stagePar[g.level] || 0;
+    const hull = pl.hull / T.hullMax;
+    const stars = [true, hull >= T.starHull, time <= par];
+    const r = {
+      level: g.level, time: time, par: par, hull: hull, kills: s.kills - st.kills, damage: s.damage - st.damage,
+      score: s.score - st.score, maxCombo: g.stageMaxCombo, stars: stars, starN: stars.filter(Boolean).length
+    };
+    g.stageResults[g.level] = r;
+    emit(g, 'stageResult', r);
   }
 
   function sweepHull(g, p0, p1) {
@@ -1999,6 +2104,7 @@
     if (g.stage === 'ace') {
       if (g.ace && !g.ace.alive) {
         g.stage = 'aceDown'; g.stageTimer = 0;
+        finishStage(g);
         // 暗転とワープのあいだに撃たれないよう、残った護衛機と敵の弾も一緒に片づける (戦艦の撃沈と同じ)
         for (let i = 0; i < g.fighters.length; i++) {
           const f = g.fighters[i];
@@ -2065,7 +2171,7 @@
     return g;
   }
   function withoutEdge(input) {
-    return { stickX: input.stickX, stickY: input.stickY, throttle: input.throttle, fire: input.fire, boost: input.boost, missile: false, missileHold: input.missileHold, track: input.track, select: false };
+    return { stickX: input.stickX, stickY: input.stickY, throttle: input.throttle, fire: input.fire, boost: input.boost, missile: false, missileHold: input.missileHold, track: input.track, select: false, breakNow: false };
   }
 
   function stepOnce(g, input, dt) {
@@ -2084,7 +2190,13 @@
       if (pl.sinceHit > T.shieldRegenDelay) pl.shield = Math.min(T.shieldMax, pl.shield + T.shieldRegen * dt);
       keepTarget(g);
       updateAim(g);
+      pl.guardCd = Math.max(0, pl.guardCd - dt);
+      if (pl.breakT > 0) {
+        pl.breakT = Math.max(0, pl.breakT - dt);
+        if (pl.breakT === 0) emit(g, 'breakEnd');
+      }
       if (g.state === 'play') {
+        if (input.breakNow) activateBreak(g);
         fireLasers(g, input, dt);
         fireMissile(g, input, dt);
         // ロックオンボタンのタップ: 敵を選び、その敵を向き続ける (追いかけ)。押しっぱなしにしなくてよい
@@ -2133,17 +2245,23 @@
     pl.shield = T.shieldMax; pl.hull = T.hullMax; pl.missiles = T.missileMax; pl.boost = 100;
     pl.mlock.length = 0; pl.lockT = 0; pl.locked = false; pl.lockId = 0; pl.targetId = 0; pl.follow = false;
     g.stageStats = copyStats(g.stats);
+    g.stageMaxCombo = 0;
     emit(g, 'stageStart', { level: level, text: 'STAGE ' + level });
   }
 
+  // 成績の線の倍率: その面まで通して遊んだときの得点の伸び (面の数ではなく、測った得点で引いた)
+  // v0.21.0 でかすり・コンボの持続・スターブレイク (得点 2 倍) を足して得点が 1.5 倍ほどに増えたので、測り直して 1.82 倍に伸ばした
+  // (通しの自動操縦 6 通りずつ: 腕前 1 は 121〜136k、0.7 は 118〜135k、0.45 は 89〜108k。S の線 = 16000 x 7.1 = 113.6k)
+  const RANK_LINE = [0, 1.8, 2.4, 4.2, 5.5, 7.1];
   /** 終わったときの成績。 */
   function result(g) {
     const s = g.stats;
     const acc = s.shots ? s.hits / s.shots : 0;
     const cleared = g.state === 'clear';
     let bonus = 0;
+    const first = g.startLevel || 1, played = g.level - first + 1;   // 面を選んで始めたら、遊んだ面のぶんだけで測る
     if (cleared) {
-      bonus += Math.max(0, Math.round((420 * g.level - s.time) * 20));   // 1 面あたり 7 分を目安に
+      bonus += Math.max(0, Math.round((420 * played - s.time) * 40));   // 1 面あたり 7 分を目安に (かすり・コンボ・ブレイクで得点が増えたぶん、早さの重みも 20 → 40 に)
       bonus += Math.round(acc * 3000);
       bonus += Math.round((g.player.hull / T.hullMax) * 2000);
     }
@@ -2151,12 +2269,16 @@
     let rank = 'C';
     // 2 面まで遊ぶと点も増えるので線を伸ばす。2 面は長く手ごわいので 2 倍ではなく 1.8 倍
     // (自動操縦 8 通りで、1 面だけのときと同じく 上手 → ほぼ S・下手 → A になる値。4 面まで遊ぶと 3 倍 = 腕前 1・0.7 は S、0.45 は A)
-    const lv = g.level === 5 ? 3.9 : g.level === 4 ? 3 : g.level === 3 ? 2.3 : g.level === 2 ? 1.3 : 1;
+    const lv = RANK_LINE[g.level] - RANK_LINE[first - 1];
+    let starN = 0;
+    for (const k in g.stageResults) starN += g.stageResults[k].starN;
     if (cleared) rank = total >= 16000 * lv ? 'S' : total >= 12000 * lv ? 'A' : total >= 8000 * lv ? 'B' : 'C';
     return {
       cleared: !!cleared, time: s.time, kills: s.kills, accuracy: acc,
       damage: s.damage, score: s.score, bonus: bonus, total: total, rank: rank,
-      level: g.level, continues: g.continues || 0
+      level: g.level, continues: g.continues || 0,
+      startLevel: first, fullRun: first === 1, maxCombo: s.maxCombo, graze: s.graze, breaks: s.breaks,
+      stages: g.stageResults, starN: starN
     };
   }
 
@@ -2261,6 +2383,7 @@
         if (push) aim = add(pl.pos, add(scale(push.normal, 100), scale(pl.dir, 30)));
       }
     }
+    bot.aim = aim;   // (調べる用) いま向かっている所
     const want = yawPitchOf(sub(aim, pl.pos));
     const k = 2.2 * skill;
     input.stickX = clamp(-wrapAngle(want.yaw - pl.yaw) * k, -1, 1);
@@ -2268,6 +2391,8 @@
     if (pl.focus && tgt && pl.focus.target === tgt && pl.focus.ang < (3 + (1 - skill) * 4) * DEG) input.fire = true;
     if (pl.focus && pl.focus.ang < 5 * DEG) input.fire = true;
     if (pl.locked && pl.missiles > 0 && g.rng() < 0.05) input.missile = true;
+    // スターブレイク: 溜まっていて、撃っている最中なら発動する
+    if (pl.brk >= T.breakMax && input.fire && !g.noBreak) input.breakNow = true;
     // 主砲: 固定されたら射線から横へ逃げる
     const c = g.boss && g.boss.cannon;
     if (c && c.state !== 'idle' && skill > 0.5) {
@@ -2300,7 +2425,7 @@
     intercept: intercept, segmentSphere: segmentSphere, segmentBox: segmentBox, sphereBoxPush: sphereBoxPush,
     solidPlanes: solidPlanes, solidRange: solidRange, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
-    createGame: createGame, continueGame: continueGame, step: step, targets: targets, bossSolids: bossSolids, result: result,
+    createGame: createGame, continueGame: continueGame, step: step, activateBreak: activateBreak, scoreMult: scoreMult, RANK_LINE: RANK_LINE, targets: targets, bossSolids: bossSolids, result: result,
     autopilot: autopilot, selectTarget: selectTarget, BOSS_TIMING: { delay: BOSS_WARP_DELAY, emerge: BOSS_EMERGE, arrive: BOSS_ARRIVE, ahead: BOSS_AHEAD, drop: BOSS_DROP, bow: BOSS_BOW, stern: BOSS_STERN }, makeFighter: makeFighter, makeBoss: makeBoss
   };
 });
