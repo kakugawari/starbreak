@@ -281,20 +281,74 @@ test('マルチロック: ロックせずに離せば (タップ) 1 発だけ撃
 
 // ------------------------------------------------------------ ロックオンボタン (狙う相手)
 
-test('ロックオンボタン: タップで照準にいちばん近い敵を選び、もう一度で次へ切り替わる', () => {
+test('ロックオンボタン: タップで照準にいちばん近い敵を選び、もう一度で次へ。画面に敵がいる間は、画面の中の敵だけで回す', () => {
   const g = quietGame();
-  const a = fighterAhead(g, 30, 300);     // 30° 右
+  const a = fighterAhead(g, 30, 300);     // 30° 右 (画面の中)
   const b = fighterAhead(g, -8, 400);     // 8° 左 (照準にいちばん近い)
-  const c = fighterAhead(g, 120, 300);    // 後ろ寄り
+  const c = fighterAhead(g, 120, 300);    // 後ろ寄り (画面の外)
   [a, b, c].forEach((f) => { f.mode = 'hold'; f.fireCd = 99; });
+  assert.ok(C.onScreen(g, a.pos) && C.onScreen(g, b.pos) && !C.onScreen(g, c.pos));
   C.step(g, { select: true }, 1 / 60);
   assert.strictEqual(g.player.targetId, b.id, '照準にいちばん近い敵');
   C.step(g, { select: true }, 1 / 60);
   assert.strictEqual(g.player.targetId, a.id, '次に近い敵');
   C.step(g, { select: true }, 1 / 60);
-  assert.strictEqual(g.player.targetId, c.id, 'その次 (後ろの敵も選べる)');
+  assert.strictEqual(g.player.targetId, b.id, '画面の中の敵だけで一周する (後ろの敵へ飛ばない)');
+  // 画面の中に敵がいなくなれば、画面の外の敵を選べる
+  g.fighters = [c];
   C.step(g, { select: true }, 1 / 60);
-  assert.strictEqual(g.player.targetId, b.id, '一周して最初へ');
+  assert.strictEqual(g.player.targetId, c.id, '画面に敵がいなければ、外の敵を選ぶ');
+});
+
+test('ロックオンボタン: 迎撃機 (すぐ去る) は後回し。ほかに画面の中の敵がいれば、そちらを選ぶ', () => {
+  const g = quietGame();
+  const d = fighterAhead(g, 2, 250), f = fighterAhead(g, 25, 400);
+  d.drone = true;
+  [d, f].forEach((x) => { x.mode = 'hold'; x.fireCd = 99; });
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, f.id, '照準に近いのは迎撃機だが、ふつうの敵機を選ぶ');
+  g.fighters = [d];
+  C.step(g, { select: true }, 1 / 60);
+  assert.strictEqual(g.player.targetId, d.id, '迎撃機しかいなければ迎撃機');
+});
+
+test('ボスの裏側の砲台: 船体の陰の部位はロックオンで選ばず、照準補助もミサイルも向けない。回り込んで見えれば選べる', () => {
+  const g = C.createGame({ seed: 1, start: 'boss' });
+  run(g, 8, {}, 1 / 30);
+  const b = g.boss;
+  assert.strictEqual(b.phase, 'battle');
+  const turrets = b.parts.filter((p) => p.kind === 'turret' && p.alive);
+  const top = turrets.filter((p) => p.face.y > 0.5), bottom = turrets.filter((p) => p.face.y < -0.5);
+  assert.ok(top.length >= 1 && bottom.length >= 1, '上と下に砲台がある');
+  const place = (y) => {
+    g.fighters = []; g.shots = [];
+    const pl = g.player;
+    pl.pos = C.vec(top[0].pos.x, b.pos.y + y, top[0].pos.z + 5);
+    const yp = C.yawPitchOf(C.sub(b.pos, pl.pos));
+    pl.yaw = yp.yaw; pl.pitch = yp.pitch; pl.dir = C.forwardFrom(pl.yaw, pl.pitch); pl.vel = C.scale(pl.dir, pl.speed);
+    pl.yawRate = 0; pl.pitchRate = 0; pl.targetId = 0; pl.hull = T.hullMax; pl.shield = T.shieldMax; b.visT = 0;
+  };
+  // 真上から: 上の砲台は見え、下の砲台は船体の陰
+  place(420);
+  C.step(g, {}, 1 / 60);
+  assert.ok(top.every((p) => !p.hidden), '上の砲台は見えている');
+  assert.ok(bottom.every((p) => p.hidden), '下の砲台は船体の陰');
+  const seen = new Set();
+  for (let i = 0; i < 12; i++) { place(420); C.step(g, { select: true }, 1 / 60); seen.add(g.player.targetId); }
+  const hiddenIds = new Set(b.parts.filter((p) => p.hidden).map((p) => p.id));
+  assert.ok(seen.size >= 1 && [...seen].every((id) => !hiddenIds.has(id)), '何度押しても、陰の砲台は選ばれない');
+  // 陰の砲台を無理に選んでも、照準補助は向かない (ほかの見える的か、何も無し)
+  place(420);
+  g.player.targetId = bottom[0].id;
+  C.step(g, {}, 1 / 60);
+  assert.ok(!g.player.focus || !g.player.focus.target.hidden, '陰の的には照準補助を向けない');
+  // 真下へ回ると、逆になる
+  place(-420);
+  C.step(g, {}, 1 / 60);
+  assert.ok(bottom.some((p) => !p.hidden) && top.every((p) => p.hidden), '下へ回ると、下の砲台が見えて上の砲台が陰になる');
+  place(-420);
+  C.step(g, { select: true }, 1 / 60);
+  assert.ok(bottom.some((p) => p.id === g.player.targetId), '下の砲台を選べる');
 });
 
 test('ロックオンボタン: 押しっぱなしで、真後ろの敵へも機首が向く', () => {

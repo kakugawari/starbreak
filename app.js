@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.21.0';
+  const VERSION = 'v0.22.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -2269,6 +2269,25 @@
         sv({ at: at, type: 'sine', f0: base * r, f1: base * r * (o.bend || 0.985), dur: dur / (1 + i * 0.55), vol: vol / (1 + i * 0.6), lp: o.lp || 3200, rev: o.rev, pan: o.pan, heavy: i === 0 && o.heavy });
       });
     }
+    // ---- 厚みのある音の部品 (v0.22.0。「音が安っぽい」と言われて、正弦波 1 本の「ピッ」を置き換えた) ----
+    // 鐘・ガラスの響き: 合わない倍音を重ねた 1 音。基音は少しずらした 2 本でうなりを作り、打つ瞬間に小さな雑音を入れる
+    function chime(at, f, dur, vol, o) {
+      o = o || {};
+      const rev = o.rev === undefined ? 0.4 : o.rev;
+      [[1, 1, -5], [1, 0.7, 6], [2.0, 0.45, 0], [2.99, 0.28, 0], [4.18, 0.16, 0], [5.43, 0.09, 0]].forEach(function (p, i) {
+        if (f * p[0] > 12000) return;
+        sv({ at: at, type: 'sine', f0: f * p[0], f1: f * p[0], dur: dur / (1 + Math.max(0, i - 1) * 0.7), vol: vol * p[1], detune: p[2], rev: rev, pan: o.pan });
+      });
+      sn({ at: at, dur: 0.012, vol: vol * 0.8, type: 'highpass', f0: 6500, f1: 4500, pan: o.pan });
+    }
+    // 太い一声 (警笛・金管): 少しずらしたのこぎり波 3 本 + 1 オクターブ下の胴。フィルターを開いてから閉じる
+    function stab(at, f0, f1, dur, vol, o) {
+      o = o || {};
+      [-11, 0, 11].forEach(function (dt) {
+        sv({ at: at, type: 'sawtooth', f0: f0, f1: f1, glide: o.glide, atk: o.atk || 0.015, hold: o.hold || 0, dur: dur, vol: vol * 0.5, lp: o.lp || 2600, lp1: o.lp1 || 1200, q: o.q || 1.6, detune: dt, rev: o.rev === undefined ? 0.3 : o.rev, pan: o.pan });
+      });
+      sv({ at: at, type: 'square', f0: f0 / 2, f1: f1 / 2, glide: o.glide, atk: o.atk || 0.015, hold: o.hold || 0, dur: dur, vol: vol * 0.45, lp: (o.lp || 2600) * 0.5, rev: 0.2, pan: o.pan });
+    }
     // 爆発の芯 (撃墜・砲台・装甲など共通): ひび割れ → 歪ませた重い「ドン」→ 火の玉の轟き (響きつき) → 破片のはぜ。
     // s は大きさ (1 = 小型機、4 = コア)、near は近さ (1 = 近い、0.35 = 遠い: 遠いほど小さく、高い音を削る)
     function blast(s, near, o) {
@@ -2752,7 +2771,7 @@
           });
           sv({ at: c[0], type: 'sine', f0: 440 * Math.pow(2, (c[1][0] - 12 - 69) / 12), f1: 440 * Math.pow(2, (c[1][0] - 12 - 69) / 12), atk: 0.02, hold: last ? 0.4 : 0.1, dur: last ? 1.2 : 0.2, vol: 0.18, heavy: true });
         });
-        [2093, 2637, 3136].forEach(function (f, i) { sv({ at: 0.62 + i * 0.07, type: 'sine', f0: f, f1: f, dur: 1.6, vol: 0.035, rev: 0.5 }); });
+        [2093, 2637, 3136].forEach(function (f, i) { chime(0.62 + i * 0.07, f, 1.6, 0.02, { rev: 0.5 }); });
       },
       // 次の面へ飛ぶ (暗転と同時): 上がっていく風 + 暗くなりきる所で低い落ち (そこからワープの唸りへ続く)
       stageOut: function () {
@@ -2775,7 +2794,9 @@
       },
       // 補給船団の知らせ・ワープ準備: 明るい 2 音の呼び出し (警報より軽い。目標が来たことを知らせる)
       convoyAlert: function () {
-        [0, 0.22].forEach(function (t, i) { sv({ at: t, type: 'square', f0: i ? 1175 : 880, f1: i ? 1175 : 880, atk: 0.005, dur: 0.16, vol: 0.05, lp: 3000 }); });
+        // 2 音の呼び出し (柔らかい警笛。前は方形波の「ピポ」)
+        stab(0, 587, 587, 0.16, 0.07, { lp: 2200, lp1: 1200 });
+        stab(0.2, 784, 784, 0.3, 0.07, { lp: 2200, lp1: 1000 });
         sv({ type: 'sine', f0: 110, f1: 70, dur: 0.4, vol: 0.18, heavy: true });
       },
       // 増援が後ろからワープしてくる: 下がる短い警告 2 回 + ワープのひび
@@ -2793,7 +2814,7 @@
       // 補給船団の結果: 落とした数だけ上がっていく澄んだ音 → 締めの低い音
       tally: function (n) {
         n = n || 0;
-        for (let i = 0; i < n; i++) sv({ at: 0.3 + i * 0.18, type: 'sine', f0: 880 * Math.pow(2, i * 3 / 12), f1: 880 * Math.pow(2, i * 3 / 12), atk: 0.005, dur: 0.35, vol: 0.06, rev: 0.4 });
+        for (let i = 0; i < n; i++) chime(0.3 + i * 0.18, 880 * Math.pow(2, i * 3 / 12), 0.5, 0.03);
         sv({ at: 0.35 + n * 0.18, type: 'sine', f0: n ? 220 : 110, f1: n ? 220 : 98, atk: 0.02, dur: 0.9, vol: 0.2, heavy: true, rev: 0.4 });
       },
       // ワープ (暗転の中を飛ぶ 2.4 秒): 上がり続ける唸り + 高く掃く風 + 速くなる脈。抜ける直前にいちばん高く
@@ -2843,17 +2864,15 @@
       // ボス登場の警報 (「BOSS BATTLE」の帯と同時。2.3 秒後にワープ): ① 艦の警笛 (一定の音程の太い低音「ブォーン」を 2 回。サイレンにしない)
       // ② 鋭い警告のパルス (音程が一度下がって止まる) ③ 光の向こうから迫る音: 帯域を上へ掃く雑音と上がる唸りが、ワープの瞬間へ向かって大きくなる
       bossAlert: function () {
-        [0, 0.95].forEach(function (at) {
-          [[55, -6], [55, 6], [82.4, 0], [110, -4]].forEach(function (d, i) {
-            sv({ at: at, type: 'sawtooth', f0: d[0], f1: d[0] * 0.985, atk: 0.04, hold: 0.2, dur: 0.55, vol: 0.1 / (1 + i * 0.4), lp: 700, lp1: 300, detune: d[1], heavy: true, rev: 0.25 });
-          });
-          sv({ at: at, type: 'sine', f0: 55, f1: 52, atk: 0.04, hold: 0.2, dur: 0.6, vol: 0.3, heavy: true });
+        // 警報のクラクション 3 回 (「ウゥーッ」と駆け上がって張り付く)。前は短く下がる方形波 4 つで「ポコポコ」と軽く聞こえた
+        [0, 0.74, 1.48].forEach(function (at) {
+          stab(at, 370, 740, 0.14, 0.2, { glide: 0.32, atk: 0.02, hold: 0.44, lp: 3400, lp1: 2400, q: 2.6, rev: 0.35 });
+          sv({ at: at, type: 'sawtooth', f0: 92.5, f1: 185, glide: 0.32, atk: 0.02, hold: 0.44, dur: 0.16, vol: 0.09, lp: 600, heavy: true });
+          sv({ at: at, type: 'sine', f0: 72, f1: 44, dur: 0.32, vol: 0.3, heavy: true });
+          sn({ at: at, dur: 0.05, vol: 0.1, type: 'highpass', f0: 3000, f1: 2000 });
         });
-        [0.62, 0.8, 1.6, 1.78].forEach(function (at) {
-          sv({ at: at, type: 'square', f0: 900, f1: 620, dur: 0.14, vol: 0.07, lp: 2600 });
-          sv({ at: at, type: 'triangle', f0: 450, f1: 310, dur: 0.15, vol: 0.08 });
-        });
-        sn({ at: 0.5, atk: 1.75, dur: 0.1, vol: 0.25, type: 'bandpass', f0: 150, f1: 2400, glide: 1.85, q: 1, rev: 0.3 });
+        // ワープへ向かって大きくなる迫る音
+        sn({ at: 0.5, atk: 1.75, dur: 0.1, vol: 0.22, type: 'bandpass', f0: 150, f1: 2400, glide: 1.85, q: 1, rev: 0.3 });
         sv({ at: 0.5, type: 'sawtooth', f0: 40, f1: 160, glide: 1.85, atk: 1.75, dur: 0.1, vol: 0.07, lp: 600, heavy: true });
       },
       // 音楽を一瞬弱める (演出のあいだ、効果音を聞かせる)
@@ -2864,8 +2883,8 @@
         combo = combo || 1; size = size || 1.4; near = near === undefined ? 1 : near;
         const r = Math.pow(2, Math.min(combo - 1, 8) * 2 / 12);
         blast(Math.min(4, size), near);
-        sv({ type: 'triangle', f0: 1320 * r, f1: 1320 * r, dur: 0.16, vol: 0.05 });
-        sv({ at: 0.03, type: 'sine', f0: 1980 * r, f1: 1980 * r, dur: 0.22, vol: 0.035, rev: 0.2 });
+        chime(0, 1320 * r, 0.3, 0.028, { rev: 0.3 });
+        chime(0.03, 1980 * r, 0.3, 0.018, { rev: 0.3 });
         // 大きい部位 (砲台・エンジン・コア): 金属が裂ける響きと、長い地鳴りを足す
         if (size >= 2.5) {
           metal(0.02, 170, 1.2, 0.08 * near, { rev: 0.35 });
@@ -2881,15 +2900,14 @@
         }
       },
       // マルチロック: 捕まえるたびに短く、数が増えるほど高く
-      mlock: function (n) { const f = 1320 * Math.pow(1.19, n - 1); toneAt(0, 'sine', f, f, 0.1, 0.07, 0, 0.003); toneAt(0, 'triangle', f * 2, f * 2, 0.05, 0.02, 3500, 0.003); },
+      mlock: function (n) { const f = 1320 * Math.pow(1.19, n - 1); chime(0, f, 0.16, 0.036, { rev: 0.15 }); },
       // ロックオン (約 0.4 秒): 音程の上がる正確な 2 つの電子音 → かすかなデジタルの走査 → 澄んだ確認の「ピン」。
       // 冷たく、短く、サイレンではない。高い音は 3.5kHz まで・響きなしで、何度聞いても疲れにくい
       lock: function () {
-        toneAt(0, 'sine', 1320, 1320, 0.07, 0.07, 0, 0.003);
-        toneAt(0.085, 'sine', 1760, 1760, 0.07, 0.07, 0, 0.003);
-        for (let i = 0; i < 6; i++) toneAt(0.07 + i * 0.03, 'square', 2300 + i * 90, 2300 + i * 90, 0.02, 0.012, 2800, 0.002);   // 走査の刻み
-        toneAt(0.25, 'sine', 2640, 2640, 0.16, 0.075, 0, 0.003);                                                                 // 確認のピン
-        toneAt(0.25, 'sine', 3960, 3960, 0.08, 0.02, 0, 0.003);
+        chime(0, 1320, 0.09, 0.032, { rev: 0.12 });
+        chime(0.085, 1760, 0.09, 0.032, { rev: 0.12 });
+        for (let i = 0; i < 6; i++) toneAt(0.07 + i * 0.03, 'square', 2300 + i * 90, 2300 + i * 90, 0.02, 0.01, 2800, 0.002);   // 走査の刻み
+        chime(0.25, 1976, 0.32, 0.042, { rev: 0.25 });                                                                          // 確認の響き
         sv({ at: 0.25, type: 'sine', f0: 240, f1: 150, dur: 0.07, vol: 0.08, heavy: true });                                      // 捕まえた手応え (小さな「コン」)
       },
       // ブースト点火 (約 1.2 秒): 鋭い電子の点火 → のぼっていく青いエネルギーの轟き + 深い低音の衝撃 + 速い空気のうねり + 明るく響く電子音。
@@ -2941,8 +2959,9 @@
         }
       },
       lockWarn: function () {
+        // 主砲の狙いが固定された: 鋭く濁った警告 3 連 (のこぎり波のうなり + 重い一打)。前は方形波の「ピピピ」
         [0, 0.12, 0.24].forEach(function (at) {
-          sv({ at: at, type: 'square', f0: 1250, f1: 1180, dur: 0.07, vol: 0.06, lp: 3000 });
+          stab(at, 990, 930, 0.085, 0.085, { lp: 3600, lp1: 2600, q: 3, rev: 0.15 });
           sv({ at: at, type: 'sine', f0: 110, f1: 70, dur: 0.1, vol: 0.15, heavy: true });
         });
       },
@@ -2961,9 +2980,9 @@
       // ---- スターブレイク・コンボ・かすり・星・結果 (v0.21.0) ----
       // ゲージが満タン: 上がる澄んだ 3 音 + きらめき (押せる合図)
       breakReady: function () {
-        [1047, 1319, 1568].forEach(function (f, i) { sv({ at: i * 0.085, type: 'sine', f0: f, f1: f, dur: 0.35, vol: 0.085, rev: 0.4 }); });
-        sv({ at: 0.17, type: 'triangle', f0: 2093, f1: 2093, dur: 0.7, vol: 0.028, rev: 0.5 });
-        sv({ at: 0.17, type: 'sine', f0: 3136, f1: 3136, dur: 0.5, vol: 0.014, rev: 0.5 });
+        [1047, 1319, 1568].forEach(function (f, i) { chime(i * 0.085, f, 0.5, 0.04); });
+        chime(0.17, 2093, 0.9, 0.022, { rev: 0.5 });
+        sn({ at: 0.1, atk: 0.25, dur: 0.3, vol: 0.03, type: 'highpass', f0: 7000, f1: 9000, rev: 0.5 });
       },
       // 発動: 吸い込む風 (0.2 秒) → 重い衝撃 + 開く明るい和音 (A の長調) + 澄んだ鐘 + 金属の響き。時が止まる一瞬に合わせる
       starBreak: function () {
@@ -2984,27 +3003,32 @@
       },
       // 無敵のあいだに弾をはじく: 短く澄んだ金属の「キン」
       guard: function () {
-        sv({ type: 'sine', f0: 1900, f1: 2500, dur: 0.12, vol: 0.035 });
+        metal(0, 1750, 0.2, 0.03, { rev: 0.2 });
         sn({ dur: 0.04, vol: 0.05, type: 'highpass', f0: 4200, f1: 3200 });
       },
       // かすり: ごく短い上がる「チッ」(たくさん鳴るので小さく)
       graze: function () {
         const r = 1 + (Math.random() - 0.5) * 0.12;
-        sv({ type: 'sine', f0: 2500 * r, f1: 3300 * r, dur: 0.06, vol: 0.026 });
+        sv({ type: 'sine', f0: 2500 * r, f1: 3300 * r, dur: 0.06, vol: 0.02 });
+        sv({ type: 'sine', f0: 5020 * r, f1: 6500 * r, dur: 0.04, vol: 0.008 });
+        sn({ dur: 0.02, vol: 0.02, type: 'highpass', f0: 6000, f1: 5000 });
       },
       // コンボの節目 (5・10・15…): 段が上がるほど高く、音が増える上がりの分散和音
       comboUp: function (step) {
         step = Math.min(5, step || 0);
         const base = 72 + step * 2, n = 3 + Math.min(2, step);
-        for (let i = 0; i < n; i++) {
-          const f = 440 * Math.pow(2, (base + [0, 4, 7, 12, 16][i] - 69) / 12);
-          sv({ at: i * 0.06, type: 'triangle', f0: f, f1: f, dur: 0.28, vol: 0.045, rev: 0.35 });
-        }
+        for (let i = 0; i < n; i++) chime(i * 0.06, 440 * Math.pow(2, (base + [0, 4, 7, 12, 16][i] - 69) / 12), 0.45, 0.026);
+        // 下に短い金管の和音を敷く (鐘だけだと軽い)
+        const root = 440 * Math.pow(2, (base - 24 - 69) / 12);
+        stab(0, root, root, 0.3, 0.05, { lp: 1800, lp1: 700 });
+        stab(0, root * 1.5, root * 1.5, 0.3, 0.035, { lp: 1800, lp1: 700 });
         sv({ type: 'sine', f0: 200, f1: 90, dur: 0.2, vol: 0.14, heavy: true });
       },
       // 殲滅 (波を全部落とした): 明るい 2 音 + 低い締め
       waveClear: function () {
-        [[0, 784], [0.11, 1175]].forEach(function (c) { sv({ at: c[0], type: 'triangle', f0: c[1], f1: c[1], dur: 0.5, vol: 0.05, rev: 0.4 }); });
+        chime(0, 784, 0.6, 0.03);
+        chime(0.11, 1175, 0.8, 0.03);
+        stab(0.11, 196, 196, 0.5, 0.06, { lp: 1600, lp1: 600 });
         sv({ at: 0.11, type: 'sine', f0: 130, f1: 65, dur: 0.5, vol: 0.2, heavy: true, rev: 0.3 });
       },
       // 星が 1 つ付く: 小さな打つ音 + 澄んだ鐘 (i 番目ほど高い)。取れなかった星は乾いた低い「コッ」
@@ -3012,9 +3036,9 @@
         if (!got) { sv({ type: 'square', f0: 260, f1: 180, dur: 0.06, vol: 0.03, lp: 900 }); return; }
         const f = 1568 * Math.pow(2, (i || 0) * 2 / 12);
         sv({ type: 'sine', f0: 180, f1: 80, dur: 0.14, vol: 0.2, heavy: true });
-        sv({ type: 'sine', f0: f, f1: f, dur: 0.9, vol: 0.07, rev: 0.5 });
-        sv({ type: 'sine', f0: f * 2, f1: f * 2, dur: 0.5, vol: 0.03, rev: 0.5 });
-        sn({ dur: 0.03, vol: 0.06, type: 'highpass', f0: 5000, f1: 4000 });
+        chime(0, f, 1.1, 0.04, { rev: 0.5 });
+        chime(0.02, f * 1.5, 0.7, 0.015, { rev: 0.5 });
+        sn({ dur: 0.25, vol: 0.02, type: 'highpass', f0: 8000, f1: 6000, rev: 0.5 });
       },
       // 結果の数え上げの 1 刻み (ごく小さく)
       countTick: function () { sv({ type: 'square', f0: 1500, f1: 1500, dur: 0.025, vol: 0.011, lp: 3200 }); },
@@ -3033,26 +3057,27 @@
       // 新記録: 短い上がりのファンファーレ
       record: function () {
         [[0, 79], [0.1, 84], [0.2, 88], [0.3, 91]].forEach(function (c) {
-          const f = 440 * Math.pow(2, (c[1] - 69) / 12);
-          sv({ at: c[0], type: 'triangle', f0: f, f1: f, dur: c[0] === 0.3 ? 1.2 : 0.3, vol: 0.075, rev: 0.5 });
+          chime(c[0], 440 * Math.pow(2, (c[1] - 69) / 12), c[0] === 0.3 ? 1.4 : 0.4, 0.035, { rev: 0.5 });
         });
+        // 締めに金管の長調の和音
+        [48, 55, 60, 64].forEach(function (m) { const f = 440 * Math.pow(2, (m - 69) / 12); stab(0.3, f, f, 0.9, 0.03, { hold: 0.25, lp: 2000, lp1: 700, rev: 0.45 }); });
       },
       // 操作の音: 選ぶ (乾いた「カチッ」+ 小さな上がる音)・決める (低い「コン」+ 澄んだ 2 音の和音)・面の始まり (光の向こうから来る風 + 澄んだ鐘)
       ui: function () {
-        sv({ type: 'square', f0: 2400, f1: 2400, dur: 0.012, vol: 0.03, lp: 4000 });
-        sv({ type: 'sine', f0: 1500, f1: 1900, dur: 0.06, vol: 0.07 });
+        sv({ type: 'square', f0: 2400, f1: 2400, dur: 0.012, vol: 0.025, lp: 4000 });
+        chime(0, 1500, 0.09, 0.03, { rev: 0.1 });
       },
       uiOk: function () {
         sn({ dur: 0.02, vol: 0.08, type: 'highpass', f0: 3000, f1: 2500 });
         sv({ type: 'sine', f0: 170, f1: 85, dur: 0.12, vol: 0.18, heavy: true });
-        sv({ type: 'sine', f0: 880, f1: 880, dur: 0.18, vol: 0.06, rev: 0.25 });
-        sv({ at: 0.06, type: 'sine', f0: 1318, f1: 1318, dur: 0.3, vol: 0.06, rev: 0.3 });
+        chime(0, 880, 0.25, 0.03, { rev: 0.3 });
+        chime(0.06, 1318, 0.4, 0.03, { rev: 0.35 });
       },
       stageIn: function () {
         sn({ atk: 0.55, dur: 0.3, vol: 0.16, type: 'bandpass', f0: 200, f1: 1500, glide: 0.6, q: 1, rev: 0.4 });
         sv({ at: 0.55, type: 'sine', f0: 90, f1: 45, dur: 0.6, vol: 0.2, heavy: true });
-        sv({ at: 0.55, type: 'sine', f0: 1320, f1: 1320, dur: 1.0, vol: 0.06, rev: 0.4 });
-        sv({ at: 0.6, type: 'sine', f0: 1980, f1: 1980, dur: 0.8, vol: 0.035, rev: 0.4 });
+        chime(0.55, 1320, 1.2, 0.032);
+        chime(0.6, 1980, 0.9, 0.018);
       },
       level: function () {
         if (!analyser) return null;
@@ -4326,14 +4351,16 @@
         const d = dist3(t.pos, pl.pos);
         const isFocus = pl.focus && pl.focus.target === t;
         const isTarget = pl.targetId === t.id;
-        const col = isTarget ? '255,214,106' : t.transport ? '110,225,255' : t.kind === 'fighter' ? '255,90,90' : t.kind === 'turret' ? '255,170,80' : '255,80,200';
+        // 船体の陰の部位 (いまいる所から撃っても当たらない) は、しるしを灰色に薄くする
+        const hid = !!t.hidden;
+        const col = hid ? (isTarget ? '200,180,130' : '150,160,180') : isTarget ? '255,214,106' : t.transport ? '110,225,255' : t.kind === 'fighter' ? '255,90,90' : t.kind === 'turret' ? '255,170,80' : '255,80,200';
         const on = !s.behind && s.x > 10 && s.x < W - 10 && s.y > 10 && s.y < H - 10;
         if (on) {
           markers++;
-          hudInfo.brackets.push({ id: t.id, x: s.x, y: s.y });
+          hudInfo.brackets.push({ id: t.id, x: s.x, y: s.y, hidden: hid });
           const size = Math.max(9, Math.min(40, t.radius * 900 / Math.max(d, 1) * (H / 430))) + (isTarget ? 5 : 0);
-          c.strokeStyle = 'rgba(' + col + ',' + (isFocus || isTarget ? 0.95 : 0.6) + ')';
-          c.lineWidth = isTarget ? 2.6 : isFocus ? 2 : 1.4;
+          c.strokeStyle = 'rgba(' + col + ',' + (hid ? (isTarget ? 0.7 : 0.3) : isFocus || isTarget ? 0.95 : 0.6) + ')';
+          c.lineWidth = hid && !isTarget ? 1 : isTarget ? 2.6 : isFocus ? 2 : 1.4;
           const q = size * 0.45;
           c.beginPath();
           [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (k) {
@@ -4352,7 +4379,7 @@
             c.fillStyle = 'rgba(' + col + ',.95)';
             c.font = '600 10px -apple-system, sans-serif';
             c.textAlign = 'left';
-            c.fillText(Math.round(d) + 'm', s.x + size + 4, s.y - size + 8);
+            c.fillText(Math.round(d) + 'm' + (hid ? '  船体の陰' : ''), s.x + size + 4, s.y - size + 8);
             const hpw = size * 2;
             c.fillStyle = 'rgba(0,0,0,.45)';
             c.fillRect(s.x - size, s.y + size + 4, hpw, 3);

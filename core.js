@@ -263,6 +263,9 @@
     grazeRadius: 13, grazeScore: 10,
     // コンボ: 落とすたびに 1 つ増え、comboTime 秒で切れる。当て続けている間は comboHold 秒より短くならない (ボス戦でもつながる)
     comboTime: 3.5, comboHold: 2.0, comboMarks: [5, 10, 15, 20, 30, 50],
+    // ロックオンで選ぶ相手: 画面に映っている敵 (機首から横 screenYaw・縦 screenPitch の中) を先に。
+    // ボスの部位は、いまいる所から撃って当たるもの (船体の陰でないもの) だけを選び、照準補助もそれだけに効かせる (visEvery 秒ごとに見直す)
+    screenYaw: 46 * DEG, screenPitch: 26 * DEG, visEvery: 0.12,
     // 面ごとの星 (3 つ): クリア・機体を starHull 以上残す・stagePar[面] 秒より早く倒す
     starHull: 0.5, stagePar: [0, 180, 50, 330, 400, 360],
     // 戦域
@@ -1074,6 +1077,42 @@
     return out;
   }
 
+  /** 画面に映っているとみなせるか (機首の向きを画面の真ん中として、横・縦の角度で見る。カメラは機首を少し遅れて追う) */
+  function onScreen(g, pos) {
+    const pl = g.player, v = sub(pos, pl.pos);
+    const z = dot(v, pl.dir);
+    if (z <= 1) return false;
+    let right = cross(pl.dir, vec(0, 1, 0));
+    right = len(right) > 1e-3 ? norm(right) : vec(1, 0, 0);
+    const up = cross(right, pl.dir);
+    return Math.abs(Math.atan2(dot(v, right), z)) <= T.screenYaw && Math.abs(Math.atan2(dot(v, up), z)) <= T.screenPitch;
+  }
+
+  /**
+   * ボスの部位が、いまいる所から撃って当たるか (弾と同じ見方: 自機から部位への線が、部位より先に船体へ当たらないか)。
+   * 当たらない部位には hidden を立てる。裏側の砲台をロックオンして、撃ってから陰だと気づくのを避ける
+   */
+  function updateVisibility(g, dt) {
+    const b = g.boss;
+    if (!b || b.phase === 'dead') return;
+    b.visT = (b.visT || 0) - dt;
+    if (b.visT > 0) return;
+    b.visT = T.visEvery;
+    const pl = g.player, solids = bossSolids(b);
+    for (let i = 0; i < b.parts.length; i++) {
+      const p = b.parts[i];
+      if (!p.alive || !p.active) { p.hidden = false; continue; }
+      const tp = segmentSphere(pl.pos, p.pos, p.pos, p.radius);
+      const lim = (tp >= 0 ? tp : 1) - 1e-4;
+      let hid = false;
+      for (let k = 0; k < solids.length && !hid; k++) {
+        const t = segmentSolid(pl.pos, p.pos, solids[k].planes);
+        if (t >= 0 && t < lim) hid = true;
+      }
+      p.hidden = hid;
+    }
+  }
+
   function findById(g, id) {
     const ts = targets(g);
     for (let i = 0; i < ts.length; i++) if (ts[i].id === id) return ts[i];
@@ -1091,7 +1130,8 @@
     const ts = targets(g);
     // 狙う相手 (ロックオンボタンで選んだ敵) がいれば、円の外でもそれを優先する
     const sel = pl.targetId ? findById(g, pl.targetId) : null;
-    if (sel && dist(sel.pos, pl.pos) <= T.focusRange) {
+    // 選んだ相手が船体の陰に入っている間は、弾を曲げない (曲げても船体に当たる)。陰でないほかの的を探す
+    if (sel && !sel.hidden && dist(sel.pos, pl.pos) <= T.focusRange) {
       const ic = intercept(pl.pos, sel.pos, sel.vel, T.laserSpeed);
       const lead = ic ? ic.point : sel.pos;
       best = { target: sel, lead: lead, ang: angleBetween(pl.dir, sub(lead, pl.pos)), dist: dist(sel.pos, pl.pos) };
@@ -1099,6 +1139,7 @@
     }
     for (let i = 0; i < ts.length; i++) {
       const t = ts[i];
+      if (t.hidden) continue;   // 船体の陰の部位は狙わない
       const d = dist(t.pos, pl.pos);
       if (d > T.focusRange) continue;
       const ic = intercept(pl.pos, t.pos, t.vel, T.laserSpeed);
@@ -1138,8 +1179,15 @@
    */
   function selectTarget(g) {
     const pl = g.player;
-    const ts = targets(g).filter(function (t) { return dist(t.pos, pl.pos) <= T.focusRange * 1.6; });
-    if (!ts.length) { pl.targetId = 0; return null; }
+    const all = targets(g).filter(function (t) { return dist(t.pos, pl.pos) <= T.focusRange * 1.6; });
+    if (!all.length) { pl.targetId = 0; return null; }
+    // 選ぶ順: ① 画面に映っていて撃てば当たる敵 ② そのうち迎撃機 (すぐ去るので後回し) ③ 画面の外の、当たる敵 ④ 残り (船体の陰の部位など)。
+    // いちばん上の段にいる敵だけで順ぐりに回す。画面に敵がいるのに、後ろや陰の敵へ飛ばない
+    // (前は全部を照準に近い順に回していたので、次を押すと画面の外や、ボスの裏側の砲台を選ぶことがあった)
+    const tier = function (t) { return t.hidden ? 3 : !onScreen(g, t.pos) ? 2 : t.drone ? 1 : 0; };
+    let best = 9;
+    for (let k = 0; k < all.length; k++) best = Math.min(best, tier(all[k]));
+    const ts = all.filter(function (t) { return tier(t) === best; });
     ts.sort(function (a, b) { return angleBetween(pl.dir, sub(a.pos, pl.pos)) - angleBetween(pl.dir, sub(b.pos, pl.pos)); });
     let i = -1;
     for (let k = 0; k < ts.length; k++) if (ts[k].id === pl.targetId) i = k;
@@ -1314,6 +1362,7 @@
     let cand = null, candKey = 1e9;
     for (let i = 0; i < ts.length; i++) {
       const t = ts[i];
+      if (t.hidden) continue;   // 船体の陰の部位にはミサイルも向けない
       const d = dist(t.pos, pl.pos);
       if (d > T.lockRange) continue;
       const ang = angleBetween(pl.dir, sub(t.pos, pl.pos));
@@ -2202,6 +2251,7 @@
       pl.sinceHit += dt;
       if (pl.sinceHit > T.shieldRegenDelay) pl.shield = Math.min(T.shieldMax, pl.shield + T.shieldRegen * dt);
       keepTarget(g);
+      updateVisibility(g, dt);
       updateAim(g);
       pl.guardCd = Math.max(0, pl.guardCd - dt);
       if (pl.breakT > 0) {
@@ -2438,7 +2488,7 @@
     intercept: intercept, segmentSphere: segmentSphere, segmentBox: segmentBox, sphereBoxPush: sphereBoxPush,
     solidPlanes: solidPlanes, solidRange: solidRange, segmentSolid: segmentSolid, sphereSolidPush: sphereSolidPush, pointInSolid: pointInSolid,
     frameDt: frameDt, turnLimit: turnLimit, beamHits: beamHits,
-    createGame: createGame, continueGame: continueGame, step: step, activateBreak: activateBreak, scoreMult: scoreMult, RANK_LINE: RANK_LINE, targets: targets, bossSolids: bossSolids, result: result,
+    onScreen: onScreen, createGame: createGame, continueGame: continueGame, step: step, activateBreak: activateBreak, scoreMult: scoreMult, RANK_LINE: RANK_LINE, targets: targets, bossSolids: bossSolids, result: result,
     autopilot: autopilot, selectTarget: selectTarget, BOSS_TIMING: { delay: BOSS_WARP_DELAY, emerge: BOSS_EMERGE, arrive: BOSS_ARRIVE, ahead: BOSS_AHEAD, drop: BOSS_DROP, bow: BOSS_BOW, stern: BOSS_STERN }, makeFighter: makeFighter, makeBoss: makeBoss
   };
 });
