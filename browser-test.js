@@ -516,7 +516,8 @@ async function run() {
     // ------------------------------------------------ ゲージ (送ってもらった絵)
     section('左上のゲージ');
     ok(await page.evaluate(() => window.__app.assetsLoaded()['gauges.png'] === true), 'ゲージの絵が読み込まれる');
-    await page.evaluate(() => { const pl = window.__app.game().player; pl.shield = 30; pl.hull = 100; pl.sinceHit = 0; });
+    // 測る間に敵の弾が当たると、シールドが減って目盛りが合わない (5.8/14 と出た回があった)。敵の弾を消し、撃たせない
+    await page.evaluate(() => { const g = window.__app.game(), pl = g.player; g.shots = g.shots.filter((s) => s.owner === 'player'); g.fighters.forEach((f) => { f.fireCd = 99; f.burst = 0; }); pl.shield = 30; pl.hull = 100; pl.sinceHit = 0; });
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const gz = await page.evaluate(() => window.__app.hudInfo.gauges.slice());
     ok(Math.abs(gz[0] - 7) < 0.6 && Math.abs(gz[1] - 14) < 0.01, `目盛りが量どおりに光る (シールド半分 → ${gz[0] && gz[0].toFixed(1)}/14 本・機体満タン → ${gz[1] && gz[1].toFixed(1)}/14 本)`);
@@ -946,6 +947,14 @@ async function run() {
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     ok(await card(4, 'JUPITER ORBIT', '木星軌道') && await page.evaluate(() => window.__app.planetKind() === 'jupiter' && window.__app.skyKind() === 'space4' && window.__app.screen() === 'play'), '3 面の採掘母艦を沈めると 4 面 (木星・「STAGE 4」の札) へ進む');
     ok(await page.evaluate(() => window.__app.planetScale() === window.__app.planetScales.jupiter), `4 面へ進むと、空の惑星は木星の大きさになる (${await page.evaluate(() => window.__app.planetScale())} 倍)`);
+    // 木星は自機の真下にあり、機首をどちらへ向けても真下のまま (前は左下の前方 1 か所にあり、向きを変えると画面から消えた)
+    const jup = [];
+    for (const yaw of [0, 2.1, -1.6, 3.1]) {
+      await page.evaluate((yaw) => { const pl = window.__app.game().player; pl.yaw = yaw; pl.yawRate = 0; }, yaw);
+      await waitGameTime(page, 0.3);
+      jup.push(await page.evaluate(() => window.__app.planetRel()));
+    }
+    ok(jup.every((r) => r.y < -4000 && Math.hypot(r.x, r.z) < 1500), `4 面の木星は、どちらを向いても自機の真下にある (${jup.map((r) => Math.round(r.y) + '/' + Math.round(Math.hypot(r.x, r.z))).join(' · ')})`);
     ok(await page.evaluate(() => { const k = window.__app.planetScales; return k.mercury < k.mars && k.mars < k.earth && k.earth < k.jupiter; }), '惑星の大きさは本物の順 (水星 < 火星 < 地球 < 木星)');
     await page.evaluate(() => { const g = window.__app.game(); g.stage = 'gap2'; g.stageTimer = 99; g.fighters = []; });
     await page.waitForFunction(() => window.__app.game().boss && window.__app.game().boss.shown, null, { timeout: 30000 });

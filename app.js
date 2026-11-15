@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  const VERSION = 'v0.22.0';
+  const VERSION = 'v0.23.0';
   const C = window.Core;
   const THREE = window.THREE;
   const K = C.TUNING;
@@ -399,7 +399,8 @@
   /** ゲームの空の惑星を地球 / 水星 / 火星に切り替える (面が変わったとき)。 */
   // 惑星ごとの大きさ (地球を 1。円の中心はそのまま、まわりへ拡げる)。本物の順 (水星 < 火星 < 地球 < 木星) にして、差は縮めた。
   // 本物の比率 (0.38・0.53・1・11) も写して見比べたが、木星が画面を埋めて敵や照準が見えにくく、水星・火星は自機の陰に隠れたのでやめた
-  const PLANET_SCALE = { earth: 1, mercury: 0.6, mars: 0.75, jupiter: 2.2, pluto: 0.5 };
+  const PLANET_SCALE = { earth: 1, mercury: 0.6, mars: 0.75, jupiter: 3.2, pluto: 0.5 };
+  const JUPITER_BELOW = new THREE.Vector3(0, -6000, -600);   // 木星は自機の真下 (上を向けて寝かせる。syncWorld)
   function setPlanetKind(kind) {
     const u = planet.userData;
     if (u.kind === kind) return;
@@ -4215,12 +4216,13 @@
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
     setPlanetKind(['earth', 'earth', 'mercury', 'mars', 'jupiter', 'pluto'][game.level] || 'earth');
-    // 試作: 木星の置き方を見比べる (window.__planetTest = { scale, offset: [x,y,z], face })
-    const pt = window.__planetTest;
-    if (pt) {
-      planet.position.copy(camera.position).multiplyScalar(0.85).add(_v.set(pt.offset[0], pt.offset[1], pt.offset[2]));
-      planet.userData.ball.scale.setScalar(pt.scale);
-      if (pt.face) { planet.up.set(0, 0, -1); planet.lookAt(camera.position); }
+    // 4 面の木星は、空の 1 か所ではなく自機の真下に置き、上 (カメラ) へ向けて寝かせる (どちらを向いても下に丸い地平線が見える)。
+    // 前は左下の前方 1 か所に置いていて、機首を別の向きへ向けると丸ごと画面の外へ出て「小さく見える」と言われた。
+    // 同じ場所で 4 倍・真下 (今の形)・真下でもっと近い、を並べて写し、真下に決めてもらった
+    if (planet.userData.kind === 'jupiter') {
+      planet.position.copy(camera.position).multiplyScalar(0.85).add(JUPITER_BELOW);
+      planet.up.set(0, 0, -1);
+      planet.lookAt(camera.position);
     }
     setSkyKind(['space', 'space', 'space2', 'space3', 'space4', 'space5'][game.level] || 'space');
   }
@@ -5106,6 +5108,7 @@
       skyKind: function () { return sky.userData.kind; },
       planetKind: function () { return planet.userData.kind; },
       planetScale: function () { return planet.userData.ball.scale.x; },
+      planetRel: function () { return { x: planet.position.x - camera.position.x, y: planet.position.y - camera.position.y, z: planet.position.z - camera.position.z }; },
       planetScales: PLANET_SCALE,
       bossVisible: function () { return !!(bossObj && bossObj.visible); },
       transition: function () { const b = $('blackout'), c = $('stageClear'); return { black: blackOn, blackOpacity: b.hidden ? 0 : Number(getComputedStyle(b).opacity), clear: !c.hidden, cardCenter: $('stageCard').classList.contains('center'), warp: warp.on && !warp.exitT, warpExit: !!warp.exitT, warpShown: !$('warp').hidden }; },
