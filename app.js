@@ -4215,6 +4215,13 @@
     planet.quaternion.copy(camera.quaternion);
     planet.visible = true; titlePlanet.visible = false; titleGlow.visible = false;
     setPlanetKind(['earth', 'earth', 'mercury', 'mars', 'jupiter', 'pluto'][game.level] || 'earth');
+    // 試作: 木星の置き方を見比べる (window.__planetTest = { scale, offset: [x,y,z], face })
+    const pt = window.__planetTest;
+    if (pt) {
+      planet.position.copy(camera.position).multiplyScalar(0.85).add(_v.set(pt.offset[0], pt.offset[1], pt.offset[2]));
+      planet.userData.ball.scale.setScalar(pt.scale);
+      if (pt.face) { planet.up.set(0, 0, -1); planet.lookAt(camera.position); }
+    }
     setSkyKind(['space', 'space', 'space2', 'space3', 'space4', 'space5'][game.level] || 'space');
   }
 
